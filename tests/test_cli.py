@@ -1,0 +1,59 @@
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from sprout.cli import app
+from sprout import cli
+
+runner = CliRunner()
+
+
+def invoke(args: list[str], cwd: Path, monkeypatch):
+    monkeypatch.chdir(cwd)
+    return runner.invoke(app, args)
+
+
+def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    result = invoke(["init", str(project)], tmp_path, monkeypatch)
+    assert result.exit_code == 0
+    asset = project / "scene.blend"
+    asset.write_bytes(b"scene")
+
+    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+    result = invoke(["status"], project, monkeypatch)
+    assert "added" in result.stdout
+    result = invoke(["commit", "-m", "first"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "[main " in result.stdout
+    assert "Working tree clean" in invoke(["status"], project, monkeypatch).stdout
+    result = invoke(["status", "scene.blend"], project, monkeypatch)
+    assert "tracked   scene.blend" in result.stdout
+    untracked = project / "notes.txt"
+    untracked.write_text("memo")
+    result = invoke(["status", "notes.txt"], project, monkeypatch)
+    assert "untracked notes.txt" in result.stdout
+    result = invoke(["status", "--tracked"], project, monkeypatch)
+    assert "Tracked files:" in result.stdout
+    assert "scene.blend" in result.stdout
+    result = invoke(["status", "--untracked"], project, monkeypatch)
+    assert "Untracked files:" in result.stdout
+    assert "notes.txt" in result.stdout
+    assert "scene.blend" not in result.stdout
+    assert "first" in invoke(["log"], project, monkeypatch).stdout
+    assert "* main" in invoke(["branch"], project, monkeypatch).stdout
+    result = invoke(["branch", "ideas", "--comment", "Explore silhouettes"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "Explore silhouettes" in invoke(["branch"], project, monkeypatch).stdout
+    result = invoke(["branch", "ideas", "--set-comment", "Explore colors"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "Explore colors" in invoke(["branch"], project, monkeypatch).stdout
+
+
+def test_main_formats_operating_system_errors(monkeypatch, capsys) -> None:
+    def fail() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli, "app", fail)
+    assert cli.main() == 1
+    assert "repository operation failed: disk full" in capsys.readouterr().err

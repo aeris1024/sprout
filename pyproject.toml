@@ -1,0 +1,33 @@
+[project]
+name = "sprout"
+version = "0.1.0"
+description = "Offline snapshot version control for local files"
+readme = "README.md"
+authors = [
+    { name = "aeris1024" },
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.16",
+]
+
+[project.scripts]
+sprout = "sprout.cli:main"
+
+[project.urls]
+Repository = "https://github.com/aeris1024/Sprout"
+Issues = "https://github.com/aeris1024/Sprout/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
