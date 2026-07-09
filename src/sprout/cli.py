@@ -63,6 +63,8 @@ def status(
     repository = repo()
     typer.echo(f"On branch {repository.head_branch()}")
     if paths:
+        if tracked or untracked:
+            raise SproutError("path status cannot be combined with --tracked or --untracked")
         for path, is_tracked in repository.tracking_status(paths):
             typer.echo(f"{'tracked' if is_tracked else 'untracked':<9} {path}")
         return
@@ -172,15 +174,41 @@ def restore(
     typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
 
 
+def _system_exit_code(value: object) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    return 1
+
+
+def _handle_cli_exception(exc: BaseException) -> int | None:
+    show = getattr(exc, "show", None)
+    exit_code = getattr(exc, "exit_code", None)
+    if callable(show) and isinstance(exit_code, int):
+        show()
+        return exit_code
+    return None
+
+
 def main() -> int:
     try:
-        app()
+        app(standalone_mode=False)
+    except typer.Exit as exc:
+        return exc.exit_code
+    except SystemExit as exc:
+        return _system_exit_code(exc.code)
     except SproutError as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 1
     except (OSError, sqlite3.Error) as exc:
         typer.echo(f"Error: repository operation failed: {exc}", err=True)
         return 1
+    except BaseException as exc:
+        exit_code = _handle_cli_exception(exc)
+        if exit_code is None:
+            raise
+        return exit_code
     return 0
 
 

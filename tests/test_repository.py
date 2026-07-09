@@ -104,6 +104,31 @@ def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.
         repo.set_branch_comment("missing", "nope")
 
 
+def test_discard_refuses_to_delete_never_committed_tracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"main")
+    repo.track([asset])
+    main_commit = repo.commit("main")
+    repo.create_branch("experiment")
+    added = write(repo.root, "new.bin", b"only copy")
+    repo.track([added])
+
+    with pytest.raises(SproutError, match="never been committed"):
+        repo.switch("experiment", discard=True)
+
+    assert repo.head_branch() == "main"
+    assert repo.head_commit() == main_commit
+    assert added.read_bytes() == b"only copy"
+    assert "new.bin" in repo.tracked()
+
+    with pytest.raises(SproutError, match="never been committed"):
+        repo.restore(main_commit, discard=True)
+    assert added.read_bytes() == b"only copy"
+
+
 def test_untracked_file_is_never_overwritten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = create_repo(tmp_path)
     monkeypatch.chdir(repo.root)
@@ -133,6 +158,25 @@ def test_rejects_outside_paths_and_metadata(tmp_path: Path, monkeypatch: pytest.
         repo.track([outside_dir])
     with pytest.raises(SproutError, match="metadata"):
         repo.track([repo.db_path])
+
+
+def test_tracking_directory_does_not_follow_nested_symlink_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    assets = repo.root / "assets"
+    assets.mkdir()
+    write(repo.root, "assets/local.txt", b"local")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    write(outside, "secret.txt", b"outside")
+    try:
+        os.symlink(outside, assets / "linked")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks are not available: {exc}")
+
+    assert repo.track([assets]) == ["assets/local.txt"]
 
 
 def test_detects_corrupt_object_before_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -313,3 +357,38 @@ def test_mutations_are_rejected_while_repository_is_locked(
     with repo.lock():
         with pytest.raises(SproutError, match="already running"):
             repo.track([asset])
+
+
+def test_rejects_empty_commit_ref_and_hex_branch_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    repo.commit("initial")
+
+    with pytest.raises(SproutError, match="commit id required"):
+        repo.resolve_commit("")
+    with pytest.raises(SproutError, match="commit id required"):
+        repo.resolve_commit("   ")
+    with pytest.raises(SproutError, match="commit id prefix"):
+        repo.create_branch("1234abcd")
+    repo.create_branch("idea-1234")
+
+
+def test_rejects_branch_before_first_commit(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+
+    with pytest.raises(SproutError, match="before first commit"):
+        repo.create_branch("experiment")
+
+
+def test_connect_closes_database_connection(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+
+    with repo.connect() as db:
+        db.execute("SELECT 1")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        db.execute("SELECT 1")

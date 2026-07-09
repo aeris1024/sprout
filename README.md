@@ -62,6 +62,7 @@ sprout show <commit-id>
 ## ブランチを使う
 
 現在の状態から別の作業を試したいときは、ブランチを作成します。
+ブランチは最初のコミット後に作成できます。
 
 ```powershell
 sprout branch experiment -m "別の方法を試す"
@@ -91,6 +92,7 @@ sprout switch main --discard
 ```
 
 `--discard`を指定しても、未追跡ファイルが上書きされることはありません。
+また、まだ一度もコミットされていない追跡ファイルが削除される場合も処理を中止します。
 
 ## ファイルの追跡状態を確認する
 
@@ -111,6 +113,9 @@ sprout status --untracked
 ```powershell
 sprout untrack document.bin
 ```
+
+`status`と`commit`はファイル内容で変更を判定します。
+内容が同じで更新時刻だけが変わったファイルは、変更なしとして扱われます。
 
 ## データの保存場所
 
@@ -138,6 +143,8 @@ sprout untrack document.bin
 ## 現在の制限
 
 最初のリリースでは、リモート同期、マージ、タグ、ファイル差分、GUIには対応していません。
+不要になったオブジェクトを削除するGCもまだありません。
+大きなファイルを頻繁に更新すると、`.sprout/objects`の使用量が増え続けます。
 
 ## テスト
 
