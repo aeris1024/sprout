@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -19,6 +20,7 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 SCHEMA_VERSION = "1"
+HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 T = TypeVar("T")
 
 
@@ -127,12 +129,17 @@ class Repository:
                 return repo
         raise SproutError("not inside a Sprout project (run 'sprout init')")
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.db_path)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys = ON")
-        db.execute("PRAGMA journal_mode = WAL")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("PRAGMA journal_mode = WAL")
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def check_schema(self) -> None:
         try:
@@ -201,11 +208,20 @@ class Repository:
                 raise SproutError(f"symbolic links are not supported: {value}")
             if absolute.is_dir():
                 self._relative_file(absolute)
-                for child in absolute.rglob("*"):
-                    if child.is_symlink():
-                        continue
-                    if child.is_file() and CONTROL_DIR not in child.relative_to(self.root).parts:
-                        paths.add(self._relative_file(child))
+                for directory, dirs, files in os.walk(absolute, topdown=True, followlinks=False):
+                    base = Path(directory)
+                    dirs[:] = [
+                        name
+                        for name in dirs
+                        if not (base / name).is_symlink()
+                    ]
+                    for name in files:
+                        child = base / name
+                        if child.is_symlink():
+                            continue
+                        relative = self._relative_file(child)
+                        if CONTROL_DIR not in Path(relative).parts:
+                            paths.add(relative)
             elif absolute.is_file():
                 paths.add(self._relative_file(absolute))
             else:
@@ -421,6 +437,8 @@ class Repository:
         return commit_id
 
     def resolve_commit(self, value: str) -> str:
+        if not value.strip():
+            raise SproutError("commit id required")
         with self.connect() as db:
             branch = db.execute("SELECT commit_id FROM branches WHERE name=?", (value,)).fetchone()
             if branch is not None:
@@ -463,11 +481,16 @@ class Repository:
     def create_branch(self, name: str, comment: str = "") -> None:
         if not name or any(c.isspace() for c in name) or name.startswith("-"):
             raise SproutError("branch name must be non-empty and contain no whitespace")
+        if HEX_BRANCH_NAME.fullmatch(name):
+            raise SproutError("branch name cannot look like a commit id prefix")
+        head = self.head_commit()
+        if head is None:
+            raise SproutError("cannot create branch before first commit")
         try:
             with self.connect() as db:
                 db.execute(
                     "INSERT INTO branches(name, commit_id, comment) VALUES(?,?,?)",
-                    (name, self.head_commit(), comment.strip()),
+                    (name, head, comment.strip()),
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
@@ -608,12 +631,31 @@ class Repository:
             if operation_complete or not active_registered:
                 shutil.rmtree(operation_dir, ignore_errors=True)
 
+    def _refuse_losing_added_files(self, target: dict[str, FileState]) -> None:
+        current = self.tracked()
+        head = self.manifest(self.head_commit())
+        unsafe = []
+        for relative in sorted(current - set(target) - set(head)):
+            if (self.root / Path(relative)).is_file():
+                unsafe.append(relative)
+        if unsafe:
+            paths = ", ".join(unsafe[:3])
+            if len(unsafe) > 3:
+                paths += f", ... ({len(unsafe)} files)"
+            raise SproutError(
+                "discard would delete tracked files that have never been committed; "
+                f"commit or untrack them first: {paths}"
+            )
+
     @locked
     def restore(self, value: str, *, discard: bool = False) -> str:
         if self.status() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         commit_id = self.resolve_commit(value)
-        self._materialize(self.manifest(commit_id))
+        target = self.manifest(commit_id)
+        if discard:
+            self._refuse_losing_added_files(target)
+        self._materialize(target)
         return commit_id
 
     @locked
@@ -625,5 +667,7 @@ class Repository:
         if self.status() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         target = self.manifest(row[0])
+        if discard:
+            self._refuse_losing_added_files(target)
         self._materialize(target, head_branch=name)
         return row[0]
