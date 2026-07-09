@@ -42,6 +42,11 @@ def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
     assert "Untracked files:" in result.stdout
     assert "notes.txt" in result.stdout
     assert "scene.blend" not in result.stdout
+    result = invoke(["move", "scene.blend", "archive/scene.blend"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "move  scene.blend -> archive/scene.blend" in result.stdout
+    assert not asset.exists()
+    assert (project / "archive/scene.blend").read_bytes() == b"scene"
     assert "first" in invoke(["log"], project, monkeypatch).stdout
     assert "* main" in invoke(["branch"], project, monkeypatch).stdout
     result = invoke(["branch", "ideas", "--comment", "Explore silhouettes"], project, monkeypatch)
@@ -139,3 +144,13 @@ def test_status_path_mode_rejects_listing_flags(tmp_path: Path, monkeypatch) -> 
     result = invoke(["status", "scene.blend", "--tracked"], project, monkeypatch)
     assert result.exit_code != 0
     assert "path status cannot be combined" in str(result.exception)
+
+
+def test_move_rejects_untracked_source(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "draft.txt").write_text("draft")
+
+    result = invoke(["move", "draft.txt", "archive/draft.txt"], project, monkeypatch)
+    assert result.exit_code != 0
+    assert "path is not tracked" in str(result.exception)

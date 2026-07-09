@@ -54,6 +54,16 @@ def untrack(paths: Annotated[list[Path], typer.Argument(help="Files or directori
 
 
 @app.command()
+def move(
+    source: Annotated[Path, typer.Argument(help="Tracked file to move")],
+    destination: Annotated[Path, typer.Argument(help="New path for the tracked file")],
+) -> None:
+    """Move a tracked file and update its tracked path."""
+    old, new = repo().move(source, destination)
+    typer.echo(f"move  {old} -> {new}")
+
+
+@app.command()
 def status(
     paths: Annotated[list[Path] | None, typer.Argument(help="Paths whose tracking state should be checked")] = None,
     tracked: Annotated[bool, typer.Option("--tracked", help="List every tracked file")] = False,
