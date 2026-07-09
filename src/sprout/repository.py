@@ -242,6 +242,45 @@ class Repository:
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in set(requested)))
         return sorted(set(requested))
 
+    @locked
+    def move(self, source: Path, destination: Path) -> tuple[str, str]:
+        source_input = source if source.is_absolute() else Path.cwd() / source
+        if source_input.is_symlink():
+            raise SproutError(f"symbolic links are not supported: {source}")
+        if not source_input.exists():
+            raise SproutError(f"file does not exist: {source}")
+        source_relative = self._relative_file(source)
+        tracked = self.tracked()
+        if source_relative not in tracked:
+            raise SproutError(f"path is not tracked: {source}")
+        source_absolute = self.root / Path(source_relative)
+        if not source_absolute.is_file():
+            raise SproutError(f"tracked path is not a file: {source}")
+
+        destination_relative = self._relative_file(destination, must_exist=False)
+        destination_absolute = self.root / Path(destination_relative)
+        if destination_absolute.exists():
+            raise SproutError(f"destination already exists: {destination}")
+        if destination_absolute.is_symlink():
+            raise SproutError(f"symbolic links are not supported: {destination}")
+        if destination_relative in tracked:
+            raise SproutError(f"destination is already tracked: {destination}")
+
+        destination_absolute.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source_absolute, destination_absolute)
+        try:
+            with self.connect() as db:
+                db.execute(
+                    "UPDATE tracked_paths SET path=? WHERE path=?",
+                    (destination_relative, source_relative),
+                )
+        except Exception:
+            if destination_absolute.is_file() and not source_absolute.exists():
+                source_absolute.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(destination_absolute, source_absolute)
+            raise
+        return source_relative, destination_relative
+
     def tracked(self) -> set[str]:
         with self.connect() as db:
             return {row[0] for row in db.execute("SELECT path FROM tracked_paths")}
@@ -631,13 +670,66 @@ class Repository:
             if operation_complete or not active_registered:
                 shutil.rmtree(operation_dir, ignore_errors=True)
 
+    def _is_saved_file_state(self, relative: str, object_hash: str, size: int) -> bool:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM commit_files WHERE path=? AND object_hash=? AND size=? LIMIT 1",
+                (relative, object_hash, size),
+            ).fetchone()
+        return row is not None
+
+    def _working_content_signature(self) -> dict[str, tuple[str, int]] | None:
+        signature: dict[str, tuple[str, int]] = {}
+        for relative in sorted(self.tracked()):
+            path = self.root / Path(relative)
+            if not path.is_file():
+                return None
+            object_hash, size = self.hash_file(path)
+            signature[relative] = (object_hash, size)
+        return signature
+
+    def _is_saved_snapshot(self, signature: dict[str, tuple[str, int]]) -> bool:
+        commits: dict[str, dict[str, tuple[str, int]]] = {}
+        with self.connect() as db:
+            commit_ids = [row[0] for row in db.execute("SELECT id FROM commits")]
+            rows = db.execute(
+                "SELECT commit_id, path, object_hash, size FROM commit_files ORDER BY commit_id, path"
+            )
+            for row in rows:
+                commits.setdefault(row["commit_id"], {})[row["path"]] = (
+                    row["object_hash"],
+                    row["size"],
+                )
+        for commit_id in commit_ids:
+            if commits.get(commit_id, {}) == signature:
+                return True
+        return False
+
+    def _has_unsaved_changes(self) -> bool:
+        if not self.status():
+            return False
+        signature = self._working_content_signature()
+        if signature is None:
+            return True
+        return not self._is_saved_snapshot(signature)
+
     def _refuse_losing_added_files(self, target: dict[str, FileState]) -> None:
         current = self.tracked()
         head = self.manifest(self.head_commit())
         unsafe = []
-        for relative in sorted(current - set(target) - set(head)):
-            if (self.root / Path(relative)).is_file():
-                unsafe.append(relative)
+        for relative in sorted(current - set(head)):
+            path = self.root / Path(relative)
+            if not path.is_file():
+                continue
+            object_hash, size = self.hash_file(path)
+            if relative in target and (target[relative].object_hash, target[relative].size) == (
+                object_hash,
+                size,
+            ):
+                continue
+            if self._is_saved_file_state(relative, object_hash, size):
+                continue
+            unsafe.append(relative)
         if unsafe:
             paths = ", ".join(unsafe[:3])
             if len(unsafe) > 3:
@@ -649,7 +741,7 @@ class Repository:
 
     @locked
     def restore(self, value: str, *, discard: bool = False) -> str:
-        if self.status() and not discard:
+        if self._has_unsaved_changes() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         commit_id = self.resolve_commit(value)
         target = self.manifest(commit_id)
@@ -664,7 +756,7 @@ class Repository:
             row = db.execute("SELECT commit_id FROM branches WHERE name=?", (name,)).fetchone()
         if row is None:
             raise SproutError(f"unknown branch: {name}")
-        if self.status() and not discard:
+        if self._has_unsaved_changes() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         target = self.manifest(row[0])
         if discard:

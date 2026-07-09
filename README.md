@@ -85,7 +85,8 @@ sprout switch main
 sprout restore <commit-id>
 ```
 
-未コミットの変更がある場合、Sproutはファイルを保護するため処理を中止します。変更を破棄してよい場合に限り、`--discard`を指定してください。
+未保存の変更がある場合、Sproutはファイルを保護するため処理を中止します。
+変更を破棄してよい場合に限り、`--discard`を指定してください。
 
 ```powershell
 sprout switch main --discard
@@ -93,6 +94,13 @@ sprout switch main --discard
 
 `--discard`を指定しても、未追跡ファイルが上書きされることはありません。
 また、まだ一度もコミットされていない追跡ファイルが削除される場合も処理を中止します。
+作業フォルダが保存済みコミットの内容そのものなら、別のコミットやブランチへ戻るときに`--discard`は不要です。
+
+古いコミットを確認したあと現在のブランチの最新状態に戻るには、ブランチ名を指定して復元します。
+
+```powershell
+sprout restore main
+```
 
 ## ファイルの追跡状態を確認する
 
@@ -114,6 +122,14 @@ sprout status --untracked
 sprout untrack document.bin
 ```
 
+追跡済みファイルの名前や場所を変える場合は`move`を使用します。
+作業フォルダのファイルを移動し、追跡パスも更新します。
+
+```powershell
+sprout move document.bin archive/document.bin
+sprout commit -m "ファイルを移動"
+```
+
 `status`と`commit`はファイル内容で変更を判定します。
 内容が同じで更新時刻だけが変わったファイルは、変更なしとして扱われます。
 
@@ -130,6 +146,7 @@ sprout untrack document.bin
 | `init [PATH]` | Sproutの管理情報を作成する |
 | `track PATH...` | ファイルを追跡対象へ登録する |
 | `untrack PATH...` | ファイルの追跡をやめる |
+| `move OLD NEW` | 追跡済みファイルを移動する |
 | `status` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE` | 現在の状態をコミットする |
 | `log` | 現在のブランチの履歴を表示する |

@@ -43,7 +43,7 @@ def test_commit_multiple_files_restore_and_deduplicate(tmp_path: Path, monkeypat
     assert reference.read_bytes() == b"reference"
     assert {entry.path for entry in repo.status()} == {"作品/絵.psd"}
 
-    repo.restore(second, discard=True)
+    repo.restore(second)
     assert illustration.read_bytes() == b"pixels-v2"
     assert illustration.stat().st_mtime_ns == second_mtime_ns
 
@@ -104,6 +104,45 @@ def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.
         repo.set_branch_comment("missing", "nope")
 
 
+def test_switch_allows_saved_snapshot_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"main")
+    repo.track([asset])
+    main_commit = repo.commit("main")
+    repo.create_branch("other")
+    repo.switch("other")
+    asset.write_bytes(b"other")
+    other_commit = repo.commit("other")
+    repo.restore(main_commit, discard=True)
+
+    repo.switch("other")
+
+    assert repo.head_commit() == other_commit
+    assert asset.read_bytes() == b"other"
+    assert repo.status() == []
+
+
+def test_switch_rejects_unsaved_changes_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"main")
+    repo.track([asset])
+    repo.commit("main")
+    repo.create_branch("other")
+    repo.switch("other")
+    asset.write_bytes(b"other")
+    repo.commit("other")
+    asset.write_bytes(b"unsaved")
+
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.switch("main")
+
+
 def test_discard_refuses_to_delete_never_committed_tracked_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -127,6 +166,134 @@ def test_discard_refuses_to_delete_never_committed_tracked_files(
     with pytest.raises(SproutError, match="never been committed"):
         repo.restore(main_commit, discard=True)
     assert added.read_bytes() == b"only copy"
+
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.restore(main_commit)
+    assert added.read_bytes() == b"only copy"
+
+
+def test_restore_moves_between_saved_commits_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("v1")
+    asset.write_bytes(b"v2")
+    second = repo.commit("v2")
+
+    repo.restore(first, discard=True)
+    assert asset.read_bytes() == b"v1"
+    repo.restore("main")
+
+    assert repo.head_commit() == second
+    assert asset.read_bytes() == b"v2"
+    assert repo.status() == []
+
+
+def test_restore_can_return_to_tip_that_deleted_restored_file_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"saved")
+    repo.track([asset])
+    old_commit = repo.commit("add asset")
+    asset.unlink()
+    latest_commit = repo.commit("remove asset")
+
+    repo.restore(old_commit, discard=True)
+    assert asset.read_bytes() == b"saved"
+    repo.restore("main")
+
+    assert repo.head_commit() == latest_commit
+    assert not asset.exists()
+    assert repo.status() == []
+
+
+def test_restore_can_leave_deleted_snapshot_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("add asset")
+    asset.unlink()
+    deleted_commit = repo.commit("remove asset")
+    asset.write_bytes(b"v2")
+    repo.track([asset])
+    latest_commit = repo.commit("add asset again")
+
+    repo.restore(deleted_commit, discard=True)
+    assert not asset.exists()
+    repo.restore("main")
+
+    assert repo.head_commit() == latest_commit
+    assert asset.read_bytes() == b"v2"
+    assert repo.status() == []
+
+
+def test_manual_delete_still_requires_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("add asset")
+    asset.unlink()
+    repo.commit("remove asset")
+    asset.write_bytes(b"v2")
+    repo.track([asset])
+    repo.commit("add asset again")
+
+    asset.unlink()
+
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.restore("main")
+
+
+def test_restore_refuses_to_delete_edited_restored_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"saved")
+    repo.track([asset])
+    old_commit = repo.commit("add asset")
+    asset.unlink()
+    repo.commit("remove asset")
+
+    repo.restore(old_commit, discard=True)
+    asset.write_bytes(b"edited after restore")
+
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.restore("main")
+    with pytest.raises(SproutError, match="never been committed"):
+        repo.restore("main", discard=True)
+    assert asset.read_bytes() == b"edited after restore"
+
+
+def test_restore_can_discard_saved_file_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("v1")
+    asset.write_bytes(b"v2")
+    repo.commit("v2")
+
+    asset.write_bytes(b"unsaved edit")
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.restore("main")
+
+    repo.restore("main", discard=True)
+    assert asset.read_bytes() == b"v2"
+    assert repo.status() == []
 
 
 def test_untracked_file_is_never_overwritten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,6 +325,65 @@ def test_rejects_outside_paths_and_metadata(tmp_path: Path, monkeypatch: pytest.
         repo.track([outside_dir])
     with pytest.raises(SproutError, match="metadata"):
         repo.track([repo.db_path])
+
+
+def test_move_tracked_file_updates_file_and_tracking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    source = write(repo.root, "old.txt", b"content")
+    repo.track([source])
+    first = repo.commit("add file")
+
+    assert repo.move(source, Path("dir/new.txt")) == ("old.txt", "dir/new.txt")
+    assert not source.exists()
+    moved = repo.root / "dir/new.txt"
+    assert moved.read_bytes() == b"content"
+    assert repo.tracked() == {"dir/new.txt"}
+    assert {(entry.state, entry.path) for entry in repo.status()} == {
+        ("deleted", "old.txt"),
+        ("added", "dir/new.txt"),
+    }
+
+    second = repo.commit("move file")
+    assert repo.status() == []
+    repo.restore(first, discard=True)
+    assert source.read_bytes() == b"content"
+    assert not moved.exists()
+    repo.restore(second, discard=True)
+    assert moved.read_bytes() == b"content"
+    assert not source.exists()
+
+
+def test_move_rejects_invalid_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    tracked = write(repo.root, "tracked.txt", b"tracked")
+    untracked = write(repo.root, "untracked.txt", b"untracked")
+    existing = write(repo.root, "existing.txt", b"existing")
+    directory = repo.root / "dir"
+    directory.mkdir()
+    repo.track([tracked])
+
+    with pytest.raises(SproutError, match="not tracked"):
+        repo.move(untracked, Path("new.txt"))
+    with pytest.raises(SproutError, match="does not exist"):
+        repo.move(Path("missing.txt"), Path("new.txt"))
+    with repo.connect() as db:
+        db.execute("INSERT INTO tracked_paths(path) VALUES('dir')")
+    with pytest.raises(SproutError, match="not a file"):
+        repo.move(directory, Path("new.txt"))
+    with pytest.raises(SproutError, match="destination already exists"):
+        repo.move(tracked, existing)
+    with repo.connect() as db:
+        db.execute("INSERT INTO tracked_paths(path) VALUES('reserved.txt')")
+    with pytest.raises(SproutError, match="already tracked"):
+        repo.move(tracked, Path("reserved.txt"))
+    with pytest.raises(SproutError, match="outside"):
+        repo.move(tracked, tmp_path / "outside.txt")
+    with pytest.raises(SproutError, match="metadata"):
+        repo.move(tracked, repo.control / "moved.txt")
 
 
 def test_tracking_directory_does_not_follow_nested_symlink_dirs(
