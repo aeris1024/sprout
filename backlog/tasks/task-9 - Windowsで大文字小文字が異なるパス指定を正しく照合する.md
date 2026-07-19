@@ -1,13 +1,18 @@
 ---
 id: TASK-9
 title: Windowsで大文字小文字が異なるパス指定を正しく照合する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@cursor'
 created_date: '2026-07-15 16:16'
+updated_date: '2026-07-19 19:17'
 labels: []
 dependencies: []
 references:
   - src/sprout/repository.py
+modified_files:
+  - src/sprout/repository.py
+  - tests/test_repository.py
 priority: low
 type: bug
 ordinal: 9000
@@ -27,7 +32,27 @@ ordinal: 9000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Windowsで、大文字小文字だけが異なる入力でも削除済み追跡ファイルをuntrackできる
-- [ ] #2 ケース照合の挙動がテストで検証されている(非Windows環境ではスキップ可)
-- [ ] #3 macOS/Linuxの従来動作は変わらない
+- [x] #1 Windowsで、大文字小文字だけが異なる入力でも削除済み追跡ファイルをuntrackできる
+- [x] #2 ケース照合の挙動がテストで検証されている(非Windows環境ではスキップ可)
+- [x] #3 macOS/Linuxの従来動作は変わらない
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Windowsだけ追跡パス照合用キーをnormcaseで正規化する。
+2. untrackの完全一致・子孫一致に正規化キーを使い、非Windowsは従来のケース区別を保つ。
+3. Windows限定テストと非Windowsの回帰テストを追加する。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Windowsではos.path.normcaseによる追跡パス照合をuntrackへ適用し、非Windowsでは文字列を変更しない。Windowsケース違いテストが成功し、非Windows回帰テストも追加した。全体検証: uv run pytest (41 passed, 2 skipped)。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Windowsで削除済み追跡ファイルをケース違いの指定でもuntrackできるようにし、プラットフォーム別の回帰テストを追加した。全テスト成功。
+<!-- SECTION:FINAL_SUMMARY:END -->

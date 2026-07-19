@@ -154,3 +154,15 @@ def test_move_rejects_untracked_source(tmp_path: Path, monkeypatch) -> None:
     result = invoke(["move", "draft.txt", "archive/draft.txt"], project, monkeypatch)
     assert result.exit_code != 0
     assert "path is not tracked" in str(result.exception)
+
+
+def test_discard_help_describes_tracked_and_untracked_behavior(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for command in ("switch", "restore"):
+        result = invoke([command, "--help"], tmp_path, monkeypatch)
+        assert result.exit_code == 0
+        help_text = " ".join(result.stdout.split())
+        assert "Discard all tracked changes" in help_text
+        assert "untracked" in help_text
+        assert "untouched" in help_text

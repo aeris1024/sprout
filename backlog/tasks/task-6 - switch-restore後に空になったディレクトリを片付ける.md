@@ -1,13 +1,18 @@
 ---
 id: TASK-6
 title: switch/restore後に空になったディレクトリを片付ける
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@cursor'
 created_date: '2026-07-15 16:15'
+updated_date: '2026-07-19 19:17'
 labels: []
 dependencies: []
 references:
   - src/sprout/repository.py
+modified_files:
+  - src/sprout/repository.py
+  - tests/test_repository.py
 priority: low
 type: bug
 ordinal: 6000
@@ -31,8 +36,28 @@ ordinal: 6000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ブランチ切り替えでファイルが無くなったディレクトリが空であれば削除される
-- [ ] #2 未追跡ファイルが残るディレクトリは削除されない
-- [ ] #3 プロジェクトルートと`.sprout`は削除されない
-- [ ] #4 空ディレクトリの削除がテストで検証されている
+- [x] #1 ブランチ切り替えでファイルが無くなったディレクトリが空であれば削除される
+- [x] #2 未追跡ファイルが残るディレクトリは削除されない
+- [x] #3 プロジェクトルートと`.sprout`は削除されない
+- [x] #4 空ディレクトリの削除がテストで検証されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. materializeで対象から除かれる追跡パスの親ディレクトリを収集する。
+2. 正常完了後に深い順で空ディレクトリだけを削除し、rootと.sproutを保護する。
+3. 空・非空ディレクトリのテストを追加する。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+materialize成功後、除去した追跡パスの親を深い順にrmdirし、非空ディレクトリ、root、.sproutを維持する実装とテストを追加した。検証: uv run pytest (41 passed, 2 skipped)。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+switch/restore後に不要となった空ディレクトリを安全に削除し、未追跡ファイルを含むディレクトリと管理領域を保持するテストを追加した。全テスト成功。
+<!-- SECTION:FINAL_SUMMARY:END -->
