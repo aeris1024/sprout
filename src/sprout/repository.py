@@ -21,6 +21,7 @@ CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 SCHEMA_VERSION = "1"
 HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
+HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
 
 
@@ -199,6 +200,10 @@ class Repository:
             raise SproutError(f"cannot track Sprout metadata: {value}")
         return relative.as_posix()
 
+    @staticmethod
+    def _path_key(path: str) -> str:
+        return os.path.normcase(path) if os.name == "nt" else path
+
     @locked
     def track(self, values: list[Path]) -> list[str]:
         paths: set[str] = set()
@@ -237,8 +242,14 @@ class Repository:
             tracked = [row[0] for row in db.execute("SELECT path FROM tracked_paths")]
             for value in values:
                 relative = self._relative_file(value, must_exist=False)
-                prefix = relative.rstrip("/") + "/"
-                requested.extend(p for p in tracked if p == relative or p.startswith(prefix))
+                relative_key = self._path_key(relative)
+                prefix_key = relative_key.rstrip("/\\") + os.sep
+                requested.extend(
+                    path
+                    for path in tracked
+                    if self._path_key(path) == relative_key
+                    or self._path_key(path).startswith(prefix_key)
+                )
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in set(requested)))
         return sorted(set(requested))
 
@@ -484,6 +495,8 @@ class Repository:
                 if branch[0] is None:
                     raise SproutError(f"branch has no commits: {value}")
                 return branch[0]
+            if HEX_COMMIT_REFERENCE.fullmatch(value) is None:
+                raise SproutError(f"unknown commit: {value}")
             rows = db.execute("SELECT id FROM commits WHERE id LIKE ?", (value + "%",)).fetchall()
         if not rows:
             raise SproutError(f"unknown commit: {value}")
@@ -612,6 +625,20 @@ class Repository:
                 db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (head_branch,))
             db.execute("UPDATE meta SET value='' WHERE key='active_operation'")
 
+    def _remove_empty_parents(self, paths: set[str]) -> None:
+        candidates: set[Path] = set()
+        for relative in paths:
+            directory = (self.root / Path(relative)).parent
+            while directory != self.root:
+                if directory != self.control:
+                    candidates.add(directory)
+                directory = directory.parent
+        for directory in sorted(candidates, key=lambda path: len(path.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
     def _materialize(self, target: dict[str, FileState], *, head_branch: str | None = None) -> None:
         current = self.tracked()
         self._verify_manifest(target)
@@ -654,6 +681,7 @@ class Repository:
                 # Record installation before metadata work so rollback includes it.
                 os.utime(destination, ns=(target[relative].mtime_ns, target[relative].mtime_ns))
             self._finalize_materialization(target, head_branch)
+            self._remove_empty_parents(current - set(target))
             operation_complete = True
         except Exception:
             try:
@@ -669,14 +697,6 @@ class Repository:
         finally:
             if operation_complete or not active_registered:
                 shutil.rmtree(operation_dir, ignore_errors=True)
-
-    def _is_saved_file_state(self, relative: str, object_hash: str, size: int) -> bool:
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT 1 FROM commit_files WHERE path=? AND object_hash=? AND size=? LIMIT 1",
-                (relative, object_hash, size),
-            ).fetchone()
-        return row is not None
 
     def _working_content_signature(self) -> dict[str, tuple[str, int]] | None:
         signature: dict[str, tuple[str, int]] = {}
@@ -713,40 +733,12 @@ class Repository:
             return True
         return not self._is_saved_snapshot(signature)
 
-    def _refuse_losing_added_files(self, target: dict[str, FileState]) -> None:
-        current = self.tracked()
-        head = self.manifest(self.head_commit())
-        unsafe = []
-        for relative in sorted(current - set(head)):
-            path = self.root / Path(relative)
-            if not path.is_file():
-                continue
-            object_hash, size = self.hash_file(path)
-            if relative in target and (target[relative].object_hash, target[relative].size) == (
-                object_hash,
-                size,
-            ):
-                continue
-            if self._is_saved_file_state(relative, object_hash, size):
-                continue
-            unsafe.append(relative)
-        if unsafe:
-            paths = ", ".join(unsafe[:3])
-            if len(unsafe) > 3:
-                paths += f", ... ({len(unsafe)} files)"
-            raise SproutError(
-                "discard would delete tracked files that have never been committed; "
-                f"commit or untrack them first: {paths}"
-            )
-
     @locked
     def restore(self, value: str, *, discard: bool = False) -> str:
         if self._has_unsaved_changes() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         commit_id = self.resolve_commit(value)
         target = self.manifest(commit_id)
-        if discard:
-            self._refuse_losing_added_files(target)
         self._materialize(target)
         return commit_id
 
@@ -759,7 +751,5 @@ class Repository:
         if self._has_unsaved_changes() and not discard:
             raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
         target = self.manifest(row[0])
-        if discard:
-            self._refuse_losing_added_files(target)
         self._materialize(target, head_branch=name)
         return row[0]

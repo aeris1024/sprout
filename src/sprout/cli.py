@@ -167,7 +167,13 @@ def branch(
 @app.command(name="switch")
 def switch_command(
     branch_name: Annotated[str, typer.Argument()],
-    discard: Annotated[bool, typer.Option("--discard", help="Discard tracked, uncommitted changes")] = False,
+    discard: Annotated[
+        bool,
+        typer.Option(
+            "--discard",
+            help="Discard all tracked changes; leave untracked files untouched",
+        ),
+    ] = False,
 ) -> None:
     """Switch to a branch and restore its tip."""
     repo().switch(branch_name, discard=discard)
@@ -177,7 +183,13 @@ def switch_command(
 @app.command()
 def restore(
     commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")],
-    discard: Annotated[bool, typer.Option("--discard", help="Discard tracked, uncommitted changes")] = False,
+    discard: Annotated[
+        bool,
+        typer.Option(
+            "--discard",
+            help="Discard all tracked changes; leave untracked files untouched",
+        ),
+    ] = False,
 ) -> None:
     """Restore a snapshot without moving the branch tip."""
     commit_id = repo().restore(commit, discard=discard)
