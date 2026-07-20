@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -632,6 +633,77 @@ def test_mutations_are_rejected_while_repository_is_locked(
     with repo.lock():
         with pytest.raises(SproutError, match="already running"):
             repo.track([asset])
+
+
+def test_discover_skips_lock_when_no_active_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+
+    def refuse_lock(self: Repository):
+        raise AssertionError("lock should not be acquired when active_operation is empty")
+
+    monkeypatch.setattr(Repository, "lock", refuse_lock)
+    discovered = Repository.discover(repo.root)
+    assert discovered.root == repo.root
+
+
+def test_status_and_log_succeed_while_repository_is_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial")
+
+    with repo.lock():
+        discovered = Repository.discover(repo.root)
+        assert discovered.status() == []
+        rows = discovered.log()
+        assert len(rows) == 1
+        assert rows[0]["id"] == commit_id
+
+
+def test_discover_recovers_only_when_active_operation_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    lock_calls: list[str] = []
+    original_lock = Repository.lock
+
+    @contextmanager
+    def tracking_lock(self: Repository):
+        lock_calls.append("lock")
+        with original_lock(self):
+            yield
+
+    monkeypatch.setattr(Repository, "lock", tracking_lock)
+
+    Repository.discover(repo.root)
+    assert lock_calls == []
+
+    asset = write(repo.root, "asset.bin", b"original")
+    repo.track([asset])
+    repo.commit("initial")
+    operation_id = "restore-interrupted"
+    operation_dir = repo.tmp / operation_id
+    backup = operation_dir / "backup"
+    backup.mkdir(parents=True)
+    os.replace(asset, backup / "asset.bin")
+    asset.write_bytes(b"partial replacement")
+    (operation_dir / "plan.json").write_text(json.dumps({"new_paths": []}), encoding="utf-8")
+    repo._set_active_operation(operation_id)
+
+    lock_calls.clear()
+    recovered = Repository.discover(repo.root)
+    assert lock_calls == ["lock"]
+    assert asset.read_bytes() == b"original"
+    assert not operation_dir.exists()
+    with recovered.connect() as db:
+        assert db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()[0] == ""
 
 
 def test_rejects_empty_commit_ref_and_hex_branch_names(
