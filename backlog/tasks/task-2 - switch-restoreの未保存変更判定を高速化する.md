@@ -1,13 +1,18 @@
 ---
 id: TASK-2
 title: switch/restoreの未保存変更判定を高速化する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@cursor'
 created_date: '2026-07-15 16:14'
+updated_date: '2026-07-20 09:45'
 labels: []
 dependencies: []
 references:
   - src/sprout/repository.py
+modified_files:
+  - src/sprout/repository.py
+  - tests/test_repository.py
 priority: medium
 type: enhancement
 ordinal: 2000
@@ -31,7 +36,32 @@ ordinal: 2000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 未コミット変更の判定時、各追跡ファイルのハッシュ計算が1回で済む
-- [ ] #2 `_is_saved_snapshot`が全履歴のcommit_filesを一括でメモリに展開しない
-- [ ] #3 discard要否の判定結果が従来と同一である(既存テストが全てパスする)
+- [x] #1 未コミット変更の判定時、各追跡ファイルのハッシュ計算が1回で済む
+- [x] #2 `_is_saved_snapshot`が全履歴のcommit_filesを一括でメモリに展開しない
+- [x] #3 discard要否の判定結果が従来と同一である(既存テストが全てパスする)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. `_has_unsaved_changes` で追跡ファイルのハッシュを1回だけ計算し、その結果で status 相当の変更有無を判定する（status() の二重ハッシュをやめる）
+2. 欠けている追跡ファイルなど、既存の discard 判定セマンティクスは維持する
+3. `_is_saved_snapshot` はファイル数一致の候補コミットだけを SQL で絞り込み、その manifest だけを比較する
+4. ハッシュ回数・全件展開しないこと・既存 discard 挙動をテストで検証する
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+実装: `_has_unsaved_changes` が追跡ファイルを1回だけハッシュし status 相当判定と snapshot 判定に再利用。`_is_saved_snapshot` は COUNT 一致の候補のみ SQL で絞り込み。
+検証: pytest → 50 passed, 2 skipped。
+- AC1: test_has_unsaved_changes_hashes_each_tracked_file_once
+- AC2: test_is_saved_snapshot_does_not_load_all_commit_files
+- AC3: 既存 discard/switch/restore 系を含む全テスト通過
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+switch/restore の未保存変更判定で追跡ファイルの二重ハッシュをやめ、保存済みスナップショット照合も候補コミットのみ読むようにした。discard 要否は従来どおり。pytest 50 passed / 2 skipped で AC1–3 を確認。
+<!-- SECTION:FINAL_SUMMARY:END -->

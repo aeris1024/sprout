@@ -144,6 +144,75 @@ def test_switch_rejects_unsaved_changes_without_discard(
         repo.switch("main")
 
 
+def test_has_unsaved_changes_hashes_each_tracked_file_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "first.bin", b"one")
+    second = write(repo.root, "second.bin", b"two")
+    repo.track([first, second])
+    repo.commit("initial")
+    first.write_bytes(b"changed")
+
+    calls: list[str] = []
+    original = Repository.hash_file
+
+    @staticmethod
+    def counting_hash(path: Path) -> tuple[str, int]:
+        calls.append(path.relative_to(repo.root).as_posix())
+        return original(path)
+
+    monkeypatch.setattr(Repository, "hash_file", counting_hash)
+    assert repo._has_unsaved_changes() is True
+    assert sorted(calls) == ["first.bin", "second.bin"]
+    assert len(calls) == 2
+
+
+def test_is_saved_snapshot_does_not_load_all_commit_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("first")
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    asset.write_bytes(b"v1")
+    signature = {
+        "asset.bin": Repository.hash_file(asset),
+    }
+
+    queries: list[str] = []
+    original_connect = repo.connect
+
+    @contextmanager
+    def guarded_connect():
+        with original_connect() as db:
+
+            class GuardedConnection:
+                def execute(self, sql: str, parameters=()):
+                    queries.append(" ".join(sql.split()))
+                    return db.execute(sql, parameters)
+
+                def __getattr__(self, name: str):
+                    return getattr(db, name)
+
+            yield GuardedConnection()
+
+    monkeypatch.setattr(repo, "connect", guarded_connect)
+    assert repo._is_saved_snapshot(signature) is True
+    assert any("GROUP BY commit_id" in sql and "HAVING COUNT(*)" in sql for sql in queries)
+    assert any("WHERE commit_id=?" in sql for sql in queries)
+    assert not any(
+        "FROM commit_files" in sql
+        and "WHERE" not in sql
+        and "GROUP BY" not in sql
+        for sql in queries
+    )
+
+
 def test_discard_removes_never_committed_tracked_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
