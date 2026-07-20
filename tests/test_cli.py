@@ -159,13 +159,18 @@ def test_move_rejects_untracked_source(tmp_path: Path, monkeypatch) -> None:
 def test_discard_help_describes_tracked_and_untracked_behavior(
     tmp_path: Path, monkeypatch
 ) -> None:
-    for command in ("switch", "restore"):
-        result = invoke([command, "--help"], tmp_path, monkeypatch)
-        assert result.exit_code == 0
-        help_text = " ".join(result.stdout.split())
-        assert "Discard all tracked changes" in help_text
-        assert "untracked" in help_text
-        assert "untouched" in help_text
+    result = invoke(["switch", "--help"], tmp_path, monkeypatch)
+    assert result.exit_code == 0
+    help_text = " ".join(result.stdout.split())
+    assert "Discard all tracked changes" in help_text
+    assert "untracked" in help_text
+    assert "untouched" in help_text
+
+    result = invoke(["restore", "--help"], tmp_path, monkeypatch)
+    assert result.exit_code == 0
+    help_text = " ".join(result.stdout.split())
+    assert "Discard tracked changes on restored paths" in help_text
+    assert "untouched" in help_text
 
 
 def test_gc_cli_reports_removed_objects_and_supports_dry_run(
@@ -198,3 +203,25 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     assert "Removed 1 objects, 1 temp files (7 bytes)" in result.stdout
     assert not orphan.exists()
     assert not stale_temp.exists()
+
+
+def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    first = project / "first.bin"
+    second = project / "second.bin"
+    first.write_bytes(b"v1")
+    second.write_bytes(b"v1")
+    assert invoke(["track", "first.bin", "second.bin"], project, monkeypatch).exit_code == 0
+    result = invoke(["commit", "-m", "old"], project, monkeypatch)
+    assert result.exit_code == 0
+    commit_id = result.stdout.split()[1].rstrip("]")
+    first.write_bytes(b"v2")
+    second.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "new"], project, monkeypatch).exit_code == 0
+
+    restored = invoke(["restore", commit_id, "first.bin"], project, monkeypatch)
+    assert restored.exit_code == 0
+    assert "Restored paths from" in restored.stdout
+    assert first.read_bytes() == b"v1"
+    assert second.read_bytes() == b"v2"
