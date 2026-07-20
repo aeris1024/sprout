@@ -229,6 +229,28 @@ def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:
     assert asset.read_bytes() == b"data"
 
 
+def test_stats_cli_shows_counts_and_dedup(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    twin = project / "twin.bin"
+    asset.write_bytes(b"abcd")
+    twin.write_bytes(b"abcd")
+    assert invoke(["track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "shared"], project, monkeypatch).exit_code == 0
+
+    result = invoke(["stats"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "Commits:       1" in result.stdout
+    assert "Branches:      1" in result.stdout
+    assert "Tracked paths: 2" in result.stdout
+    assert "Objects:       1 (4 bytes)" in result.stdout
+    assert "Logical size:  8 bytes" in result.stdout
+    assert "Unique size:   4 bytes" in result.stdout
+    assert "Dedup saved:   4 bytes" in result.stdout
+    assert asset.read_bytes() == b"abcd"
+
+
 def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

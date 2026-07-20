@@ -1,9 +1,11 @@
 ---
 id: TASK-33
 title: リポジトリの容量と重複排除効果を確認できるようにする
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@cursor'
 created_date: '2026-07-20 10:18'
+updated_date: '2026-07-20 10:36'
 labels: []
 dependencies: []
 references:
@@ -36,10 +38,28 @@ ordinal: 34000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 objectsの合計サイズと件数を表示できる
-- [ ] #2 コミット数など基本的なリポジトリ統計を表示できる
-- [ ] #3 可能なら重複排除による節約量が分かる
-- [ ] #4 実行しても作業ツリーや追跡状態は変わらない
-- [ ] #5 READMEに使い方が追記されている
-- [ ] #6 統計表示がテストで検証されている
+- [x] #1 objectsの合計サイズと件数を表示できる
+- [x] #2 コミット数など基本的なリポジトリ統計を表示できる
+- [x] #3 可能なら重複排除による節約量が分かる
+- [x] #4 実行しても作業ツリーや追跡状態は変わらない
+- [x] #5 READMEに使い方が追記されている
+- [x] #6 統計表示がテストで検証されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add read-only Repository.stats with commits/branches/tracked counts, on-disk object count/size, logical size (sum of commit_files sizes), unique size (per distinct hash), and dedup savings. 2. Add sprout stats CLI. 3. README. 4. Tests for dedup savings and non-mutation.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Verified with pytest stats dedup/savings tests and CLI output; working tree unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added read-only sprout stats for object size/counts, commit/branch/tracked counts, and dedup savings (logical vs unique). Verified with repository and CLI tests; README updated.
+<!-- SECTION:FINAL_SUMMARY:END -->

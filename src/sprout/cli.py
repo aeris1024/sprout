@@ -277,6 +277,19 @@ def doctor() -> None:
     raise typer.Exit(1)
 
 
+@app.command()
+def stats() -> None:
+    """Show repository size and basic counts."""
+    result = repo().stats()
+    typer.echo(f"Commits:       {result.commits}")
+    typer.echo(f"Branches:      {result.branches}")
+    typer.echo(f"Tracked paths: {result.tracked_paths}")
+    typer.echo(f"Objects:       {result.objects} ({result.objects_bytes} bytes)")
+    typer.echo(f"Logical size:  {result.logical_bytes} bytes")
+    typer.echo(f"Unique size:   {result.unique_bytes} bytes")
+    typer.echo(f"Dedup saved:   {result.dedup_saved_bytes} bytes")
+
+
 def _system_exit_code(value: object) -> int:
     if value is None:
         return 0

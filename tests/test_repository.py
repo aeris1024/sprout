@@ -1137,6 +1137,35 @@ def test_doctor_detects_missing_and_corrupt_objects(
     assert repo.tracked() == {"kept.bin", "gone.bin"}
 
 
+def test_stats_reports_size_counts_and_dedup_savings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"abcd")
+    twin = write(repo.root, "twin.bin", b"abcd")
+    repo.track([asset, twin])
+    repo.commit("shared")
+    asset.write_bytes(b"efghij")
+    repo.commit("changed")
+    tracked_before = repo.tracked()
+    content_before = asset.read_bytes()
+
+    result = repo.stats()
+
+    assert result.commits == 2
+    assert result.branches == 1
+    assert result.tracked_paths == 2
+    assert result.objects == 2
+    assert result.objects_bytes == 4 + 6
+    # commit1: 4+4, commit2: 6+4
+    assert result.logical_bytes == 18
+    assert result.unique_bytes == 10
+    assert result.dedup_saved_bytes == 8
+    assert repo.tracked() == tracked_before
+    assert asset.read_bytes() == content_before
+
+
 def test_rejects_empty_commit_ref_and_hex_branch_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
