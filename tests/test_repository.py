@@ -1087,6 +1087,56 @@ def test_gc_is_rejected_while_repository_is_locked(
             repo.gc()
 
 
+def test_doctor_reports_ok_for_healthy_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"healthy")
+    repo.track([asset])
+    repo.commit("initial")
+    tracked_before = repo.tracked()
+    content_before = asset.read_bytes()
+
+    result = repo.doctor()
+
+    assert result.ok
+    assert result.checked_objects == 1
+    assert result.issues == ()
+    assert repo.tracked() == tracked_before
+    assert asset.read_bytes() == content_before
+
+
+def test_doctor_detects_missing_and_corrupt_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    kept = write(repo.root, "kept.bin", b"kept")
+    gone = write(repo.root, "gone.bin", b"gone")
+    repo.track([kept, gone])
+    repo.commit("initial")
+
+    kept_hash = repo.manifest(repo.head_commit())["kept.bin"].object_hash
+    gone_hash = repo.manifest(repo.head_commit())["gone.bin"].object_hash
+    (repo.objects / gone_hash[:2] / gone_hash).unlink()
+    (repo.objects / kept_hash[:2] / kept_hash).write_bytes(b"tampered")
+    stale_temp = repo.tmp / "object-doctor"
+    stale_temp.write_bytes(b"tmp")
+
+    result = repo.doctor()
+
+    assert not result.ok
+    assert result.checked_objects == 2
+    kinds = {issue.kind: issue.detail for issue in result.issues}
+    assert kinds["missing_object"] == gone_hash
+    assert kinds["corrupt_object"] == kept_hash
+    assert kinds["orphan_temp"] == "object-doctor"
+    assert kept.read_bytes() == b"kept"
+    assert gone.read_bytes() == b"gone"
+    assert repo.tracked() == {"kept.bin", "gone.bin"}
+
+
 def test_rejects_empty_commit_ref_and_hex_branch_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

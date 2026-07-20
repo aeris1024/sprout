@@ -262,6 +262,21 @@ def gc(
     )
 
 
+@app.command()
+def doctor() -> None:
+    """Inspect repository integrity without changing files."""
+    result = repo().doctor()
+    for issue in result.issues:
+        typer.echo(f"{issue.kind:<18} {issue.detail}")
+    if result.ok:
+        typer.echo(f"OK ({result.checked_objects} objects checked)")
+        return
+    typer.echo(
+        f"Found {len(result.issues)} issue(s) ({result.checked_objects} objects checked)"
+    )
+    raise typer.Exit(1)
+
+
 def _system_exit_code(value: object) -> int:
     if value is None:
         return 0

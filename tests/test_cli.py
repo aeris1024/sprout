@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from sprout.cli import app
 from sprout import cli
 from sprout.errors import SproutError
+from sprout.repository import Repository
 
 runner = CliRunner()
 
@@ -203,6 +204,29 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     assert "Removed 1 objects, 1 temp files (7 bytes)" in result.stdout
     assert not orphan.exists()
     assert not stale_temp.exists()
+
+
+def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
+
+    healthy = invoke(["doctor"], project, monkeypatch)
+    assert healthy.exit_code == 0
+    assert "OK (1 objects checked)" in healthy.stdout
+
+    repo = Repository.discover(project)
+    object_hash = repo.manifest(repo.head_commit())["asset.bin"].object_hash
+    (repo.objects / object_hash[:2] / object_hash).unlink()
+
+    broken = invoke(["doctor"], project, monkeypatch)
+    assert broken.exit_code == 1
+    assert f"missing_object     {object_hash}" in broken.stdout
+    assert "Found 1 issue(s) (1 objects checked)" in broken.stdout
+    assert asset.read_bytes() == b"data"
 
 
 def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
