@@ -85,8 +85,16 @@ sprout switch main
 sprout restore <commit-id>
 ```
 
+特定のファイルだけ昔の版に戻す場合は、コミットのあとにパスを指定します。ディレクトリを指定すると、そのコミット内の配下ファイルがまとめて復元されます。部分復元ではブランチ先端や、指定していない追跡ファイルの状態は変わりません。
+
+```powershell
+sprout restore <commit-id> docs/manual.bin
+sprout restore <commit-id> assets/
+```
+
 未保存の変更がある場合、Sproutはファイルを保護するため処理を中止します。
 変更を破棄してよい場合に限り、`--discard`を指定してください。
+部分復元では、復元対象のパスに未保存変更があるときだけ`--discard`が必要です。
 
 ```powershell
 sprout switch main --discard
@@ -153,7 +161,7 @@ sprout commit -m "ファイルを移動"
 | `show COMMIT` | コミットの詳細を表示する |
 | `branch [NAME]` | ブランチの一覧表示または作成を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
-| `restore COMMIT` | 指定したコミットを復元する |
+| `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
 
 コミットの指定には、完全なコミットID、一意に識別できるIDの先頭部分、またはブランチ名を使用できます。

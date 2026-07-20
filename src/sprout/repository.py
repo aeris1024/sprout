@@ -682,11 +682,19 @@ class Repository:
             os.fsync(file.fileno())
 
     def _finalize_materialization(
-        self, target: dict[str, FileState], head_branch: str | None
+        self, target: dict[str, FileState], head_branch: str | None, *, partial: bool = False
     ) -> None:
         with self.connect() as db:
-            db.execute("DELETE FROM tracked_paths")
-            db.executemany("INSERT INTO tracked_paths(path) VALUES(?)", ((p,) for p in target))
+            if partial:
+                db.executemany(
+                    "INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)",
+                    ((path,) for path in target),
+                )
+            else:
+                db.execute("DELETE FROM tracked_paths")
+                db.executemany(
+                    "INSERT INTO tracked_paths(path) VALUES(?)", ((path,) for path in target)
+                )
             if head_branch is not None:
                 db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (head_branch,))
             db.execute("UPDATE meta SET value='' WHERE key='active_operation'")
@@ -705,7 +713,13 @@ class Repository:
             except OSError:
                 pass
 
-    def _materialize(self, target: dict[str, FileState], *, head_branch: str | None = None) -> None:
+    def _materialize(
+        self,
+        target: dict[str, FileState],
+        *,
+        head_branch: str | None = None,
+        partial: bool = False,
+    ) -> None:
         current = self.tracked()
         self._verify_manifest(target)
         for relative in set(target) - current:
@@ -718,7 +732,7 @@ class Repository:
         operation_dir.mkdir()
         staged = operation_dir / "staged"
         backup = operation_dir / "backup"
-        changed = current | set(target)
+        changed = set(target) if partial else current | set(target)
         plan = {"new_paths": sorted(set(target) - current)}
         active_registered = False
         operation_complete = False
@@ -746,8 +760,9 @@ class Repository:
                 os.replace(source, destination)
                 # Record installation before metadata work so rollback includes it.
                 os.utime(destination, ns=(target[relative].mtime_ns, target[relative].mtime_ns))
-            self._finalize_materialization(target, head_branch)
-            self._remove_empty_parents(current - set(target))
+            self._finalize_materialization(target, head_branch, partial=partial)
+            if not partial:
+                self._remove_empty_parents(current - set(target))
             operation_complete = True
         except Exception:
             try:
@@ -774,7 +789,28 @@ class Repository:
             signature[relative] = (object_hash, size)
         return signature
 
-    def _is_saved_snapshot(self, signature: dict[str, tuple[str, int]]) -> bool:
+    def _is_saved_snapshot(
+        self, signature: dict[str, tuple[str, int]], *, exact: bool = True
+    ) -> bool:
+        if not exact:
+            if not signature:
+                return True
+            with self.connect() as db:
+                matching: set[str] | None = None
+                for path, (object_hash, size) in signature.items():
+                    rows = {
+                        row[0]
+                        for row in db.execute(
+                            "SELECT commit_id FROM commit_files "
+                            "WHERE path=? AND object_hash=? AND size=?",
+                            (path, object_hash, size),
+                        )
+                    }
+                    matching = rows if matching is None else matching & rows
+                    if not matching:
+                        return False
+                return True
+
         file_count = len(signature)
         with self.connect() as db:
             if file_count == 0:
@@ -814,11 +850,20 @@ class Repository:
                     return True
         return False
 
-    def _has_unsaved_changes(self) -> bool:
+    def _has_unsaved_changes(self, paths: set[str] | None = None) -> bool:
         tracked = self.tracked()
         head = self.manifest(self.head_commit())
+        if paths is None:
+            hash_paths = tracked
+            status_paths = tracked | set(head)
+            exact = True
+        else:
+            hash_paths = tracked & paths
+            status_paths = paths
+            exact = False
+
         signature: dict[str, tuple[str, int]] | None = {}
-        for relative in sorted(tracked):
+        for relative in sorted(hash_paths):
             path = self.root / Path(relative)
             if not path.is_file():
                 signature = None
@@ -826,13 +871,15 @@ class Repository:
             signature[relative] = self.hash_file(path)
 
         has_changes = False
-        for relative in sorted(tracked | set(head)):
+        for relative in sorted(status_paths):
             path = self.root / Path(relative)
             if relative not in tracked or not path.is_file():
                 if relative in head:
                     has_changes = True
                 continue
-            assert signature is not None
+            if signature is None:
+                has_changes = True
+                continue
             if relative not in head:
                 has_changes = True
                 continue
@@ -844,15 +891,48 @@ class Repository:
             return False
         if signature is None:
             return True
-        return not self._is_saved_snapshot(signature)
+        return not self._is_saved_snapshot(signature, exact=exact)
+
+    def _resolve_restore_paths(
+        self, values: list[Path], manifest: dict[str, FileState]
+    ) -> set[str]:
+        selected: set[str] = set()
+        for value in values:
+            relative = self._relative_file(value, must_exist=False)
+            if relative in manifest:
+                selected.add(relative)
+                continue
+            prefix = relative.rstrip("/") + "/"
+            matches = {path for path in manifest if path.startswith(prefix)}
+            if not matches:
+                raise SproutError(f"path not in commit: {relative}")
+            selected.update(matches)
+        return selected
 
     @locked
-    def restore(self, value: str, *, discard: bool = False) -> str:
-        if self._has_unsaved_changes() and not discard:
-            raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
+    def restore(
+        self,
+        value: str,
+        paths: list[Path] | None = None,
+        *,
+        discard: bool = False,
+    ) -> str:
         commit_id = self.resolve_commit(value)
-        target = self.manifest(commit_id)
-        self._materialize(target)
+        commit_manifest = self.manifest(commit_id)
+        if paths:
+            selected = self._resolve_restore_paths(paths, commit_manifest)
+            if self._has_unsaved_changes(selected) and not discard:
+                raise SproutError(
+                    "working tree has uncommitted changes (use --discard to replace them)"
+                )
+            target = {path: commit_manifest[path] for path in selected}
+            self._materialize(target, partial=True)
+        else:
+            if self._has_unsaved_changes() and not discard:
+                raise SproutError(
+                    "working tree has uncommitted changes (use --discard to replace them)"
+                )
+            self._materialize(commit_manifest)
         return commit_id
 
     @locked

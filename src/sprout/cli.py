@@ -183,17 +183,24 @@ def switch_command(
 @app.command()
 def restore(
     commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")],
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(help="Optional files or directories to restore from the commit"),
+    ] = None,
     discard: Annotated[
         bool,
         typer.Option(
             "--discard",
-            help="Discard all tracked changes; leave untracked files untouched",
+            help="Discard tracked changes on restored paths; leave other files untouched",
         ),
     ] = False,
 ) -> None:
-    """Restore a snapshot without moving the branch tip."""
-    commit_id = repo().restore(commit, discard=discard)
-    typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
+    """Restore a snapshot, or only selected paths, without moving the branch tip."""
+    commit_id = repo().restore(commit, paths, discard=discard)
+    if paths:
+        typer.echo(f"Restored paths from {commit_id[:12]} (branch tip unchanged)")
+    else:
+        typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
 
 
 @app.command()

@@ -329,6 +329,106 @@ def test_restore_can_leave_deleted_snapshot_without_discard(
     assert repo.status() == []
 
 
+def test_partial_restore_updates_only_selected_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "keep.bin", b"keep-v1")
+    second = write(repo.root, "docs/manual.bin", b"manual-v1")
+    repo.track([first, second])
+    old = repo.commit("old")
+    first.write_bytes(b"keep-v2")
+    second.write_bytes(b"manual-v2")
+    repo.commit("new")
+    head_before = repo.head_commit()
+    tracked_before = repo.tracked()
+
+    first.write_bytes(b"keep-unsaved")
+    repo.restore(old, [Path("docs/manual.bin")])
+
+    assert second.read_bytes() == b"manual-v1"
+    assert first.read_bytes() == b"keep-unsaved"
+    assert repo.head_commit() == head_before
+    assert repo.head_branch() == "main"
+    assert repo.tracked() == tracked_before
+
+
+def test_partial_restore_expands_directory_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    nested = write(repo.root, "assets/a.bin", b"a1")
+    other = write(repo.root, "assets/b.bin", b"b1")
+    outside = write(repo.root, "root.bin", b"root1")
+    repo.track([nested, other, outside])
+    old = repo.commit("old")
+    nested.write_bytes(b"a2")
+    other.write_bytes(b"b2")
+    outside.write_bytes(b"root2")
+    repo.commit("new")
+
+    repo.restore(old, [Path("assets")])
+
+    assert nested.read_bytes() == b"a1"
+    assert other.read_bytes() == b"b1"
+    assert outside.read_bytes() == b"root2"
+
+
+def test_partial_restore_rejects_missing_commit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial")
+
+    with pytest.raises(SproutError, match="path not in commit"):
+        repo.restore(commit_id, [Path("missing.bin")])
+
+
+def test_partial_restore_requires_discard_only_for_selected_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "first.bin", b"v1")
+    second = write(repo.root, "second.bin", b"v1")
+    repo.track([first, second])
+    old = repo.commit("old")
+    first.write_bytes(b"v2")
+    second.write_bytes(b"v2")
+    repo.commit("new")
+    first.write_bytes(b"unsaved-first")
+    second.write_bytes(b"unsaved-second")
+
+    with pytest.raises(SproutError, match="uncommitted"):
+        repo.restore(old, [Path("first.bin")])
+    repo.restore(old, [Path("first.bin")], discard=True)
+
+    assert first.read_bytes() == b"v1"
+    assert second.read_bytes() == b"unsaved-second"
+
+
+def test_partial_restore_rejects_untracked_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"tracked")
+    repo.track([asset])
+    old = repo.commit("with asset")
+    asset.unlink()
+    repo.untrack([asset])
+    repo.commit("remove asset")
+    write(repo.root, "asset.bin", b"untracked")
+
+    with pytest.raises(SproutError, match="untracked path would be overwritten"):
+        repo.restore(old, [Path("asset.bin")])
+
+
 def test_manual_delete_still_requires_discard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
