@@ -138,7 +138,9 @@ def diff(
         return
     for entry in entries:
         if entry.state == "modified" and entry.old_size is not None and entry.new_size is not None:
-            typer.echo(f"{entry.state:<8} {entry.path}  ({entry.old_size} -> {entry.new_size})")
+            typer.echo(
+                f"{entry.state:<8} {entry.path}  ({entry.old_size} bytes -> {entry.new_size} bytes)"
+            )
         elif entry.state == "added" and entry.new_size is not None:
             typer.echo(f"{entry.state:<8} {entry.path}  ({entry.new_size} bytes)")
         elif entry.state == "deleted" and entry.old_size is not None:

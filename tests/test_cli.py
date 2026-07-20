@@ -243,9 +243,9 @@ def test_diff_cli_shows_commit_and_working_tree_changes(
 
     between = invoke(["diff", first_id, "main"], project, monkeypatch)
     assert between.exit_code == 0
-    assert "modified asset.bin  (2 -> 4)" in between.stdout
+    assert "modified asset.bin  (2 bytes -> 4 bytes)" in between.stdout
 
     asset.write_bytes(b"work")
     working = invoke(["diff"], project, monkeypatch)
     assert working.exit_code == 0
-    assert "modified asset.bin  (4 -> 4)" in working.stdout
+    assert "modified asset.bin  (4 bytes -> 4 bytes)" in working.stdout
