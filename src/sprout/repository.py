@@ -83,6 +83,16 @@ class StatusEntry:
     path: str
 
 
+@dataclass(frozen=True)
+class GcResult:
+    dry_run: bool
+    removed_objects: int
+    removed_temps: int
+    freed_bytes: int
+    objects: tuple[str, ...]
+    temps: tuple[str, ...]
+
+
 class Repository:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -531,6 +541,52 @@ class Repository:
                 rows.append(row)
                 current = row["parent_id"]
         return rows
+
+    def referenced_object_hashes(self) -> set[str]:
+        """Return object hashes still referenced by any commit."""
+        with self.connect() as db:
+            return {row[0] for row in db.execute("SELECT DISTINCT object_hash FROM commit_files")}
+
+    @locked
+    def gc(self, *, dry_run: bool = False) -> GcResult:
+        """Delete unreferenced objects and leftover object temp files."""
+        referenced = self.referenced_object_hashes()
+        object_targets: list[tuple[Path, int]] = []
+        if self.objects.is_dir():
+            for shard in sorted(path for path in self.objects.iterdir() if path.is_dir()):
+                for path in sorted(path for path in shard.iterdir() if path.is_file()):
+                    if path.name not in referenced:
+                        object_targets.append((path, path.stat().st_size))
+
+        temp_targets: list[tuple[Path, int]] = []
+        if self.tmp.is_dir():
+            for path in sorted(path for path in self.tmp.glob("object-*") if path.is_file()):
+                temp_targets.append((path, path.stat().st_size))
+
+        freed_bytes = sum(size for _, size in object_targets) + sum(size for _, size in temp_targets)
+        if not dry_run:
+            for path, _ in object_targets:
+                path.unlink()
+            if self.objects.is_dir():
+                for shard in sorted(
+                    (path for path in self.objects.iterdir() if path.is_dir()),
+                    key=lambda path: path.name,
+                ):
+                    try:
+                        shard.rmdir()
+                    except OSError:
+                        pass
+            for path, _ in temp_targets:
+                path.unlink(missing_ok=True)
+
+        return GcResult(
+            dry_run=dry_run,
+            removed_objects=len(object_targets),
+            removed_temps=len(temp_targets),
+            freed_bytes=freed_bytes,
+            objects=tuple(path.name for path, _ in object_targets),
+            temps=tuple(path.name for path, _ in temp_targets),
+        )
 
     def branches(self) -> list[tuple[str, str | None, str]]:
         with self.connect() as db:
