@@ -86,6 +86,14 @@ class StatusEntry:
 
 
 @dataclass(frozen=True)
+class DiffEntry:
+    state: str
+    path: str
+    old_size: int | None = None
+    new_size: int | None = None
+
+
+@dataclass(frozen=True)
 class IgnoreRule:
     pattern: str
     directory_only: bool
@@ -480,6 +488,49 @@ class Repository:
             if digest != head[relative].object_hash or size != head[relative].size:
                 result.append(StatusEntry("modified", relative))
         return result
+
+    @staticmethod
+    def diff_manifests(
+        before: dict[str, FileState], after: dict[str, FileState]
+    ) -> list[DiffEntry]:
+        result: list[DiffEntry] = []
+        for relative in sorted(set(before) | set(after)):
+            if relative not in before:
+                item = after[relative]
+                result.append(DiffEntry("added", relative, None, item.size))
+            elif relative not in after:
+                item = before[relative]
+                result.append(DiffEntry("deleted", relative, item.size, None))
+            else:
+                left = before[relative]
+                right = after[relative]
+                if left.object_hash != right.object_hash or left.size != right.size:
+                    result.append(DiffEntry("modified", relative, left.size, right.size))
+        return result
+
+    def _working_tree_manifest(self) -> dict[str, FileState]:
+        result: dict[str, FileState] = {}
+        for relative in self.tracked():
+            path = self.root / Path(relative)
+            if not path.is_file():
+                continue
+            digest, size = self.hash_file(path)
+            result[relative] = FileState(relative, digest, size, 0)
+        return result
+
+    def diff(
+        self, commit_a: str | None = None, commit_b: str | None = None
+    ) -> list[DiffEntry]:
+        if commit_a is None and commit_b is None:
+            before = self.manifest(self.head_commit())
+            after = self._working_tree_manifest()
+        elif commit_b is None:
+            before = self.manifest(self.resolve_commit(commit_a))
+            after = self._working_tree_manifest()
+        else:
+            before = self.manifest(self.resolve_commit(commit_a))
+            after = self.manifest(self.resolve_commit(commit_b))
+        return self.diff_manifests(before, after)
 
     def _store_object(self, source: Path) -> tuple[str, int]:
         fd, temp_name = tempfile.mkstemp(dir=self.tmp, prefix="object-")
