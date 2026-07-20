@@ -109,6 +109,19 @@ class GcResult:
     temps: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class DoctorIssue:
+    kind: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class DoctorResult:
+    ok: bool
+    checked_objects: int
+    issues: tuple[DoctorIssue, ...]
+
+
 class Repository:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -692,6 +705,39 @@ class Repository:
         """Return object hashes still referenced by any commit."""
         with self.connect() as db:
             return {row[0] for row in db.execute("SELECT DISTINCT object_hash FROM commit_files")}
+
+    def doctor(self) -> DoctorResult:
+        """Inspect repository integrity without changing the working tree."""
+        issues: list[DoctorIssue] = []
+        with self.connect() as db:
+            hashes = [
+                row[0]
+                for row in db.execute("SELECT DISTINCT object_hash FROM commit_files ORDER BY 1")
+            ]
+            active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
+            if active is not None and active[0]:
+                issues.append(
+                    DoctorIssue("active_operation", f"interrupted operation recorded: {active[0]}")
+                )
+
+        for object_hash in hashes:
+            path = self.objects / object_hash[:2] / object_hash
+            if not path.is_file():
+                issues.append(DoctorIssue("missing_object", object_hash))
+                continue
+            digest, _ = self.hash_file(path)
+            if digest != object_hash:
+                issues.append(DoctorIssue("corrupt_object", object_hash))
+
+        if self.tmp.is_dir():
+            for path in sorted(path for path in self.tmp.glob("object-*") if path.is_file()):
+                issues.append(DoctorIssue("orphan_temp", path.name))
+
+        return DoctorResult(
+            ok=not issues,
+            checked_objects=len(hashes),
+            issues=tuple(issues),
+        )
 
     @locked
     def gc(self, *, dry_run: bool = False) -> GcResult:
