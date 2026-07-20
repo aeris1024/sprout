@@ -121,6 +121,33 @@ def log_command() -> None:
 
 
 @app.command()
+def diff(
+    commit_a: Annotated[
+        str | None,
+        typer.Argument(help="First commit, or the commit to compare against the working tree"),
+    ] = None,
+    commit_b: Annotated[
+        str | None,
+        typer.Argument(help="Second commit; omit to compare against the working tree"),
+    ] = None,
+) -> None:
+    """Show file-level differences between commits or the working tree."""
+    entries = repo().diff(commit_a, commit_b)
+    if not entries:
+        typer.echo("No differences")
+        return
+    for entry in entries:
+        if entry.state == "modified" and entry.old_size is not None and entry.new_size is not None:
+            typer.echo(f"{entry.state:<8} {entry.path}  ({entry.old_size} -> {entry.new_size})")
+        elif entry.state == "added" and entry.new_size is not None:
+            typer.echo(f"{entry.state:<8} {entry.path}  ({entry.new_size} bytes)")
+        elif entry.state == "deleted" and entry.old_size is not None:
+            typer.echo(f"{entry.state:<8} {entry.path}  ({entry.old_size} bytes)")
+        else:
+            typer.echo(f"{entry.state:<8} {entry.path}")
+
+
+@app.command()
 def show(commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")]) -> None:
     """Show a commit and its files."""
     row, files = repo().commit_info(commit)

@@ -225,3 +225,27 @@ def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
     assert "Restored paths from" in restored.stdout
     assert first.read_bytes() == b"v1"
     assert second.read_bytes() == b"v2"
+
+
+def test_diff_cli_shows_commit_and_working_tree_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = invoke(["commit", "-m", "first"], project, monkeypatch)
+    assert first.exit_code == 0
+    first_id = first.stdout.split()[1].rstrip("]")
+    asset.write_bytes(b"v2xx")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+
+    between = invoke(["diff", first_id, "main"], project, monkeypatch)
+    assert between.exit_code == 0
+    assert "modified asset.bin  (2 -> 4)" in between.stdout
+
+    asset.write_bytes(b"work")
+    working = invoke(["diff"], project, monkeypatch)
+    assert working.exit_code == 0
+    assert "modified asset.bin  (4 -> 4)" in working.stdout

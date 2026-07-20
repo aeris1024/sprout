@@ -76,6 +76,62 @@ def test_status_tracks_add_modify_delete_and_untrack(tmp_path: Path, monkeypatch
     assert repo.status() == []
 
 
+def test_diff_classifies_added_modified_deleted_between_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "keep.bin", b"same")
+    second = write(repo.root, "old.bin", b"remove-me")
+    repo.track([first, second])
+    older = repo.commit("older")
+
+    second.unlink()
+    repo.untrack([second])
+    first.write_bytes(b"changed")
+    added = write(repo.root, "new.bin", b"brand-new")
+    repo.track([first, added])
+    newer = repo.commit("newer")
+
+    entries = repo.diff(older, newer)
+    assert [(entry.state, entry.path) for entry in entries] == [
+        ("modified", "keep.bin"),
+        ("added", "new.bin"),
+        ("deleted", "old.bin"),
+    ]
+    modified = entries[0]
+    assert modified.old_size == len(b"same")
+    assert modified.new_size == len(b"changed")
+
+
+def test_diff_against_working_tree_and_commit_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first")
+    repo.create_branch("other")
+    asset.write_bytes(b"v2")
+    second = repo.commit("second")
+
+    asset.write_bytes(b"working")
+    working = repo.diff()
+    assert [(entry.state, entry.path, entry.old_size, entry.new_size) for entry in working] == [
+        ("modified", "asset.bin", len(b"v2"), len(b"working")),
+    ]
+
+    against_first = repo.diff(first[:12])
+    assert [(entry.state, entry.path) for entry in against_first] == [("modified", "asset.bin")]
+
+    between_branches = repo.diff("other", "main")
+    assert [(entry.state, entry.path) for entry in between_branches] == [("modified", "asset.bin")]
+    between_commits = repo.diff(first, second)
+    assert [(entry.state, entry.path) for entry in between_commits] == [("modified", "asset.bin")]
+    assert repo.diff("main", second) == []
+
+
 def test_sproutignore_skips_files_for_directory_track_and_untracked_listing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
