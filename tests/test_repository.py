@@ -949,6 +949,45 @@ def test_status_and_log_succeed_while_repository_is_locked(
         assert rows[0]["id"] == commit_id
 
 
+def test_log_path_filters_to_commits_that_change_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    target = write(repo.root, "target.bin", b"v1")
+    other = write(repo.root, "other.bin", b"other-v1")
+    repo.track([target, other])
+    first = repo.commit("add both")
+
+    other.write_bytes(b"other-v2")
+    second = repo.commit("change other only")
+
+    target.write_bytes(b"v2")
+    third = repo.commit("change target")
+
+    rows = repo.log(Path("target.bin"))
+    assert [row["id"] for row in rows] == [third, first]
+    assert [row["message"] for row in rows] == ["change target", "add both"]
+    assert second not in {row["id"] for row in rows}
+
+    assert repo.log(Path("missing.bin")) == []
+
+
+def test_log_path_includes_deletion_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    added = repo.commit("add")
+    asset.unlink()
+    deleted = repo.commit("remove")
+
+    rows = repo.log(Path("asset.bin"))
+    assert [row["id"] for row in rows] == [deleted, added]
+
+
 def test_discover_recovers_only_when_active_operation_is_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

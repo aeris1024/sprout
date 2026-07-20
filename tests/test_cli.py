@@ -249,3 +249,28 @@ def test_diff_cli_shows_commit_and_working_tree_changes(
     working = invoke(["diff"], project, monkeypatch)
     assert working.exit_code == 0
     assert "modified asset.bin  (4 bytes -> 4 bytes)" in working.stdout
+
+
+def test_log_path_cli_filters_history(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    target = project / "target.bin"
+    other = project / "other.bin"
+    target.write_bytes(b"v1")
+    other.write_bytes(b"other")
+    assert invoke(["track", "target.bin", "other.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "add both"], project, monkeypatch).exit_code == 0
+    other.write_bytes(b"other2")
+    assert invoke(["commit", "-m", "change other"], project, monkeypatch).exit_code == 0
+    target.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "change target"], project, monkeypatch).exit_code == 0
+
+    result = invoke(["log", "target.bin"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "change target" in result.stdout
+    assert "add both" in result.stdout
+    assert "change other" not in result.stdout
+
+    missing = invoke(["log", "missing.bin"], project, monkeypatch)
+    assert missing.exit_code == 0
+    assert "No history for path: missing.bin" in missing.stdout

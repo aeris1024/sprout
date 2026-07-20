@@ -56,8 +56,11 @@ sprout commit -m "最初のスナップショット"
 
 ```powershell
 sprout log
+sprout log scene.blend
 sprout show <commit-id>
 ```
+
+`sprout log` にパスを指定すると、そのファイル内容が変わったコミットだけを表示します。内容が同じままのコミットは省かれます。一度も登場していないパスでは `No history for path:` と表示されます。
 
 ## ブランチを使う
 
@@ -170,7 +173,7 @@ sprout commit -m "ファイルを移動"
 | `move OLD NEW` | 追跡済みファイルを移動する |
 | `status` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE` | 現在の状態をコミットする |
-| `log` | 現在のブランチの履歴を表示する |
+| `log [PATH]` | 現在のブランチの履歴を表示する。パスを指定するとそのファイルが変わったコミットだけを表示する |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT` | コミットの詳細を表示する |
 | `branch [NAME]` | ブランチの一覧表示または作成を行う |
