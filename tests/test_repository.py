@@ -706,6 +706,65 @@ def test_discover_recovers_only_when_active_operation_is_set(
         assert db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()[0] == ""
 
 
+def test_gc_removes_orphans_and_keeps_referenced_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"kept-content")
+    repo.track([asset])
+    repo.commit("initial")
+    kept = next(repo.objects.glob("*/*"))
+
+    orphan_hash = "ab" + ("0" * 62)
+    orphan = repo.objects / orphan_hash[:2] / orphan_hash
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_bytes(b"orphan-bytes")
+    stale_temp = repo.tmp / "object-stale"
+    stale_temp.write_bytes(b"temp-bytes")
+
+    result = repo.gc()
+    assert result.removed_objects == 1
+    assert result.removed_temps == 1
+    assert result.freed_bytes == len(b"orphan-bytes") + len(b"temp-bytes")
+    assert result.objects == (orphan_hash,)
+    assert result.temps == ("object-stale",)
+    assert kept.is_file()
+    assert not orphan.exists()
+    assert not stale_temp.exists()
+    assert not (repo.objects / orphan_hash[:2]).exists()
+
+
+def test_gc_dry_run_lists_targets_without_deleting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    orphan_hash = "cd" + ("1" * 62)
+    orphan = repo.objects / orphan_hash[:2] / orphan_hash
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_bytes(b"orphan")
+    stale_temp = repo.tmp / "object-dry"
+    stale_temp.write_bytes(b"tmp")
+
+    result = repo.gc(dry_run=True)
+    assert result.dry_run is True
+    assert result.removed_objects == 1
+    assert result.removed_temps == 1
+    assert orphan.is_file()
+    assert stale_temp.is_file()
+
+
+def test_gc_is_rejected_while_repository_is_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    with repo.lock():
+        with pytest.raises(SproutError, match="already running"):
+            repo.gc()
+
+
 def test_rejects_empty_commit_ref_and_hex_branch_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

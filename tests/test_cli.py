@@ -166,3 +166,35 @@ def test_discard_help_describes_tracked_and_untracked_behavior(
         assert "Discard all tracked changes" in help_text
         assert "untracked" in help_text
         assert "untouched" in help_text
+
+
+def test_gc_cli_reports_removed_objects_and_supports_dry_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"kept")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
+
+    orphan_hash = "ef" + ("2" * 62)
+    orphan = project / ".sprout" / "objects" / orphan_hash[:2] / orphan_hash
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_bytes(b"gone")
+    stale_temp = project / ".sprout" / "tmp" / "object-cli"
+    stale_temp.write_bytes(b"tmp")
+
+    dry = invoke(["gc", "--dry-run"], project, monkeypatch)
+    assert dry.exit_code == 0
+    assert f"object  {orphan_hash}" in dry.stdout
+    assert "temp    object-cli" in dry.stdout
+    assert "Would remove 1 objects, 1 temp files (7 bytes)" in dry.stdout
+    assert orphan.is_file()
+    assert stale_temp.is_file()
+
+    result = invoke(["gc"], project, monkeypatch)
+    assert result.exit_code == 0
+    assert "Removed 1 objects, 1 temp files (7 bytes)" in result.stdout
+    assert not orphan.exists()
+    assert not stale_temp.exists()

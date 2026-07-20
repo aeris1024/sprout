@@ -196,6 +196,27 @@ def restore(
     typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
 
 
+@app.command()
+def gc(
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="List reclaimable objects without deleting them"),
+    ] = False,
+) -> None:
+    """Delete unreferenced objects and leftover temporary object files."""
+    result = repo().gc(dry_run=dry_run)
+    if dry_run:
+        for object_hash in result.objects:
+            typer.echo(f"object  {object_hash}")
+        for name in result.temps:
+            typer.echo(f"temp    {name}")
+    action = "Would remove" if dry_run else "Removed"
+    typer.echo(
+        f"{action} {result.removed_objects} objects, "
+        f"{result.removed_temps} temp files ({result.freed_bytes} bytes)"
+    )
+
+
 def _system_exit_code(value: object) -> int:
     if value is None:
         return 0
