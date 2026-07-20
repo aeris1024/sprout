@@ -125,8 +125,18 @@ class Repository:
             if (candidate / CONTROL_DIR / DB_NAME).is_file():
                 repo = cls(candidate)
                 repo.check_schema()
-                with repo.lock():
-                    repo._recover_pending_materialization()
+                # Peek without the repository lock so read-only commands can run
+                # while a long write holds it. Recover only when an interrupted
+                # operation is recorded; re-check under the lock inside recover.
+                with repo.connect() as db:
+                    row = db.execute(
+                        "SELECT value FROM meta WHERE key='active_operation'"
+                    ).fetchone()
+                if row is None:
+                    raise SproutError("repository is missing operation metadata")
+                if row[0]:
+                    with repo.lock():
+                        repo._recover_pending_materialization()
                 return repo
         raise SproutError("not inside a Sprout project (run 'sprout init')")
 
