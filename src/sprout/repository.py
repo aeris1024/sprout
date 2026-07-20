@@ -775,26 +775,73 @@ class Repository:
         return signature
 
     def _is_saved_snapshot(self, signature: dict[str, tuple[str, int]]) -> bool:
-        commits: dict[str, dict[str, tuple[str, int]]] = {}
+        file_count = len(signature)
         with self.connect() as db:
-            commit_ids = [row[0] for row in db.execute("SELECT id FROM commits")]
-            rows = db.execute(
-                "SELECT commit_id, path, object_hash, size FROM commit_files ORDER BY commit_id, path"
-            )
-            for row in rows:
-                commits.setdefault(row["commit_id"], {})[row["path"]] = (
-                    row["object_hash"],
-                    row["size"],
+            if file_count == 0:
+                row = db.execute(
+                    """
+                    SELECT c.id
+                    FROM commits c
+                    LEFT JOIN commit_files f ON f.commit_id = c.id
+                    GROUP BY c.id
+                    HAVING COUNT(f.path) = 0
+                    LIMIT 1
+                    """
+                ).fetchone()
+                return row is not None
+
+            candidates = [
+                row[0]
+                for row in db.execute(
+                    """
+                    SELECT commit_id
+                    FROM commit_files
+                    GROUP BY commit_id
+                    HAVING COUNT(*) = ?
+                    """,
+                    (file_count,),
                 )
-        for commit_id in commit_ids:
-            if commits.get(commit_id, {}) == signature:
-                return True
+            ]
+            for commit_id in candidates:
+                rows = db.execute(
+                    "SELECT path, object_hash, size FROM commit_files WHERE commit_id=?",
+                    (commit_id,),
+                )
+                manifest = {
+                    row["path"]: (row["object_hash"], row["size"]) for row in rows
+                }
+                if manifest == signature:
+                    return True
         return False
 
     def _has_unsaved_changes(self) -> bool:
-        if not self.status():
+        tracked = self.tracked()
+        head = self.manifest(self.head_commit())
+        signature: dict[str, tuple[str, int]] | None = {}
+        for relative in sorted(tracked):
+            path = self.root / Path(relative)
+            if not path.is_file():
+                signature = None
+                break
+            signature[relative] = self.hash_file(path)
+
+        has_changes = False
+        for relative in sorted(tracked | set(head)):
+            path = self.root / Path(relative)
+            if relative not in tracked or not path.is_file():
+                if relative in head:
+                    has_changes = True
+                continue
+            assert signature is not None
+            if relative not in head:
+                has_changes = True
+                continue
+            digest, size = signature[relative]
+            if digest != head[relative].object_hash or size != head[relative].size:
+                has_changes = True
+
+        if not has_changes:
             return False
-        signature = self._working_content_signature()
         if signature is None:
             return True
         return not self._is_saved_snapshot(signature)
