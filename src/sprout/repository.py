@@ -122,6 +122,21 @@ class DoctorResult:
     issues: tuple[DoctorIssue, ...]
 
 
+@dataclass(frozen=True)
+class RepoStats:
+    commits: int
+    branches: int
+    tracked_paths: int
+    objects: int
+    objects_bytes: int
+    logical_bytes: int
+    unique_bytes: int
+
+    @property
+    def dedup_saved_bytes(self) -> int:
+        return max(0, self.logical_bytes - self.unique_bytes)
+
+
 class Repository:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -737,6 +752,42 @@ class Repository:
             ok=not issues,
             checked_objects=len(hashes),
             issues=tuple(issues),
+        )
+
+    def stats(self) -> RepoStats:
+        """Summarize repository size and basic counts without changing files."""
+        with self.connect() as db:
+            commits = db.execute("SELECT COUNT(*) FROM commits").fetchone()[0]
+            branches = db.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
+            tracked_paths = db.execute("SELECT COUNT(*) FROM tracked_paths").fetchone()[0]
+            logical_bytes = db.execute(
+                "SELECT COALESCE(SUM(size), 0) FROM commit_files"
+            ).fetchone()[0]
+            unique_bytes = db.execute(
+                "SELECT COALESCE(SUM(size), 0) FROM ("
+                "SELECT object_hash, MAX(size) AS size FROM commit_files GROUP BY object_hash"
+                ")"
+            ).fetchone()[0]
+
+        objects = 0
+        objects_bytes = 0
+        if self.objects.is_dir():
+            for shard in self.objects.iterdir():
+                if not shard.is_dir():
+                    continue
+                for path in shard.iterdir():
+                    if path.is_file():
+                        objects += 1
+                        objects_bytes += path.stat().st_size
+
+        return RepoStats(
+            commits=commits,
+            branches=branches,
+            tracked_paths=tracked_paths,
+            objects=objects,
+            objects_bytes=objects_bytes,
+            logical_bytes=logical_bytes,
+            unique_bytes=unique_bytes,
         )
 
     @locked
