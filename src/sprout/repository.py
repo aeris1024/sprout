@@ -656,7 +656,18 @@ class Repository:
             row = db.execute("SELECT * FROM commits WHERE id=?", (commit_id,)).fetchone()
         return row, list(self.manifest(commit_id).values())
 
-    def log(self) -> list[sqlite3.Row]:
+    @staticmethod
+    def _commit_path_hash(db: sqlite3.Connection, commit_id: str, path: str) -> str | None:
+        row = db.execute(
+            "SELECT object_hash FROM commit_files WHERE commit_id=? AND path=?",
+            (commit_id, path),
+        ).fetchone()
+        return row[0] if row else None
+
+    def log(self, path: Path | None = None) -> list[sqlite3.Row]:
+        relative: str | None = None
+        if path is not None:
+            relative = self._relative_file(path, must_exist=False)
         current = self.head_commit()
         rows: list[sqlite3.Row] = []
         with self.connect() as db:
@@ -664,7 +675,16 @@ class Repository:
                 row = db.execute("SELECT * FROM commits WHERE id=?", (current,)).fetchone()
                 if row is None:
                     raise SproutError(f"broken history at commit: {current}")
-                rows.append(row)
+                if relative is None:
+                    rows.append(row)
+                else:
+                    current_hash = self._commit_path_hash(db, current, relative)
+                    parent_id = row["parent_id"]
+                    parent_hash = (
+                        self._commit_path_hash(db, parent_id, relative) if parent_id else None
+                    )
+                    if current_hash != parent_hash:
+                        rows.append(row)
                 current = row["parent_id"]
         return rows
 

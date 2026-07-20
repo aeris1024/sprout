@@ -108,12 +108,21 @@ def commit_command(message: Annotated[str, typer.Option("--message", "-m")]) -> 
 
 
 @app.command(name="log")
-def log_command() -> None:
+def log_command(
+    path: Annotated[
+        Path | None,
+        typer.Argument(help="Show only commits that changed this path"),
+    ] = None,
+) -> None:
     """Show history of the current branch."""
     repository = repo()
-    rows = repository.log()
+    rows = repository.log(path)
     if not rows:
-        typer.echo("No commits yet")
+        if path is not None:
+            typer.echo(f"No history for path: {path.as_posix()}")
+        else:
+            typer.echo("No commits yet")
+        return
     for row in rows:
         typer.echo(f"commit {row['id']}")
         typer.echo(f"Date:   {row['created_at']}")
