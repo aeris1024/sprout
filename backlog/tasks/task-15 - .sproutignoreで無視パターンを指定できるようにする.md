@@ -1,13 +1,19 @@
 ---
 id: TASK-15
 title: .sproutignoreで無視パターンを指定できるようにする
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@cursor'
 created_date: '2026-07-15 16:19'
+updated_date: '2026-07-20 09:57'
 labels: []
 dependencies: []
 references:
   - src/sprout/repository.py
+modified_files:
+  - src/sprout/repository.py
+  - tests/test_repository.py
+  - README.md
 priority: medium
 type: feature
 ordinal: 15000
@@ -35,10 +41,37 @@ READMEに書式と適用範囲を記載する。
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `.sproutignore`のパターンに一致するファイルがディレクトリ指定の`track`で除外される
-- [ ] #2 パターンに一致するファイルが`status --untracked`に表示されない
-- [ ] #3 ファイルを明示指定した`track`は無視パターンより優先される
-- [ ] #4 追跡済みファイルの変更検出には影響しない
-- [ ] #5 READMEに書式と挙動が記載されている
-- [ ] #6 パターン照合と適用範囲がテストで検証されている
+- [x] #1 `.sproutignore`のパターンに一致するファイルがディレクトリ指定の`track`で除外される
+- [x] #2 パターンに一致するファイルが`status --untracked`に表示されない
+- [x] #3 ファイルを明示指定した`track`は無視パターンより優先される
+- [x] #4 追跡済みファイルの変更検出には影響しない
+- [x] #5 READMEに書式と挙動が記載されている
+- [x] #6 パターン照合と適用範囲がテストで検証されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. `.sproutignore` を読み、`#` コメント / glob / `dir/` を解釈するヘルパーを追加（標準ライブラリ fnmatch）
+2. ディレクトリ指定の `track` と `untracked_files` で無視パターンを適用する
+3. ファイル明示の `track` は無視より優先する
+4. README に書式と適用範囲を追記し、テストで検証する
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+実装: `.sproutignore` を fnmatch で解釈。ディレクトリ track と untracked_files に適用し、明示 track は優先。
+検証: pytest → 59 passed, 2 skipped。
+- AC1/2: test_sproutignore_skips_files_for_directory_track_and_untracked_listing
+- AC3: test_sproutignore_explicit_track_overrides_patterns
+- AC4: test_sproutignore_does_not_affect_tracked_status_detection
+- AC5: README 追記
+- AC6: 上記テスト
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+`.sproutignore` で無視パターンを指定できるようにした。ディレクトリ track と status --untracked に適用し、明示的な track は優先。追跡済みの変更検出は不変。pytest 59 passed / 2 skipped で AC1–6 を確認。
+<!-- SECTION:FINAL_SUMMARY:END -->

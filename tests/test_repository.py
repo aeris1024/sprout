@@ -76,6 +76,64 @@ def test_status_tracks_add_modify_delete_and_untrack(tmp_path: Path, monkeypatch
     assert repo.status() == []
 
 
+def test_sproutignore_skips_files_for_directory_track_and_untracked_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    (repo.root / ".sproutignore").write_text(
+        "# temporary files\n*.tmp\nThumbs.db\ncache/\n",
+        encoding="utf-8",
+    )
+    write(repo.root, "work/keep.bin", b"keep")
+    write(repo.root, "work/noise.tmp", b"tmp")
+    write(repo.root, "work/Thumbs.db", b"thumbs")
+    write(repo.root, "work/cache/nested.bin", b"cache")
+    write(repo.root, "work/docs/note.bin", b"note")
+
+    assert repo.untracked_files() == [
+        ".sproutignore",
+        "work/docs/note.bin",
+        "work/keep.bin",
+    ]
+
+    tracked = repo.track([Path("work")])
+    assert tracked == ["work/docs/note.bin", "work/keep.bin"]
+    assert "work/noise.tmp" not in tracked
+    assert "work/Thumbs.db" not in tracked
+    assert "work/cache/nested.bin" not in tracked
+    assert repo.untracked_files() == [".sproutignore"]
+
+
+def test_sproutignore_explicit_track_overrides_patterns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    (repo.root / ".sproutignore").write_text("*.tmp\n", encoding="utf-8")
+    ignored = write(repo.root, "work/draft.tmp", b"draft")
+    write(repo.root, "work/ok.bin", b"ok")
+
+    assert repo.track([Path("work")]) == ["work/ok.bin"]
+    assert repo.track([ignored]) == ["work/draft.tmp"]
+    assert "work/draft.tmp" in repo.tracked()
+
+
+def test_sproutignore_does_not_affect_tracked_status_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.tmp", b"v1")
+    repo.track([asset])
+    repo.commit("initial")
+    (repo.root / ".sproutignore").write_text("*.tmp\n", encoding="utf-8")
+    asset.write_bytes(b"v2")
+
+    assert [(entry.state, entry.path) for entry in repo.status()] == [("modified", "asset.tmp")]
+    assert "asset.tmp" not in repo.untracked_files()
+
+
 def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = create_repo(tmp_path)
     monkeypatch.chdir(repo.root)
