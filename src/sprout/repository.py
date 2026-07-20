@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from .errors import SproutError
 
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
+IGNORE_FILE = ".sproutignore"
 SCHEMA_VERSION = "1"
 HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
@@ -81,6 +83,12 @@ class FileState:
 class StatusEntry:
     state: str
     path: str
+
+
+@dataclass(frozen=True)
+class IgnoreRule:
+    pattern: str
+    directory_only: bool
 
 
 @dataclass(frozen=True)
@@ -224,9 +232,54 @@ class Repository:
     def _path_key(path: str) -> str:
         return os.path.normcase(path) if os.name == "nt" else path
 
+    def _ignore_rules(self) -> list[IgnoreRule]:
+        path = self.root / IGNORE_FILE
+        if not path.is_file():
+            return []
+        rules: list[IgnoreRule] = []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            directory_only = line.endswith("/")
+            pattern = line[:-1] if directory_only else line
+            if pattern:
+                rules.append(IgnoreRule(pattern.replace("\\", "/"), directory_only))
+        return rules
+
+    @staticmethod
+    def _is_ignored(relative: str, rules: list[IgnoreRule], *, is_dir: bool = False) -> bool:
+        if not rules:
+            return False
+        relative = relative.replace("\\", "/").strip("/")
+        if not relative:
+            return False
+        name = relative.rsplit("/", 1)[-1]
+        for rule in rules:
+            if rule.directory_only:
+                if relative == rule.pattern or relative.startswith(rule.pattern + "/"):
+                    return True
+                parts = relative.split("/")
+                limit = len(parts) if is_dir else len(parts) - 1
+                for index in range(limit):
+                    ancestor = "/".join(parts[: index + 1])
+                    ancestor_name = parts[index]
+                    if fnmatch.fnmatch(ancestor, rule.pattern) or fnmatch.fnmatch(
+                        ancestor_name, rule.pattern
+                    ):
+                        return True
+            elif fnmatch.fnmatch(relative, rule.pattern) or fnmatch.fnmatch(name, rule.pattern):
+                return True
+        return False
+
     @locked
     def track(self, values: list[Path]) -> list[str]:
         paths: set[str] = set()
+        rules = self._ignore_rules()
         for value in values:
             absolute = (value if value.is_absolute() else Path.cwd() / value)
             if absolute.is_symlink():
@@ -235,19 +288,30 @@ class Repository:
                 self._relative_file(absolute)
                 for directory, dirs, files in os.walk(absolute, topdown=True, followlinks=False):
                     base = Path(directory)
-                    dirs[:] = [
-                        name
-                        for name in dirs
-                        if not (base / name).is_symlink()
-                    ]
+                    kept_dirs: list[str] = []
+                    for name in dirs:
+                        child = base / name
+                        if child.is_symlink():
+                            continue
+                        relative_dir = child.relative_to(self.root).as_posix()
+                        if CONTROL_DIR in Path(relative_dir).parts:
+                            continue
+                        if self._is_ignored(relative_dir, rules, is_dir=True):
+                            continue
+                        kept_dirs.append(name)
+                    dirs[:] = kept_dirs
                     for name in files:
                         child = base / name
                         if child.is_symlink():
                             continue
                         relative = self._relative_file(child)
-                        if CONTROL_DIR not in Path(relative).parts:
-                            paths.add(relative)
+                        if CONTROL_DIR in Path(relative).parts:
+                            continue
+                        if self._is_ignored(relative, rules):
+                            continue
+                        paths.add(relative)
             elif absolute.is_file():
+                # Explicit file paths bypass ignore rules, like git add --force for a path.
                 paths.add(self._relative_file(absolute))
             else:
                 raise SproutError(f"file or directory does not exist: {value}")
@@ -337,21 +401,32 @@ class Repository:
     def untracked_files(self) -> list[str]:
         """List regular project files that are not registered for commits."""
         tracked = self.tracked()
+        rules = self._ignore_rules()
         result: list[str] = []
         for directory, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
             base = Path(directory)
-            dirs[:] = [
-                name
-                for name in dirs
-                if name != CONTROL_DIR and not (base / name).is_symlink()
-            ]
+            kept_dirs: list[str] = []
+            for name in dirs:
+                if name == CONTROL_DIR:
+                    continue
+                child = base / name
+                if child.is_symlink():
+                    continue
+                relative_dir = child.relative_to(self.root).as_posix()
+                if self._is_ignored(relative_dir, rules, is_dir=True):
+                    continue
+                kept_dirs.append(name)
+            dirs[:] = kept_dirs
             for name in files:
                 path = base / name
                 if path.is_symlink():
                     continue
                 normalized = path.relative_to(self.root).as_posix()
-                if normalized not in tracked:
-                    result.append(normalized)
+                if normalized in tracked:
+                    continue
+                if self._is_ignored(normalized, rules):
+                    continue
+                result.append(normalized)
         return sorted(result)
 
     @staticmethod
