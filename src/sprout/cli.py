@@ -404,6 +404,13 @@ def show(
 @app.command()
 def branch(
     name: Annotated[str | None, typer.Argument()] = None,
+    start_point: Annotated[
+        str | None,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag; defaults to current branch tip",
+            autocompletion=_complete_references,
+        ),
+    ] = None,
     comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for a new branch")] = "",
     set_comment: Annotated[
         str | None, typer.Option("--set-comment", help="Replace an existing branch comment")
@@ -415,20 +422,36 @@ def branch(
         str | None,
         typer.Option("--rename", help="Rename the branch given by NAME"),
     ] = None,
+    switch: Annotated[
+        bool,
+        typer.Option(
+            "--switch",
+            help="Create the branch and switch to it, restoring the start point",
+        ),
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """List, create, delete, rename, or edit a branch."""
     repository = repo()
     if json_output and (
         name is not None
+        or start_point is not None
         or comment
         or set_comment is not None
         or delete is not None
         or rename is not None
+        or switch
     ):
         raise SproutError("--json can only be used when listing branches")
     if delete is not None:
-        if name is not None or comment or set_comment is not None or rename is not None:
+        if (
+            name is not None
+            or start_point is not None
+            or comment
+            or set_comment is not None
+            or rename is not None
+            or switch
+        ):
             raise SproutError("--delete cannot be combined with other branch operations")
         repository.delete_branch(delete)
         typer.echo(f"Deleted branch {delete}")
@@ -436,7 +459,7 @@ def branch(
     if rename is not None:
         if name is None:
             raise SproutError("a branch name is required with --rename")
-        if comment or set_comment is not None:
+        if start_point is not None or comment or set_comment is not None or switch:
             raise SproutError("--rename cannot be combined with comment options")
         repository.rename_branch(name, rename)
         typer.echo(f"Renamed branch {name} to {rename}")
@@ -444,15 +467,23 @@ def branch(
     if set_comment is not None:
         if name is None:
             raise SproutError("a branch name is required with --set-comment")
-        if comment:
+        if start_point is not None or comment or switch:
             raise SproutError("--comment and --set-comment cannot be used together")
         repository.set_branch_comment(name, set_comment)
         typer.echo(f"Updated comment for branch {name}")
         return
     if name is not None:
-        repository.create_branch(name, comment)
-        typer.echo(f"Created branch {name}")
+        with _show_progress(repository):
+            repository.create_branch(
+                name, comment, start_point=start_point, switch=switch
+            )
+        if switch:
+            typer.echo(f"Created and switched to branch {name}")
+        else:
+            typer.echo(f"Created branch {name}")
         return
+    if start_point is not None or switch:
+        raise SproutError("a branch name is required")
     if comment:
         raise SproutError("a branch name is required with --comment")
     if json_output:

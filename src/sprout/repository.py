@@ -994,22 +994,110 @@ class Repository:
         if HEX_BRANCH_NAME.fullmatch(name):
             raise SproutError(f"{kind} name cannot look like a commit id prefix")
 
+    def _matching_saved_snapshot_commit(
+        self, signature: dict[str, tuple[str, int]]
+    ) -> str | None:
+        """Return a commit id whose manifest exactly matches signature, if any."""
+        file_count = len(signature)
+        with self.connect() as db:
+            if file_count == 0:
+                row = db.execute(
+                    """
+                    SELECT c.id
+                    FROM commits c
+                    LEFT JOIN commit_files f ON f.commit_id = c.id
+                    GROUP BY c.id
+                    HAVING COUNT(f.path) = 0
+                    LIMIT 1
+                    """
+                ).fetchone()
+                return row[0] if row is not None else None
+
+            candidates = [
+                row[0]
+                for row in db.execute(
+                    """
+                    SELECT commit_id
+                    FROM commit_files
+                    GROUP BY commit_id
+                    HAVING COUNT(*) = ?
+                    """,
+                    (file_count,),
+                )
+            ]
+            for commit_id in candidates:
+                rows = db.execute(
+                    "SELECT path, object_hash, size FROM commit_files WHERE commit_id=?",
+                    (commit_id,),
+                )
+                manifest = {
+                    row["path"]: (row["object_hash"], row["size"]) for row in rows
+                }
+                if manifest == signature:
+                    return commit_id
+        return None
+
+    def _reject_omitted_start_point_on_restored_snapshot(self, head: str) -> None:
+        """Refuse tip-based branching when a different saved snapshot is checked out."""
+        signature = self._working_content_signature()
+        if signature is None:
+            return
+        head_manifest = self.manifest(head)
+        head_signature = {
+            path: (state.object_hash, state.size) for path, state in head_manifest.items()
+        }
+        if signature == head_signature:
+            return
+        matched = self._matching_saved_snapshot_commit(signature)
+        if matched is None:
+            return
+        raise SproutError(
+            "working tree matches a saved snapshot that differs from the current "
+            "branch tip; specify the start point explicitly "
+            f"(example: sprout branch NAME {matched[:12]})"
+        )
+
     @locked
-    def create_branch(self, name: str, comment: str = "") -> None:
+    def create_branch(
+        self,
+        name: str,
+        comment: str = "",
+        *,
+        start_point: str | None = None,
+        switch: bool = False,
+    ) -> str:
         self._validate_reference_name(name, "branch")
-        head = self.head_commit()
-        if head is None:
-            raise SproutError("cannot create branch before first commit")
+        if start_point is not None:
+            commit_id = self.resolve_commit(start_point)
+        else:
+            head = self.head_commit()
+            if head is None:
+                raise SproutError("cannot create branch before first commit")
+            self._reject_omitted_start_point_on_restored_snapshot(head)
+            commit_id = head
+        if switch and self._has_unsaved_changes():
+            raise SproutError(
+                "working tree has uncommitted changes; commit them first, or discard "
+                "tracked changes with switch/restore --discard before creating and switching"
+            )
         try:
             with self.connect() as db:
                 if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
                     raise SproutError(f"name already used by tag: {name}")
                 db.execute(
                     "INSERT INTO branches(name, commit_id, comment) VALUES(?,?,?)",
-                    (name, head, comment.strip()),
+                    (name, commit_id, comment.strip()),
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
+        if switch:
+            try:
+                self._materialize(self.manifest(commit_id), head_branch=name)
+            except Exception:
+                with self.connect() as db:
+                    db.execute("DELETE FROM branches WHERE name=?", (name,))
+                raise
+        return commit_id
 
     @locked
     def delete_branch(self, name: str) -> None:
@@ -1271,44 +1359,7 @@ class Repository:
                         return False
                 return True
 
-        file_count = len(signature)
-        with self.connect() as db:
-            if file_count == 0:
-                row = db.execute(
-                    """
-                    SELECT c.id
-                    FROM commits c
-                    LEFT JOIN commit_files f ON f.commit_id = c.id
-                    GROUP BY c.id
-                    HAVING COUNT(f.path) = 0
-                    LIMIT 1
-                    """
-                ).fetchone()
-                return row is not None
-
-            candidates = [
-                row[0]
-                for row in db.execute(
-                    """
-                    SELECT commit_id
-                    FROM commit_files
-                    GROUP BY commit_id
-                    HAVING COUNT(*) = ?
-                    """,
-                    (file_count,),
-                )
-            ]
-            for commit_id in candidates:
-                rows = db.execute(
-                    "SELECT path, object_hash, size FROM commit_files WHERE commit_id=?",
-                    (commit_id,),
-                )
-                manifest = {
-                    row["path"]: (row["object_hash"], row["size"]) for row in rows
-                }
-                if manifest == signature:
-                    return True
-        return False
+        return self._matching_saved_snapshot_commit(signature) is not None
 
     def _has_unsaved_changes(self, paths: set[str] | None = None) -> bool:
         tracked = self.tracked()
