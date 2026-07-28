@@ -1,14 +1,21 @@
 ---
 id: TASK-18
 title: 大きなファイルの処理中に進捗を表示する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-07-15 16:20'
+updated_date: '2026-07-28 19:59'
 labels: []
 dependencies: []
 references:
   - src/sprout/repository.py
   - src/sprout/cli.py
+modified_files:
+  - src/sprout/repository.py
+  - src/sprout/cli.py
+  - tests/test_repository.py
+  - tests/test_cli.py
 priority: low
 type: enhancement
 ordinal: 18000
@@ -33,8 +40,26 @@ ordinal: 18000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 大きなファイルのcommitとrestoreで進捗が表示される
-- [ ] #2 リダイレクト時や小さいファイルでは進捗表示が出ない
-- [ ] #3 コールバック未指定時の動作は従来と同一である
-- [ ] #4 進捗コールバックの呼び出しがテストで検証されている
+- [x] #1 大きなファイルのcommitとrestoreで進捗が表示される
+- [x] #2 リダイレクト時や小さいファイルでは進捗表示が出ない
+- [x] #3 コールバック未指定時の動作は従来と同一である
+- [x] #4 進捗コールバックの呼び出しがテストで検証されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. リポジトリへ任意のバイト進捗コールバックを追加し、作業ツリーのハッシュ、圧縮保存、オブジェクト伸長で通知する。 2. CLIに8MB閾値・stderr TTY限定のプログレス表示を追加し、commit/status/diff/restore/switchへ適用する。 3. コールバック通知、非TTY、小さいファイル、コールバック未指定時の互換動作をテストする。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+進捗はstderrがTTYの場合のみ有効化し、8MiB以上のファイルを1MiBチャンク単位で表示する。リポジトリ層は表示に依存せず任意コールバックへ通知する。検証: uv run pytest（90 passed, 2 skipped）。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+commit、status、diff、restore、switchの大容量ファイル処理に進捗表示を追加した。圧縮保存、作業ツリーのハッシュ、オブジェクトの検証・伸長からバイト進捗を通知し、非TTYと8MiB未満では表示しない。通知内容と表示条件を自動テストで確認した。
+<!-- SECTION:FINAL_SUMMARY:END -->

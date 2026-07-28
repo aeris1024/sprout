@@ -90,6 +90,41 @@ def test_discover_rejects_old_repository_schema(tmp_path: Path) -> None:
         Repository.discover(repo.root)
 
 
+def test_progress_callback_reports_commit_and_restore_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[tuple[str, int, int]] = []
+    repo = Repository.init(
+        tmp_path / "project",
+        progress=lambda label, completed, total: events.append(
+            (label, completed, total)
+        ),
+    )
+    monkeypatch.chdir(repo.root)
+    content = b"x" * (2 * 1024 * 1024 + 17)
+    asset = write(repo.root, "large.bin", content)
+    repo.track([asset])
+
+    commit_id = repo.commit("large").commit_id
+
+    commit_events = [event for event in events if event[0] == "large.bin"]
+    assert len(commit_events) == 3
+    assert commit_events[-1] == ("large.bin", len(content), len(content))
+
+    events.clear()
+    asset.write_bytes(b"dirty")
+    repo.restore(commit_id, discard=True)
+
+    restore_events = [
+        event
+        for event in events
+        if event[0] == "large.bin" and event[2] == len(content)
+    ]
+    assert len(restore_events) == 6
+    assert restore_events[-1] == ("large.bin", len(content), len(content))
+    assert asset.read_bytes() == content
+
+
 def test_status_tracks_add_modify_delete_and_untrack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = create_repo(tmp_path)
     monkeypatch.chdir(repo.root)
@@ -397,9 +432,13 @@ def test_has_unsaved_changes_hashes_each_tracked_file_once(
     original = Repository.hash_file
 
     @staticmethod
-    def counting_hash(path: Path) -> tuple[str, int]:
+    def counting_hash(
+        path: Path,
+        progress=None,
+        label: str | None = None,
+    ) -> tuple[str, int]:
         calls.append(path.relative_to(repo.root).as_posix())
-        return original(path)
+        return original(path, progress, label)
 
     monkeypatch.setattr(Repository, "hash_file", counting_hash)
     assert repo._has_unsaved_changes() is True

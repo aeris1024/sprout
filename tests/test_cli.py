@@ -362,6 +362,62 @@ def test_discard_help_describes_tracked_and_untracked_behavior(
     assert "untouched" in help_text
 
 
+def test_progress_display_requires_tty_and_large_file(monkeypatch) -> None:
+    created: list[dict[str, object]] = []
+
+    class Stream:
+        def __init__(self, tty: bool):
+            self.tty = tty
+
+        def isatty(self) -> bool:
+            return self.tty
+
+    class Bar:
+        def __init__(self, **kwargs):
+            self.record = {"kwargs": kwargs, "updates": [], "entered": 0, "exited": 0}
+            created.append(self.record)
+
+        def __enter__(self):
+            self.record["entered"] += 1
+            return self
+
+        def __exit__(self, *_args):
+            self.record["exited"] += 1
+
+        def update(self, amount: int) -> None:
+            self.record["updates"].append(amount)
+
+    monkeypatch.setattr(cli.typer, "progressbar", lambda **kwargs: Bar(**kwargs))
+
+    monkeypatch.setattr(cli.sys, "stderr", Stream(False))
+    redirected = cli._ProgressDisplay()
+    redirected("large.bin", cli.PROGRESS_THRESHOLD, cli.PROGRESS_THRESHOLD)
+    assert created == []
+
+    monkeypatch.setattr(cli.sys, "stderr", Stream(True))
+    terminal = cli._ProgressDisplay()
+    terminal("small.bin", 10, 10)
+    assert created == []
+
+    terminal(
+        "large.bin",
+        cli.PROGRESS_THRESHOLD // 2,
+        cli.PROGRESS_THRESHOLD,
+    )
+    terminal(
+        "large.bin",
+        cli.PROGRESS_THRESHOLD,
+        cli.PROGRESS_THRESHOLD,
+    )
+    assert len(created) == 1
+    assert created[0]["updates"] == [
+        cli.PROGRESS_THRESHOLD // 2,
+        cli.PROGRESS_THRESHOLD // 2,
+    ]
+    assert created[0]["entered"] == 1
+    assert created[0]["exited"] == 1
+
+
 def test_completion_scripts_and_install_callback(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

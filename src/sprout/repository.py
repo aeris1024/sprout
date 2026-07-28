@@ -26,9 +26,11 @@ IGNORE_FILE = ".sproutignore"
 SCHEMA_VERSION = "2"
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
+IO_CHUNK_SIZE = 1024 * 1024
 HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
+ProgressCallback = Callable[[str, int, int], None]
 
 TAG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tags (
@@ -163,15 +165,18 @@ class RepoStats:
 
 
 class Repository:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, progress: ProgressCallback | None = None):
         self.root = root.resolve()
         self.control = self.root / CONTROL_DIR
         self.db_path = self.control / DB_NAME
         self.objects = self.control / "objects"
         self.tmp = self.control / "tmp"
+        self.progress = progress
 
     @classmethod
-    def init(cls, path: Path) -> Repository:
+    def init(
+        cls, path: Path, progress: ProgressCallback | None = None
+    ) -> Repository:
         root = path.resolve()
         control = root / CONTROL_DIR
         root.mkdir(parents=True, exist_ok=True)
@@ -180,7 +185,7 @@ class Repository:
             control.mkdir()
         except FileExistsError as exc:
             raise SproutError(f"already initialized: {root}") from exc
-        repo = cls(root)
+        repo = cls(root, progress)
         try:
             repo.objects.mkdir()
             repo.tmp.mkdir()
@@ -200,13 +205,17 @@ class Repository:
         return repo
 
     @classmethod
-    def discover(cls, start: Path | None = None) -> Repository:
+    def discover(
+        cls,
+        start: Path | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> Repository:
         current = (start or Path.cwd()).resolve()
         if current.is_file():
             current = current.parent
         for candidate in (current, *current.parents):
             if (candidate / CONTROL_DIR / DB_NAME).is_file():
-                repo = cls(candidate)
+                repo = cls(candidate, progress)
                 repo.check_schema()
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
@@ -518,13 +527,20 @@ class Repository:
         return sorted(result)
 
     @staticmethod
-    def hash_file(path: Path) -> tuple[str, int]:
+    def hash_file(
+        path: Path,
+        progress: ProgressCallback | None = None,
+        label: str | None = None,
+    ) -> tuple[str, int]:
         digest = hashlib.sha256()
         size = 0
+        total = path.stat().st_size
         with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            for chunk in iter(lambda: source.read(IO_CHUNK_SIZE), b""):
                 digest.update(chunk)
                 size += len(chunk)
+                if progress is not None:
+                    progress(label or path.name, size, total)
         return digest.hexdigest(), size
 
     def head_branch(self) -> str:
@@ -564,7 +580,7 @@ class Repository:
             if relative not in head:
                 result.append(StatusEntry("added", relative))
                 continue
-            digest, size = self.hash_file(path)
+            digest, size = self.hash_file(path, self.progress, relative)
             if digest != head[relative].object_hash or size != head[relative].size:
                 result.append(StatusEntry("modified", relative))
         return result
@@ -594,7 +610,7 @@ class Repository:
             path = self.root / Path(relative)
             if not path.is_file():
                 continue
-            digest, size = self.hash_file(path)
+            digest, size = self.hash_file(path, self.progress, relative)
             result[relative] = FileState(relative, digest, size, 0)
         return result
 
@@ -616,14 +632,21 @@ class Repository:
         fd, temp_name = tempfile.mkstemp(dir=self.tmp, prefix="object-")
         digest = hashlib.sha256()
         size = 0
+        total = source.stat().st_size
+        try:
+            label = source.relative_to(self.root).as_posix()
+        except ValueError:
+            label = source.name
         try:
             with os.fdopen(fd, "wb") as target, source.open("rb") as input_file:
                 compressor = zstandard.ZstdCompressor(level=OBJECT_COMPRESSION_LEVEL)
                 with compressor.stream_writer(target, closefd=False) as compressed:
-                    for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                    for chunk in iter(lambda: input_file.read(IO_CHUNK_SIZE), b""):
                         digest.update(chunk)
                         size += len(chunk)
                         compressed.write(chunk)
+                        if self.progress is not None:
+                            self.progress(label, size, total)
                 target.flush()
                 os.fsync(target.fileno())
             object_hash = digest.hexdigest()
@@ -647,18 +670,26 @@ class Repository:
             raise
 
     @staticmethod
-    def _read_object(source: Path, target: BinaryIO | None = None) -> tuple[str, int]:
+    def _read_object(
+        source: Path,
+        target: BinaryIO | None = None,
+        progress: ProgressCallback | None = None,
+        label: str | None = None,
+        total: int = 0,
+    ) -> tuple[str, int]:
         digest = hashlib.sha256()
         size = 0
         try:
             with source.open("rb") as compressed:
                 reader = zstandard.ZstdDecompressor().stream_reader(compressed)
                 with reader:
-                    for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                    for chunk in iter(lambda: reader.read(IO_CHUNK_SIZE), b""):
                         digest.update(chunk)
                         size += len(chunk)
                         if target is not None:
                             target.write(chunk)
+                        if progress is not None:
+                            progress(label or source.name, size, total)
         except (OSError, zstandard.ZstdError) as exc:
             raise SproutError(f"cannot read compressed object: {source.name}") from exc
         return digest.hexdigest(), size
@@ -668,7 +699,13 @@ class Repository:
         if not source.is_file():
             raise SproutError(f"missing object {item.object_hash} for {item.path}")
         try:
-            digest, size = self._read_object(source, target)
+            digest, size = self._read_object(
+                source,
+                target,
+                self.progress,
+                item.path,
+                item.size,
+            )
         except SproutError as exc:
             raise SproutError(f"corrupt object {item.object_hash} for {item.path}") from exc
         if digest != item.object_hash or size != item.size:
@@ -1202,7 +1239,7 @@ class Repository:
             path = self.root / Path(relative)
             if not path.is_file():
                 return None
-            object_hash, size = self.hash_file(path)
+            object_hash, size = self.hash_file(path, self.progress, relative)
             signature[relative] = (object_hash, size)
         return signature
 
@@ -1285,7 +1322,7 @@ class Repository:
             if not path.is_file():
                 signature = None
                 break
-            signature[relative] = self.hash_file(path)
+            signature[relative] = self.hash_file(path, self.progress, relative)
 
         has_changes = False
         for relative in sorted(status_paths):

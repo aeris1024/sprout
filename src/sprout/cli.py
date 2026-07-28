@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
@@ -18,6 +20,56 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Offline snapshot version control for local files.",
 )
+PROGRESS_THRESHOLD = 8 * 1024 * 1024
+
+
+class _ProgressDisplay:
+    def __init__(self) -> None:
+        self.enabled = sys.stderr.isatty()
+        self._bar: Any = None
+        self._label: str | None = None
+        self._total = 0
+        self._completed = 0
+
+    def __call__(self, label: str, completed: int, total: int) -> None:
+        if not self.enabled or total < PROGRESS_THRESHOLD:
+            return
+        if self._bar is None or label != self._label or total != self._total:
+            self.close()
+            self._bar = typer.progressbar(
+                length=total,
+                label=label,
+                file=sys.stderr,
+                show_pos=True,
+            )
+            self._bar.__enter__()
+            self._label = label
+            self._total = total
+            self._completed = 0
+        self._bar.update(max(0, completed - self._completed))
+        self._completed = completed
+        if completed >= total:
+            self.close()
+
+    def close(self) -> None:
+        if self._bar is not None:
+            self._bar.__exit__(None, None, None)
+        self._bar = None
+        self._label = None
+        self._total = 0
+        self._completed = 0
+
+
+@contextmanager
+def _show_progress(repository: Repository) -> Iterator[None]:
+    display = _ProgressDisplay()
+    previous = repository.progress
+    repository.progress = display if display.enabled else None
+    try:
+        yield
+    finally:
+        repository.progress = previous
+        display.close()
 
 
 def _version(value: bool) -> None:
@@ -187,7 +239,8 @@ def status(
         for path, is_tracked in path_entries:
             typer.echo(f"{'tracked' if is_tracked else 'untracked':<9} {path}")
         return
-    entries = repository.status()
+    with _show_progress(repository):
+        entries = repository.status()
     if json_output:
         payload: dict[str, Any] = {
             "branch": branch_name,
@@ -224,7 +277,8 @@ def status(
 def commit_command(message: Annotated[str, typer.Option("--message", "-m")]) -> None:
     """Save a snapshot of all tracked files."""
     repository = repo()
-    result = repository.commit(message)
+    with _show_progress(repository):
+        result = repository.commit(message)
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
     typer.echo(f"[{repository.head_branch()} {result.commit_id[:12]}] {message.strip()}")
@@ -286,7 +340,9 @@ def diff(
     ] = None,
 ) -> None:
     """Show file-level differences between commits or the working tree."""
-    entries = repo().diff(commit_a, commit_b)
+    repository = repo()
+    with _show_progress(repository):
+        entries = repository.diff(commit_a, commit_b)
     if not entries:
         typer.echo("No differences")
         return
@@ -463,7 +519,9 @@ def switch_command(
     ] = False,
 ) -> None:
     """Switch to a branch and restore its tip."""
-    repo().switch(branch_name, discard=discard)
+    repository = repo()
+    with _show_progress(repository):
+        repository.switch(branch_name, discard=discard)
     typer.echo(f"Switched to branch {branch_name}")
 
 
@@ -489,7 +547,9 @@ def restore(
     ] = False,
 ) -> None:
     """Restore a snapshot, or only selected paths, without moving the branch tip."""
-    commit_id = repo().restore(commit, paths, discard=discard)
+    repository = repo()
+    with _show_progress(repository):
+        commit_id = repository.restore(commit, paths, discard=discard)
     if paths:
         typer.echo(f"Restored paths from {commit_id[:12]} (branch tip unchanged)")
     else:
