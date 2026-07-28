@@ -114,6 +114,30 @@ sprout branch experiment -m "別の方法を試す"
 sprout switch experiment
 ```
 
+過去のコミットから分岐したいときは、ブランチ名のあとに起点を指定します。コミットID（または先頭部分）、ブランチ名、タグ名を使えます。`--switch`を付けると、作成したブランチへ切り替わり、作業ツリーもその起点の内容になります。
+
+```powershell
+# 過去のコミットからブランチを作るだけ
+sprout branch rethink <commit-id>
+
+# 作成してすぐ切り替える
+sprout branch rethink <commit-id> --switch
+
+# タグや別ブランチを起点にする
+sprout branch from-tag submitted --switch
+sprout branch from-main main
+```
+
+起点を省略した場合は、現在のブランチ先端から作成します。ただし`restore`で先端とは異なる保存済みスナップショットを表示しているときに起点を省略すると、誤って最新から分岐しないようエラーになります。その場合は起点を明示してください。
+
+```powershell
+sprout restore <commit-id>
+# エラーになる（先端から暗黙に分岐しない）
+sprout branch rethink
+# 正しい指定
+sprout branch rethink <commit-id> --switch
+```
+
 ブランチの一覧は`sprout branch`で確認できます。先頭に`*`が付いているものが現在のブランチです。
 
 ```text
@@ -269,7 +293,7 @@ sprout commit -m "ファイルを移動"
 | `log [PATH] [-n COUNT] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、件数、表示形式を指定できる |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
-| `branch [NAME] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。JSONは一覧表示時のみ指定できる |
+| `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替え。JSONは一覧表示時のみ指定できる |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
 | `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |

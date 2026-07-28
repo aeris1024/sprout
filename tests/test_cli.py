@@ -102,6 +102,65 @@ def test_branch_cli_renames_and_deletes(tmp_path: Path, monkeypatch) -> None:
     assert "--rename cannot be combined with comment options" in str(conflict.exception)
 
 
+def test_branch_cli_start_point_switch_and_restored_guard(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    first = Repository.discover().log()[0]["id"]
+    asset.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["tag", "landmark", first], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["switch", "side"], project, monkeypatch).exit_code == 0
+    asset.write_bytes(b"side")
+    assert invoke(["commit", "-m", "side"], project, monkeypatch).exit_code == 0
+    side = Repository.discover().log()[0]["id"]
+    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
+
+    created = invoke(["branch", "from-commit", first], project, monkeypatch)
+    assert created.exit_code == 0
+    assert created.stdout == "Created branch from-commit\n"
+    assert invoke(["branch", "from-prefix", first[:8]], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "from-tag", "landmark"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "from-side", "side"], project, monkeypatch).exit_code == 0
+
+    branches = {
+        item["name"]: item["commit_id"]
+        for item in json.loads(invoke(["branch", "--json"], project, monkeypatch).stdout)
+    }
+    assert branches["from-commit"] == first
+    assert branches["from-prefix"] == first
+    assert branches["from-tag"] == first
+    assert branches["from-side"] == side
+
+    switched = invoke(
+        ["branch", "rethink", first, "--switch"], project, monkeypatch
+    )
+    assert switched.exit_code == 0
+    assert switched.stdout == "Created and switched to branch rethink\n"
+    assert Repository.discover().head_branch() == "rethink"
+    assert asset.read_bytes() == b"v1"
+
+    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
+    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    guarded = invoke(["branch", "oops"], project, monkeypatch)
+    assert guarded.exit_code != 0
+    assert "specify the start point explicitly" in str(guarded.exception)
+    assert "oops" not in invoke(["branch"], project, monkeypatch).stdout
+
+    help_result = invoke(["branch", "--help"], project, monkeypatch)
+    assert help_result.exit_code == 0
+    help_text = " ".join(help_result.stdout.split())
+    assert "START_POINT" in help_text or "start_point" in help_text
+    assert "--switch" in help_text
+    assert "Commit ID, prefix, branch, or tag" in help_text
+
+
 def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

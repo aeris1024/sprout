@@ -297,6 +297,164 @@ def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.
         repo.set_branch_comment("missing", "nope")
 
 
+def test_create_branch_from_commit_branch_and_tag_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    repo.create_tag("landmark", first, "marker")
+    repo.create_branch("side")
+    repo.switch("side")
+    asset.write_bytes(b"side")
+    side = repo.commit("side work").commit_id
+    repo.switch("main")
+
+    repo.create_branch("from-commit", start_point=first)
+    repo.create_branch("from-prefix", start_point=first[:8])
+    repo.create_branch("from-tag", start_point="landmark")
+    repo.create_branch("from-branch", start_point="side")
+
+    branches = {name: commit_id for name, commit_id, _ in repo.branches()}
+    assert branches["from-commit"] == first
+    assert branches["from-prefix"] == first
+    assert branches["from-tag"] == first
+    assert branches["from-branch"] == side
+    assert repo.head_branch() == "main"
+    assert repo.head_commit() == second
+    assert asset.read_bytes() == b"v2"
+
+
+def test_create_branch_switch_materializes_start_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+
+    repo.create_branch("rethink", start_point=first, switch=True)
+
+    assert repo.head_branch() == "rethink"
+    assert repo.head_commit() == first
+    assert asset.read_bytes() == b"v1"
+    assert ("rethink", first, "") in repo.branches()
+
+
+def test_create_branch_defaults_to_current_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"tip")
+    repo.track([asset])
+    tip = repo.commit("tip").commit_id
+
+    repo.create_branch("experiment", "note")
+
+    assert ("experiment", tip, "note") in repo.branches()
+    assert repo.head_branch() == "main"
+
+
+def test_create_branch_rejects_omitted_start_point_on_restored_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    repo.restore(first)
+
+    with pytest.raises(
+        SproutError,
+        match=r"specify the start point explicitly \(example: sprout branch NAME ",
+    ):
+        repo.create_branch("rethink")
+
+    assert all(name != "rethink" for name, _, _ in repo.branches())
+    assert repo.head_branch() == "main"
+
+    repo.create_branch("rethink", start_point=first)
+    assert ("rethink", first, "") in repo.branches()
+
+
+def test_create_branch_switch_rolls_back_branch_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"main")
+    repo.track([asset])
+    repo.commit("main")
+    repo.create_branch("other")
+    repo.switch("other")
+    asset.write_bytes(b"other")
+    other = repo.commit("other").commit_id
+    repo.switch("main")
+
+    asset.write_bytes(b"dirty")
+    with pytest.raises(
+        SproutError,
+        match=(
+            r"uncommitted changes; commit them first, or discard "
+            r"tracked changes with switch/restore --discard before creating and switching"
+        ),
+    ) as dirty:
+        repo.create_branch("failed", start_point=other, switch=True)
+    assert "--discard to replace them" not in str(dirty.value)
+    assert all(name != "failed" for name, _, _ in repo.branches())
+    assert repo.head_branch() == "main"
+    assert asset.read_bytes() == b"dirty"
+
+    asset.write_bytes(b"main")
+
+    def fail_materialize(*_args, **_kwargs):
+        raise OSError("simulated materialize failure")
+
+    monkeypatch.setattr(repo, "_materialize", fail_materialize)
+    with pytest.raises(OSError, match="materialize failure"):
+        repo.create_branch("failed", start_point=other, switch=True)
+
+    assert all(name != "failed" for name, _, _ in repo.branches())
+    assert repo.head_branch() == "main"
+    assert asset.read_bytes() == b"main"
+
+
+def test_create_branch_switch_next_commit_parents_start_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    tip = repo.commit("second").commit_id
+
+    repo.create_branch("rethink", start_point=first, switch=True)
+    asset.write_bytes(b"v3")
+    child = repo.commit("from start point").commit_id
+
+    with repo.connect() as db:
+        parent_id = db.execute(
+            "SELECT parent_id FROM commits WHERE id=?", (child,)
+        ).fetchone()[0]
+    assert parent_id == first
+    assert parent_id != tip
+    assert repo.head_branch() == "rethink"
+    assert repo.head_commit() == child
+
+
 def test_branch_delete_and_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = create_repo(tmp_path)
     monkeypatch.chdir(repo.root)
