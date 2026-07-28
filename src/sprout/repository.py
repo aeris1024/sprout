@@ -121,6 +121,12 @@ class CommitResult:
 
 
 @dataclass(frozen=True)
+class ExportResult:
+    commit_id: str
+    paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class IgnoreRule:
     pattern: str
     directory_only: bool
@@ -1347,7 +1353,7 @@ class Repository:
             return True
         return not self._is_saved_snapshot(signature, exact=exact)
 
-    def _resolve_restore_paths(
+    def _resolve_manifest_paths(
         self, values: list[Path], manifest: dict[str, FileState]
     ) -> set[str]:
         selected: set[str] = set()
@@ -1363,6 +1369,118 @@ class Repository:
             selected.update(matches)
         return selected
 
+    @staticmethod
+    def _export_destination(output_root: Path, relative: str) -> Path:
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise SproutError(f"export path escapes output directory: {relative}")
+        destination = output_root / relative_path
+        current = destination
+        while current != output_root:
+            if current.is_symlink():
+                raise SproutError(f"symbolic link in export path: {relative}")
+            current = current.parent
+        try:
+            destination.resolve(strict=False).relative_to(output_root)
+        except ValueError as exc:
+            raise SproutError(f"export path escapes output directory: {relative}") from exc
+        return destination
+
+    def export(
+        self,
+        value: str,
+        output: Path,
+        paths: list[Path] | None = None,
+        *,
+        force: bool = False,
+    ) -> ExportResult:
+        commit_id = self.resolve_commit(value)
+        commit_manifest = self.manifest(commit_id)
+        selected = (
+            self._resolve_manifest_paths(paths, commit_manifest)
+            if paths
+            else set(commit_manifest)
+        )
+        target = {path: commit_manifest[path] for path in sorted(selected)}
+        output_root = output.resolve(strict=False)
+        if output_root == self.control or self.control in output_root.parents:
+            raise SproutError("cannot export into Sprout metadata")
+        if output_root.exists() and not output_root.is_dir():
+            raise SproutError(f"export output is not a directory: {output}")
+
+        tracked_keys = {self._path_key(path) for path in self.tracked()}
+        destinations: dict[str, Path] = {}
+        for relative in target:
+            destination = self._export_destination(output_root, relative)
+            try:
+                working_relative = destination.relative_to(self.root).as_posix()
+            except ValueError:
+                working_relative = None
+            if (
+                working_relative is not None
+                and self._path_key(working_relative) in tracked_keys
+            ):
+                raise SproutError(
+                    f"export path would change tracked working file: {working_relative}"
+                )
+            if destination.exists():
+                if not destination.is_file():
+                    raise SproutError(f"cannot overwrite non-file export path: {relative}")
+                if not force:
+                    raise SproutError(f"output file already exists: {relative}")
+            destinations[relative] = destination
+
+        self._verify_manifest(target)
+        output_root.mkdir(parents=True, exist_ok=True)
+        for relative, item in target.items():
+            destination = destinations[relative]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not force:
+                try:
+                    with destination.open("xb") as target_file:
+                        self._copy_verified_object(item, target_file)
+                        target_file.flush()
+                        os.fsync(target_file.fileno())
+                    os.utime(
+                        destination,
+                        ns=(item.mtime_ns, item.mtime_ns),
+                    )
+                except FileExistsError as exc:
+                    raise SproutError(
+                        f"output file already exists: {relative}"
+                    ) from exc
+                except Exception:
+                    destination.unlink(missing_ok=True)
+                    raise
+                continue
+
+            fd, temp_name = tempfile.mkstemp(
+                dir=destination.parent,
+                prefix=".sprout-export-",
+            )
+            try:
+                with os.fdopen(fd, "wb") as target_file:
+                    self._copy_verified_object(item, target_file)
+                    target_file.flush()
+                    os.fsync(target_file.fileno())
+                os.utime(temp_name, ns=(item.mtime_ns, item.mtime_ns))
+                os.replace(temp_name, destination)
+            except Exception:
+                Path(temp_name).unlink(missing_ok=True)
+                raise
+        return ExportResult(commit_id, tuple(target))
+
+    def cat(self, value: str, path: Path, target: BinaryIO) -> str:
+        commit_id = self.resolve_commit(value)
+        commit_manifest = self.manifest(commit_id)
+        relative = self._relative_file(path, must_exist=False)
+        item = commit_manifest.get(relative)
+        if item is None:
+            raise SproutError(f"path not in commit: {relative}")
+        self._copy_verified_object(item)
+        self._copy_verified_object(item, target)
+        return commit_id
+
     @locked
     def restore(
         self,
@@ -1374,7 +1492,7 @@ class Repository:
         commit_id = self.resolve_commit(value)
         commit_manifest = self.manifest(commit_id)
         if paths:
-            selected = self._resolve_restore_paths(paths, commit_manifest)
+            selected = self._resolve_manifest_paths(paths, commit_manifest)
             if self._has_unsaved_changes(selected) and not discard:
                 raise SproutError(
                     "working tree has uncommitted changes (use --discard to replace them)"

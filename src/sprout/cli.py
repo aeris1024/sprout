@@ -556,6 +556,57 @@ def restore(
         typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
 
 
+@app.command(name="export")
+def export_command(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Directory to write exported files"),
+    ],
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(help="Optional files or directories to export"),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite existing output files"),
+    ] = False,
+) -> None:
+    """Write files from a commit without changing the working tree."""
+    repository = repo()
+    with _show_progress(repository):
+        result = repository.export(commit, output, paths, force=force)
+    for path in result.paths:
+        typer.echo(f"export  {path}")
+    typer.echo(
+        f"Exported {len(result.paths)} file(s) from {result.commit_id[:12]} "
+        f"to {output.resolve()}"
+    )
+
+
+@app.command(name="cat")
+def cat_command(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    path: Annotated[Path, typer.Argument(help="File to write to standard output")],
+) -> None:
+    """Write one file from a commit to standard output."""
+    repository = repo()
+    with _show_progress(repository):
+        repository.cat(commit, path, sys.stdout.buffer)
+
+
 @app.command()
 def gc(
     dry_run: Annotated[

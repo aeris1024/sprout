@@ -706,6 +706,115 @@ def test_partial_restore_rejects_untracked_collision(
         repo.restore(old, [Path("asset.bin")])
 
 
+def test_export_writes_all_or_selected_files_without_changing_working_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "assets/first.bin", b"first-old")
+    second = write(repo.root, "assets/nested/second.bin", b"second-old")
+    note = write(repo.root, "note.txt", b"note-old")
+    first_mtime = 1_700_000_000_111_222_300
+    second_mtime = 1_700_000_000_444_555_600
+    os.utime(first, ns=(first_mtime, first_mtime))
+    os.utime(second, ns=(second_mtime, second_mtime))
+    repo.track([first, second, note])
+    commit_id = repo.commit("old").commit_id
+
+    first.write_bytes(b"first-working")
+    tracked_before = repo.tracked()
+    head_before = repo.head_commit()
+    all_output = tmp_path / "all-output"
+
+    result = repo.export(commit_id, all_output)
+
+    assert result.commit_id == commit_id
+    assert result.paths == (
+        "assets/first.bin",
+        "assets/nested/second.bin",
+        "note.txt",
+    )
+    assert (all_output / "assets/first.bin").read_bytes() == b"first-old"
+    assert (all_output / "assets/nested/second.bin").read_bytes() == b"second-old"
+    assert (all_output / "note.txt").read_bytes() == b"note-old"
+    assert (all_output / "assets/first.bin").stat().st_mtime_ns == first_mtime
+    assert (all_output / "assets/nested/second.bin").stat().st_mtime_ns == second_mtime
+    assert first.read_bytes() == b"first-working"
+    assert repo.tracked() == tracked_before
+    assert repo.head_commit() == head_before
+
+    selected_output = repo.root / "preview"
+    selected = repo.export(commit_id, selected_output, [Path("assets")])
+    assert selected.paths == ("assets/first.bin", "assets/nested/second.bin")
+    assert (selected_output / "assets/first.bin").is_file()
+    assert not (selected_output / "note.txt").exists()
+    assert repo.tracked() == tracked_before
+
+    with pytest.raises(SproutError, match="tracked working file"):
+        repo.export(commit_id, repo.root, force=True)
+    assert first.read_bytes() == b"first-working"
+
+    with pytest.raises(SproutError, match="Sprout metadata"):
+        repo.export(commit_id, repo.control / "preview")
+
+
+def test_export_refuses_overwrite_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"saved")
+    repo.track([asset])
+    commit_id = repo.commit("saved").commit_id
+    output = tmp_path / "output"
+    existing = write(output, "asset.bin", b"keep")
+
+    with pytest.raises(SproutError, match="output file already exists"):
+        repo.export(commit_id, output)
+    assert existing.read_bytes() == b"keep"
+
+    repo.export(commit_id, output, force=True)
+    assert existing.read_bytes() == b"saved"
+
+
+def test_export_verifies_every_object_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    first = write(repo.root, "first.bin", b"first")
+    second = write(repo.root, "second.bin", b"second")
+    repo.track([first, second])
+    commit_id = repo.commit("saved").commit_id
+    second_state = repo.manifest(commit_id)["second.bin"]
+    (repo.objects / second_state.object_hash[:2] / second_state.object_hash).write_bytes(
+        b"corrupt"
+    )
+    output = tmp_path / "output"
+
+    with pytest.raises(SproutError, match="corrupt object"):
+        repo.export(commit_id, output)
+
+    assert not output.exists()
+
+
+def test_cat_writes_verified_binary_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    content = b"\x00\xffbinary\r\n"
+    asset = write(repo.root, "asset.bin", content)
+    repo.track([asset])
+    commit_id = repo.commit("binary").commit_id
+    output = BytesIO()
+
+    assert repo.cat(commit_id, Path("asset.bin"), output) == commit_id
+    assert output.getvalue() == content
+    with pytest.raises(SproutError, match="path not in commit"):
+        repo.cat(commit_id, Path("missing.bin"), BytesIO())
+
+
 def test_manual_delete_still_requires_discard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

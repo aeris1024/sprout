@@ -198,6 +198,27 @@ sprout switch main --discard
 sprout restore main
 ```
 
+## コミットからファイルを取り出す
+
+作業フォルダや追跡状態を変えずにコミット内のファイルを書き出す場合は`export`を使います。パスを省略すると全ファイル、ファイルやディレクトリを指定すると該当するファイルだけを書き出します。相対パスの構造と更新日時はコミット時の状態が保たれます。
+
+```powershell
+sprout export <commit-id> --output ../preview
+sprout export <commit-id> assets/ docs/manual.bin --output ../preview
+```
+
+出力先に同名ファイルがある場合は処理を中止します。上書きしてよい場合に限り`--force`を指定してください。
+
+```powershell
+sprout export <commit-id> assets/ --output ../preview --force
+```
+
+単一ファイルを標準出力へバイナリのまま取り出す場合は`cat`を使います。ファイルへのリダイレクトや、プレビュー用プログラムとのパイプに利用できます。
+
+```powershell
+sprout cat <commit-id> assets/image.png > old-image.png
+```
+
 ## ファイルの追跡状態を確認する
 
 ```powershell
@@ -252,6 +273,8 @@ sprout commit -m "ファイルを移動"
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
 | `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
+| `export COMMIT [PATH...] --output DIR [--force]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
+| `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
 | `doctor` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
 | `stats` | リポジトリの件数・容量と重複排除による節約量を表示する |

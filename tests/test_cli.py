@@ -574,6 +574,58 @@ def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
     assert second.read_bytes() == b"v2"
 
 
+def test_export_and_cat_cli(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "assets" / "image.bin"
+    asset.parent.mkdir()
+    content = b"\x00\xffold-image\r\n"
+    asset.write_bytes(content)
+    saved_mtime = 1_700_000_000_123_456_700
+    os.utime(asset, ns=(saved_mtime, saved_mtime))
+    assert invoke(["track", "assets/image.bin"], project, monkeypatch).exit_code == 0
+    committed = invoke(["commit", "-m", "saved"], project, monkeypatch)
+    assert committed.exit_code == 0
+    commit_id = committed.stdout.split()[1].rstrip("]")
+    asset.write_bytes(b"working")
+
+    output = tmp_path / "exported"
+    exported = invoke(
+        ["export", commit_id, "assets", "--output", str(output)],
+        project,
+        monkeypatch,
+    )
+    assert exported.exit_code == 0
+    assert "export  assets/image.bin" in exported.stdout
+    exported_file = output / "assets" / "image.bin"
+    assert exported_file.read_bytes() == content
+    assert exported_file.stat().st_mtime_ns == saved_mtime
+    assert asset.read_bytes() == b"working"
+    assert Repository.discover(project).tracked() == {"assets/image.bin"}
+
+    duplicate = invoke(
+        ["export", commit_id, "--output", str(output)],
+        project,
+        monkeypatch,
+    )
+    assert duplicate.exit_code != 0
+    assert "output file already exists" in str(duplicate.exception)
+    assert exported_file.read_bytes() == content
+
+    forced = invoke(
+        ["export", commit_id, "--output", str(output), "--force"],
+        project,
+        monkeypatch,
+    )
+    assert forced.exit_code == 0
+    assert exported_file.read_bytes() == content
+
+    cat_result = invoke(["cat", commit_id, "assets/image.bin"], project, monkeypatch)
+    assert cat_result.exit_code == 0
+    assert cat_result.stdout_bytes == content
+    assert asset.read_bytes() == b"working"
+
+
 def test_diff_cli_shows_commit_and_working_tree_changes(
     tmp_path: Path, monkeypatch
 ) -> None:
