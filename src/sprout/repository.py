@@ -26,6 +26,15 @@ HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
 
+TAG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tags (
+    name TEXT PRIMARY KEY,
+    commit_id TEXT NOT NULL REFERENCES commits(id),
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+"""
+
 
 def locked(method: Callable[..., T]) -> Callable[..., T]:
     """Serialize repository mutations across processes."""
@@ -63,6 +72,12 @@ CREATE TABLE IF NOT EXISTS branches (
     name TEXT PRIMARY KEY,
     commit_id TEXT REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS tags (
+    name TEXT PRIMARY KEY,
+    commit_id TEXT NOT NULL REFERENCES commits(id),
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tracked_paths (
     path TEXT PRIMARY KEY
@@ -216,10 +231,20 @@ class Repository:
         try:
             with self.connect() as db:
                 row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+                has_tags = (
+                    db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
+                    ).fetchone()
+                    is not None
+                )
         except sqlite3.Error as exc:
             raise SproutError(f"cannot read repository: {exc}") from exc
         if row is None or row[0] != SCHEMA_VERSION:
             raise SproutError("unsupported repository schema version")
+        if not has_tags:
+            with self.lock():
+                with self.connect() as db:
+                    db.executescript(TAG_SCHEMA)
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -675,6 +700,9 @@ class Repository:
                 if branch[0] is None:
                     raise SproutError(f"branch has no commits: {value}")
                 return branch[0]
+            tag = db.execute("SELECT commit_id FROM tags WHERE name=?", (value,)).fetchone()
+            if tag is not None:
+                return tag[0]
             if HEX_COMMIT_REFERENCE.fullmatch(value) is None:
                 raise SproutError(f"unknown commit: {value}")
             rows = db.execute("SELECT id FROM commits WHERE id LIKE ?", (value + "%",)).fetchall()
@@ -848,6 +876,15 @@ class Repository:
                 for row in db.execute("SELECT name, commit_id, comment FROM branches ORDER BY name")
             ]
 
+    def tags(self) -> list[tuple[str, str, str, str]]:
+        with self.connect() as db:
+            return [
+                (row[0], row[1], row[2], row[3])
+                for row in db.execute(
+                    "SELECT name, commit_id, comment, created_at FROM tags ORDER BY name"
+                )
+            ]
+
     @staticmethod
     def _validate_reference_name(name: str, kind: str) -> None:
         if not name or any(c.isspace() for c in name) or name.startswith("-"):
@@ -863,6 +900,8 @@ class Repository:
             raise SproutError("cannot create branch before first commit")
         try:
             with self.connect() as db:
+                if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
+                    raise SproutError(f"name already used by tag: {name}")
                 db.execute(
                     "INSERT INTO branches(name, commit_id, comment) VALUES(?,?,?)",
                     (name, head, comment.strip()),
@@ -895,11 +934,47 @@ class Repository:
             ).fetchone()
             if duplicate is not None:
                 raise SproutError(f"branch already exists: {new_name}")
+            if (
+                db.execute("SELECT 1 FROM tags WHERE name=?", (new_name,)).fetchone()
+                is not None
+            ):
+                raise SproutError(f"name already used by tag: {new_name}")
             db.execute("UPDATE branches SET name=? WHERE name=?", (new_name, old_name))
             db.execute(
                 "UPDATE meta SET value=? WHERE key='head_branch' AND value=?",
                 (new_name, old_name),
             )
+
+    @locked
+    def create_tag(
+        self, name: str, commit: str | None = None, comment: str = ""
+    ) -> str:
+        self._validate_reference_name(name, "tag")
+        commit_id = self.resolve_commit(commit) if commit is not None else self.head_commit()
+        if commit_id is None:
+            raise SproutError("cannot create tag before first commit")
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        try:
+            with self.connect() as db:
+                if (
+                    db.execute("SELECT 1 FROM branches WHERE name=?", (name,)).fetchone()
+                    is not None
+                ):
+                    raise SproutError(f"name already used by branch: {name}")
+                db.execute(
+                    "INSERT INTO tags(name, commit_id, comment, created_at) VALUES(?,?,?,?)",
+                    (name, commit_id, comment.strip(), created_at),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise SproutError(f"tag already exists: {name}") from exc
+        return commit_id
+
+    @locked
+    def delete_tag(self, name: str) -> None:
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM tags WHERE name=?", (name,))
+            if cursor.rowcount == 0:
+                raise SproutError(f"unknown tag: {name}")
 
     @locked
     def set_branch_comment(self, name: str, comment: str) -> None:

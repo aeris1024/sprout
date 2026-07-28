@@ -382,6 +382,43 @@ def branch(
         typer.echo(f"{marker} {branch_name:<20} {(commit_id or '-')[:12]}{suffix}")
 
 
+@app.command()
+def tag(
+    name: Annotated[str | None, typer.Argument(help="Tag name")] = None,
+    commit: Annotated[
+        str | None,
+        typer.Argument(help="Commit ID, prefix, branch, or tag; defaults to HEAD"),
+    ] = None,
+    comment: Annotated[
+        str, typer.Option("--comment", "-m", help="Comment for a new tag")
+    ] = "",
+    delete: Annotated[
+        str | None, typer.Option("--delete", help="Delete a tag")
+    ] = None,
+) -> None:
+    """List, create, or delete tags."""
+    repository = repo()
+    if delete is not None:
+        if name is not None or commit is not None or comment:
+            raise SproutError("--delete cannot be combined with tag creation arguments")
+        repository.delete_tag(delete)
+        typer.echo(f"Deleted tag {delete}")
+        return
+    if name is not None:
+        commit_id = repository.create_tag(name, commit, comment)
+        typer.echo(f"Created tag {name} at {commit_id[:12]}")
+        return
+    if commit is not None or comment:
+        raise SproutError("a tag name is required")
+    tags = repository.tags()
+    if not tags:
+        typer.echo("No tags")
+        return
+    for tag_name, commit_id, tag_comment, _created_at in tags:
+        suffix = f"  # {tag_comment}" if tag_comment else ""
+        typer.echo(f"{tag_name:<20} {commit_id[:12]}{suffix}")
+
+
 @app.command(name="switch")
 def switch_command(
     branch_name: Annotated[str, typer.Argument()],

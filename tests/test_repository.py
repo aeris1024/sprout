@@ -257,6 +257,51 @@ def test_branch_delete_and_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert row["id"] == main_commit
 
 
+def test_tags_create_resolve_delete_and_reject_name_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    with pytest.raises(SproutError, match="cannot create tag before first commit"):
+        repo.create_tag("empty")
+
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+
+    assert repo.create_tag("first-draft", first, "Initial delivery") == first
+    assert repo.create_tag("latest") == second
+    assert [(name, commit_id, comment) for name, commit_id, comment, _ in repo.tags()] == [
+        ("first-draft", first, "Initial delivery"),
+        ("latest", second, ""),
+    ]
+    assert repo.resolve_commit("first-draft") == first
+    assert repo.resolve_commit("latest") == second
+
+    repo.create_branch("experiment")
+    with pytest.raises(SproutError, match="name already used by branch: experiment"):
+        repo.create_tag("experiment")
+    with pytest.raises(SproutError, match="tag already exists: latest"):
+        repo.create_tag("latest")
+    for invalid_name in ("", "bad name", "-bad", "dead"):
+        with pytest.raises(SproutError, match="tag name"):
+            repo.create_tag(invalid_name)
+
+    repo.create_tag("landmark")
+    with pytest.raises(SproutError, match="name already used by tag: landmark"):
+        repo.create_branch("landmark")
+    with pytest.raises(SproutError, match="name already used by tag: landmark"):
+        repo.rename_branch("experiment", "landmark")
+
+    repo.delete_tag("first-draft")
+    with pytest.raises(SproutError, match="unknown commit: first-draft"):
+        repo.resolve_commit("first-draft")
+    with pytest.raises(SproutError, match="unknown tag: first-draft"):
+        repo.delete_tag("first-draft")
+
+
 def test_switch_allows_saved_snapshot_without_discard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -968,6 +1013,23 @@ def test_discover_skips_lock_when_no_active_operation(
     monkeypatch.setattr(Repository, "lock", refuse_lock)
     discovered = Repository.discover(repo.root)
     assert discovered.root == repo.root
+
+
+def test_discover_adds_compatible_tags_table_to_existing_schema(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+    with repo.connect() as db:
+        db.execute("DROP TABLE tags")
+
+    discovered = Repository.discover(repo.root)
+
+    assert discovered.tags() == []
+    with discovered.connect() as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
+            ).fetchone()
+            is not None
+        )
 
 
 def test_status_and_log_succeed_while_repository_is_locked(

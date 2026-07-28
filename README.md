@@ -100,6 +100,29 @@ sprout branch experiment --rename prototype
 sprout branch --delete prototype
 ```
 
+## タグを使う
+
+動かない目印をコミットへ付けたい場合はタグを使用します。コミットを省略すると現在のブランチの先端、指定するとそのコミットへタグを作成します。コミットの代わりにブランチ名や既存タグ名も指定できます。
+
+```powershell
+# 現在のコミットにタグを作成
+sprout tag submitted -m "提出版"
+
+# 過去のコミットにタグを作成
+sprout tag first-draft <commit-id> -m "初稿"
+
+# 一覧と削除
+sprout tag
+sprout tag --delete first-draft
+```
+
+タグ名は`show`や`restore`など、コミットを受け取るコマンドで使用できます。
+
+```powershell
+sprout show submitted
+sprout restore submitted
+```
+
 ## 過去の状態へ戻る
 
 ブランチを切り替える場合は`switch`、特定のコミットを作業フォルダへ復元する場合は`restore`を使います。
@@ -198,13 +221,14 @@ sprout commit -m "ファイルを移動"
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `branch [NAME] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。JSONは一覧表示時のみ指定できる |
+| `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
 | `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
 | `doctor` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
 | `stats` | リポジトリの件数・容量と重複排除による節約量を表示する |
 
-コミットの指定には、完全なコミットID、一意に識別できるIDの先頭部分、またはブランチ名を使用できます。
+コミットの指定には、完全なコミットID、一意に識別できるIDの先頭部分、ブランチ名、またはタグ名を使用できます。
 
 `gc`は参照されないオブジェクトと、中断などで残った一時ファイル(`object-*`)を削除します。削除前に対象だけ確認したい場合は`--dry-run`を使います。
 

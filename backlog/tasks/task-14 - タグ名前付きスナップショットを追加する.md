@@ -1,9 +1,11 @@
 ---
 id: TASK-14
 title: タグ(名前付きスナップショット)を追加する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-07-15 16:18'
+updated_date: '2026-07-28 18:52'
 labels: []
 dependencies: []
 references:
@@ -34,10 +36,28 @@ READMEにタグの説明とコマンド一覧の行を追加する。
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 HEADまたは指定コミットにタグを作成できる
-- [ ] #2 タグの一覧表示と削除ができる
-- [ ] #3 `show`や`restore`でタグ名によりコミットを指定できる
-- [ ] #4 ブランチ名と重複するタグ名は拒否される
-- [ ] #5 READMEにタグの使い方が追記されている
-- [ ] #6 タグの作成・解決・削除・名前検証がテストで検証されている
+- [x] #1 HEADまたは指定コミットにタグを作成できる
+- [x] #2 タグの一覧表示と削除ができる
+- [x] #3 `show`や`restore`でタグ名によりコミットを指定できる
+- [x] #4 ブランチ名と重複するタグ名は拒否される
+- [x] #5 READMEにタグの使い方が追記されている
+- [x] #6 タグの作成・解決・削除・名前検証がテストで検証されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. tagsテーブルを新規スキーマへ追加し、既存schema_version=1リポジトリはテーブル欠落時だけロック下で互換拡張する。 2. タグ一覧・作成・削除と、ブランチ→タグ→IDの順で解決するRepository APIを実装する。名前検証を共有し、タグ/ブランチの相互重複を拒否する。 3. tag CLI（一覧、NAME [COMMIT]、--delete）とREADMEを追加する。 4. HEAD/指定コミット、show/restore解決、削除、名前競合、既存DB拡張をテストし、完了後に単独コミットする。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+tagsテーブルを追加し、既存schema_version=1では欠落時だけロック下で互換拡張する。タグ一覧・作成・削除、ブランチ→タグ→ID解決、タグ/ブランチ名の相互競合拒否を実装。CLIとREADMEを追加。全テスト: 84 passed, 2 skipped。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+名前付きスナップショット用のタグをRepository/CLIへ追加し、HEAD・指定コミットへの作成、一覧、削除、show/restoreでの解決を実装した。既存DBの互換拡張とブランチ名競合も含め、全テスト84件成功・2件スキップで検証した。
+<!-- SECTION:FINAL_SUMMARY:END -->

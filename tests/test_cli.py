@@ -100,6 +100,45 @@ def test_branch_cli_renames_and_deletes(tmp_path: Path, monkeypatch) -> None:
     assert "--rename cannot be combined with comment options" in str(conflict.exception)
 
 
+def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    first = Repository.discover().log()[0]["id"]
+    asset.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    second = Repository.discover().log()[0]["id"]
+
+    created = invoke(
+        ["tag", "first-draft", first, "-m", "初稿"], project, monkeypatch
+    )
+    assert created.exit_code == 0
+    assert created.stdout == f"Created tag first-draft at {first[:12]}\n"
+    latest = invoke(["tag", "submitted"], project, monkeypatch)
+    assert latest.exit_code == 0
+    assert latest.stdout == f"Created tag submitted at {second[:12]}\n"
+
+    listed = invoke(["tag"], project, monkeypatch)
+    assert listed.exit_code == 0
+    assert f"first-draft          {first[:12]}  # 初稿" in listed.stdout
+    assert f"submitted            {second[:12]}" in listed.stdout
+
+    shown = invoke(["show", "first-draft", "--json"], project, monkeypatch)
+    assert shown.exit_code == 0
+    assert json.loads(shown.stdout)["id"] == first
+    restored = invoke(["restore", "first-draft"], project, monkeypatch)
+    assert restored.exit_code == 0
+    assert asset.read_bytes() == b"v1"
+
+    deleted = invoke(["tag", "--delete", "first-draft"], project, monkeypatch)
+    assert deleted.exit_code == 0
+    assert deleted.stdout == "Deleted tag first-draft\n"
+    assert "first-draft" not in invoke(["tag"], project, monkeypatch).stdout
+
+
 def test_track_and_untrack_warn_when_nothing_matches(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
