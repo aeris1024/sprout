@@ -203,8 +203,10 @@ def status(
 def commit_command(message: Annotated[str, typer.Option("--message", "-m")]) -> None:
     """Save a snapshot of all tracked files."""
     repository = repo()
-    commit_id = repository.commit(message)
-    typer.echo(f"[{repository.head_branch()} {commit_id[:12]}] {message.strip()}")
+    result = repository.commit(message)
+    for path in result.removed_paths:
+        typer.echo(f"deleted  {path}")
+    typer.echo(f"[{repository.head_branch()} {result.commit_id[:12]}] {message.strip()}")
 
 
 @app.command(name="log")

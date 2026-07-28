@@ -30,11 +30,11 @@ def test_commit_multiple_files_restore_and_deduplicate(tmp_path: Path, monkeypat
     os.utime(illustration, ns=(first_mtime_ns, first_mtime_ns))
     repo.track([illustration, reference])
 
-    first = repo.commit("first snapshot")
+    first = repo.commit("first snapshot").commit_id
     illustration.write_bytes(b"pixels-v2")
     second_mtime_ns = 1_710_000_000_765_432_100
     os.utime(illustration, ns=(second_mtime_ns, second_mtime_ns))
-    second = repo.commit("second snapshot")
+    second = repo.commit("second snapshot").commit_id
 
     assert first != second
     assert len(list(repo.objects.glob("*/*"))) == 3
@@ -66,13 +66,15 @@ def test_status_tracks_add_modify_delete_and_untrack(tmp_path: Path, monkeypatch
 
     first.unlink()
     assert ("deleted", "first.bin") in [(e.state, e.path) for e in repo.status()]
-    repo.commit("replace first with second")
+    result = repo.commit("replace first with second")
+    assert result.removed_paths == ("first.bin",)
     assert repo.status() == []
     assert repo.tracked() == {"second.bin"}
 
     repo.untrack([second])
     assert [(e.state, e.path) for e in repo.status()] == [("deleted", "second.bin")]
-    repo.commit("remove second")
+    result = repo.commit("remove second")
+    assert result.removed_paths == ()
     assert repo.status() == []
 
 
@@ -84,14 +86,14 @@ def test_diff_classifies_added_modified_deleted_between_commits(
     first = write(repo.root, "keep.bin", b"same")
     second = write(repo.root, "old.bin", b"remove-me")
     repo.track([first, second])
-    older = repo.commit("older")
+    older = repo.commit("older").commit_id
 
     second.unlink()
     repo.untrack([second])
     first.write_bytes(b"changed")
     added = write(repo.root, "new.bin", b"brand-new")
     repo.track([first, added])
-    newer = repo.commit("newer")
+    newer = repo.commit("newer").commit_id
 
     entries = repo.diff(older, newer)
     assert [(entry.state, entry.path) for entry in entries] == [
@@ -111,10 +113,10 @@ def test_diff_against_working_tree_and_commit_refs(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"v1")
     repo.track([asset])
-    first = repo.commit("first")
+    first = repo.commit("first").commit_id
     repo.create_branch("other")
     asset.write_bytes(b"v2")
-    second = repo.commit("second")
+    second = repo.commit("second").commit_id
 
     asset.write_bytes(b"working")
     working = repo.diff()
@@ -195,14 +197,14 @@ def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "model.blend", b"main-v1")
     repo.track([asset])
-    main_commit = repo.commit("main")
+    main_commit = repo.commit("main").commit_id
     repo.create_branch("experiment", "Try a different shape")
     assert ("experiment", main_commit, "Try a different shape") in repo.branches()
     repo.set_branch_comment("experiment", "Try a different material")
     assert ("experiment", main_commit, "Try a different material") in repo.branches()
     repo.switch("experiment")
     asset.write_bytes(b"experiment")
-    experiment_commit = repo.commit("experiment")
+    experiment_commit = repo.commit("experiment").commit_id
 
     asset.write_bytes(b"dirty")
     with pytest.raises(SproutError, match="uncommitted"):
@@ -226,11 +228,11 @@ def test_switch_allows_saved_snapshot_without_discard(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"main")
     repo.track([asset])
-    main_commit = repo.commit("main")
+    main_commit = repo.commit("main").commit_id
     repo.create_branch("other")
     repo.switch("other")
     asset.write_bytes(b"other")
-    other_commit = repo.commit("other")
+    other_commit = repo.commit("other").commit_id
     repo.restore(main_commit, discard=True)
 
     repo.switch("other")
@@ -334,7 +336,7 @@ def test_discard_removes_never_committed_tracked_files(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"main")
     repo.track([asset])
-    main_commit = repo.commit("main")
+    main_commit = repo.commit("main").commit_id
     repo.create_branch("experiment")
     added = write(repo.root, "new.bin", b"only copy")
     repo.track([added])
@@ -361,7 +363,7 @@ def test_discard_restores_uncommitted_move(
     monkeypatch.chdir(repo.root)
     original = write(repo.root, "original.bin", b"content")
     repo.track([original])
-    main_commit = repo.commit("main")
+    main_commit = repo.commit("main").commit_id
     repo.create_branch("experiment")
     moved = repo.root / "nested/moved.bin"
 
@@ -387,9 +389,9 @@ def test_restore_moves_between_saved_commits_without_discard(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"v1")
     repo.track([asset])
-    first = repo.commit("v1")
+    first = repo.commit("v1").commit_id
     asset.write_bytes(b"v2")
-    second = repo.commit("v2")
+    second = repo.commit("v2").commit_id
 
     repo.restore(first, discard=True)
     assert asset.read_bytes() == b"v1"
@@ -407,9 +409,9 @@ def test_restore_can_return_to_tip_that_deleted_restored_file_without_discard(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"saved")
     repo.track([asset])
-    old_commit = repo.commit("add asset")
+    old_commit = repo.commit("add asset").commit_id
     asset.unlink()
-    latest_commit = repo.commit("remove asset")
+    latest_commit = repo.commit("remove asset").commit_id
 
     repo.restore(old_commit, discard=True)
     assert asset.read_bytes() == b"saved"
@@ -429,10 +431,10 @@ def test_restore_can_leave_deleted_snapshot_without_discard(
     repo.track([asset])
     repo.commit("add asset")
     asset.unlink()
-    deleted_commit = repo.commit("remove asset")
+    deleted_commit = repo.commit("remove asset").commit_id
     asset.write_bytes(b"v2")
     repo.track([asset])
-    latest_commit = repo.commit("add asset again")
+    latest_commit = repo.commit("add asset again").commit_id
 
     repo.restore(deleted_commit, discard=True)
     assert not asset.exists()
@@ -451,7 +453,7 @@ def test_partial_restore_updates_only_selected_paths(
     first = write(repo.root, "keep.bin", b"keep-v1")
     second = write(repo.root, "docs/manual.bin", b"manual-v1")
     repo.track([first, second])
-    old = repo.commit("old")
+    old = repo.commit("old").commit_id
     first.write_bytes(b"keep-v2")
     second.write_bytes(b"manual-v2")
     repo.commit("new")
@@ -477,7 +479,7 @@ def test_partial_restore_expands_directory_prefix(
     other = write(repo.root, "assets/b.bin", b"b1")
     outside = write(repo.root, "root.bin", b"root1")
     repo.track([nested, other, outside])
-    old = repo.commit("old")
+    old = repo.commit("old").commit_id
     nested.write_bytes(b"a2")
     other.write_bytes(b"b2")
     outside.write_bytes(b"root2")
@@ -497,7 +499,7 @@ def test_partial_restore_rejects_missing_commit_path(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"data")
     repo.track([asset])
-    commit_id = repo.commit("initial")
+    commit_id = repo.commit("initial").commit_id
 
     with pytest.raises(SproutError, match="path not in commit"):
         repo.restore(commit_id, [Path("missing.bin")])
@@ -511,7 +513,7 @@ def test_partial_restore_requires_discard_only_for_selected_paths(
     first = write(repo.root, "first.bin", b"v1")
     second = write(repo.root, "second.bin", b"v1")
     repo.track([first, second])
-    old = repo.commit("old")
+    old = repo.commit("old").commit_id
     first.write_bytes(b"v2")
     second.write_bytes(b"v2")
     repo.commit("new")
@@ -533,7 +535,7 @@ def test_partial_restore_rejects_untracked_collision(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"tracked")
     repo.track([asset])
-    old = repo.commit("with asset")
+    old = repo.commit("with asset").commit_id
     asset.unlink()
     repo.untrack([asset])
     repo.commit("remove asset")
@@ -570,7 +572,7 @@ def test_restore_refuses_to_delete_edited_restored_file(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"saved")
     repo.track([asset])
-    old_commit = repo.commit("add asset")
+    old_commit = repo.commit("add asset").commit_id
     asset.unlink()
     repo.commit("remove asset")
 
@@ -667,7 +669,7 @@ def test_move_tracked_file_updates_file_and_tracking(
     monkeypatch.chdir(repo.root)
     source = write(repo.root, "old.txt", b"content")
     repo.track([source])
-    first = repo.commit("add file")
+    first = repo.commit("add file").commit_id
 
     assert repo.move(source, Path("dir/new.txt")) == ("old.txt", "dir/new.txt")
     assert not source.exists()
@@ -679,7 +681,7 @@ def test_move_tracked_file_updates_file_and_tracking(
         ("added", "dir/new.txt"),
     }
 
-    second = repo.commit("move file")
+    second = repo.commit("move file").commit_id
     assert repo.status() == []
     repo.restore(first, discard=True)
     assert source.read_bytes() == b"content"
@@ -743,7 +745,7 @@ def test_detects_corrupt_object_before_restore(tmp_path: Path, monkeypatch: pyte
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"valid")
     repo.track([asset])
-    commit_id = repo.commit("valid")
+    commit_id = repo.commit("valid").commit_id
     state = repo.manifest(commit_id)["asset.bin"]
     object_path = repo.objects / state.object_hash[:2] / state.object_hash
     object_path.write_bytes(b"corrupt")
@@ -786,7 +788,7 @@ def test_timestamp_only_change_is_not_committable_and_restores_first_time(
     new_time = 1_720_000_000_000_000_000
     os.utime(asset, ns=(old_time, old_time))
     repo.track([asset])
-    old_commit = repo.commit("old timestamp")
+    old_commit = repo.commit("old timestamp").commit_id
 
     os.utime(asset, ns=(new_time, new_time))
     assert repo.status() == []
@@ -810,7 +812,7 @@ def test_duplicate_content_uses_oldest_time_on_first_commit(
     os.utime(older, ns=(old_time, old_time))
     os.utime(newer, ns=(new_time, new_time))
     repo.track([older, newer])
-    commit_id = repo.commit("duplicates")
+    commit_id = repo.commit("duplicates").commit_id
 
     manifest = repo.manifest(commit_id)
     assert manifest["z-older.png"].mtime_ns == old_time
@@ -939,7 +941,7 @@ def test_status_and_log_succeed_while_repository_is_locked(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"data")
     repo.track([asset])
-    commit_id = repo.commit("initial")
+    commit_id = repo.commit("initial").commit_id
 
     with repo.lock():
         discovered = Repository.discover(repo.root)
@@ -957,13 +959,13 @@ def test_log_path_filters_to_commits_that_change_content(
     target = write(repo.root, "target.bin", b"v1")
     other = write(repo.root, "other.bin", b"other-v1")
     repo.track([target, other])
-    first = repo.commit("add both")
+    first = repo.commit("add both").commit_id
 
     other.write_bytes(b"other-v2")
-    second = repo.commit("change other only")
+    second = repo.commit("change other only").commit_id
 
     target.write_bytes(b"v2")
-    third = repo.commit("change target")
+    third = repo.commit("change target").commit_id
 
     rows = repo.log(Path("target.bin"))
     assert [row["id"] for row in rows] == [third, first]
@@ -981,14 +983,14 @@ def test_log_limit_returns_latest_matching_commits(
     target = write(repo.root, "target.bin", b"v1")
     other = write(repo.root, "other.bin", b"other-v1")
     repo.track([target, other])
-    first = repo.commit("add both")
+    first = repo.commit("add both").commit_id
 
     target.write_bytes(b"v2")
-    second = repo.commit("change target")
+    second = repo.commit("change target").commit_id
     other.write_bytes(b"other-v2")
-    third = repo.commit("change other")
+    third = repo.commit("change other").commit_id
     target.write_bytes(b"v3")
-    fourth = repo.commit("change target again")
+    fourth = repo.commit("change target again").commit_id
 
     assert [row["id"] for row in repo.log(limit=2)] == [fourth, third]
     assert [row["id"] for row in repo.log(Path("target.bin"), limit=2)] == [fourth, second]
@@ -1005,9 +1007,9 @@ def test_log_path_includes_deletion_commits(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"data")
     repo.track([asset])
-    added = repo.commit("add")
+    added = repo.commit("add").commit_id
     asset.unlink()
-    deleted = repo.commit("remove")
+    deleted = repo.commit("remove").commit_id
 
     rows = repo.log(Path("asset.bin"))
     assert [row["id"] for row in rows] == [deleted, added]
@@ -1198,7 +1200,7 @@ def test_rejects_empty_commit_ref_and_hex_branch_names(
     monkeypatch.chdir(repo.root)
     asset = write(repo.root, "asset.bin", b"data")
     repo.track([asset])
-    commit_id = repo.commit("initial")
+    commit_id = repo.commit("initial").commit_id
 
     with pytest.raises(SproutError, match="commit id required"):
         repo.resolve_commit("")

@@ -94,6 +94,28 @@ def test_track_and_untrack_keep_success_output(tmp_path: Path, monkeypatch) -> N
     assert untrack_result.stderr == ""
 
 
+def test_commit_reports_files_removed_from_tracking(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "scene.blend"
+    asset.write_bytes(b"scene")
+    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+
+    initial = invoke(["commit", "-m", "initial"], project, monkeypatch)
+    assert initial.exit_code == 0
+    assert len(initial.stdout.splitlines()) == 1
+    assert initial.stdout.startswith("[main ")
+
+    asset.unlink()
+    removed = invoke(["commit", "-m", "remove scene"], project, monkeypatch)
+    assert removed.exit_code == 0
+    lines = removed.stdout.splitlines()
+    assert len(lines) == 2
+    assert lines[0] == "deleted  scene.blend"
+    assert lines[1].startswith("[main ")
+    assert lines[1].endswith("] remove scene")
+
+
 def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

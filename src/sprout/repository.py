@@ -94,6 +94,12 @@ class DiffEntry:
 
 
 @dataclass(frozen=True)
+class CommitResult:
+    commit_id: str
+    removed_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class IgnoreRule:
     pattern: str
     directory_only: bool
@@ -588,7 +594,7 @@ class Repository:
             raise
 
     @locked
-    def commit(self, message: str) -> str:
+    def commit(self, message: str) -> CommitResult:
         if not message.strip():
             raise SproutError("commit message cannot be empty")
         tracked = self.tracked()
@@ -658,7 +664,7 @@ class Repository:
             )
             db.execute("UPDATE branches SET commit_id=? WHERE name=?", (commit_id, branch))
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
-        return commit_id
+        return CommitResult(commit_id, tuple(missing))
 
     def resolve_commit(self, value: str) -> str:
         if not value.strip():
