@@ -1,10 +1,12 @@
 import os
 import json
 import sqlite3
+from io import BytesIO
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import zstandard
 
 from sprout.errors import SproutError
 from sprout.repository import Repository
@@ -47,6 +49,45 @@ def test_commit_multiple_files_restore_and_deduplicate(tmp_path: Path, monkeypat
     repo.restore(second)
     assert illustration.read_bytes() == b"pixels-v2"
     assert illustration.stat().st_mtime_ns == second_mtime_ns
+
+
+def test_objects_are_compressed_and_repository_records_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    content = b"compressible-content\n" * 10_000
+    asset = write(repo.root, "asset.bin", content)
+    repo.track([asset])
+
+    commit_id = repo.commit("compressed").commit_id
+    state = repo.manifest(commit_id)["asset.bin"]
+    object_path = repo.objects / state.object_hash[:2] / state.object_hash
+    stored = object_path.read_bytes()
+
+    assert stored != content
+    assert len(stored) < len(content)
+    with zstandard.ZstdDecompressor().stream_reader(BytesIO(stored)) as reader:
+        assert reader.read() == content
+    assert state.size == len(content)
+    with repo.connect() as db:
+        assert (
+            db.execute(
+                "SELECT value FROM meta WHERE key='object_compression'"
+            ).fetchone()[0]
+            == "zstd"
+        )
+
+
+def test_discover_rejects_old_repository_schema(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+    with repo.connect() as db:
+        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
+
+    with pytest.raises(
+        SproutError, match=r"unsupported repository schema version: 1 \(expected 2\)"
+    ):
+        Repository.discover(repo.root)
 
 
 def test_status_tracks_add_modify_delete_and_untrack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1282,7 +1323,7 @@ def test_stats_reports_size_counts_and_dedup_savings(
     assert result.branches == 1
     assert result.tracked_paths == 2
     assert result.objects == 2
-    assert result.objects_bytes == 4 + 6
+    assert result.objects_bytes == sum(path.stat().st_size for path in repo.objects.glob("*/*"))
     # commit1: 4+4, commit2: 6+4
     assert result.logical_bytes == 18
     assert result.unique_bytes == 10

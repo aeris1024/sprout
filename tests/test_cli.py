@@ -485,7 +485,11 @@ def test_stats_cli_shows_counts_and_dedup(tmp_path: Path, monkeypatch) -> None:
     assert "Commits:       1" in result.stdout
     assert "Branches:      1" in result.stdout
     assert "Tracked paths: 2" in result.stdout
-    assert "Objects:       1 (4 bytes)" in result.stdout
+    object_bytes = sum(
+        path.stat().st_size
+        for path in (project / ".sprout" / "objects").glob("*/*")
+    )
+    assert f"Objects:       1 ({object_bytes} bytes)" in result.stdout
     assert "Logical size:  8 bytes" in result.stdout
     assert "Unique size:   4 bytes" in result.stdout
     assert "Dedup saved:   4 bytes" in result.stdout

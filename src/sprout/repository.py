@@ -14,14 +14,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Iterator, TypeVar
+from typing import Any, BinaryIO, Callable, Iterator, TypeVar
+
+import zstandard
 
 from .errors import SproutError
 
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+OBJECT_COMPRESSION = "zstd"
+OBJECT_COMPRESSION_LEVEL = 3
 HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
@@ -183,6 +187,10 @@ class Repository:
             with repo.connect() as db:
                 db.executescript(SCHEMA)
                 db.execute("INSERT INTO meta(key, value) VALUES('schema_version', ?)", (SCHEMA_VERSION,))
+                db.execute(
+                    "INSERT INTO meta(key, value) VALUES('object_compression', ?)",
+                    (OBJECT_COMPRESSION,),
+                )
                 db.execute("INSERT INTO meta(key, value) VALUES('head_branch', 'main')")
                 db.execute("INSERT INTO meta(key, value) VALUES('active_operation', '')")
                 db.execute("INSERT INTO branches(name, commit_id, comment) VALUES('main', NULL, '')")
@@ -231,6 +239,9 @@ class Repository:
         try:
             with self.connect() as db:
                 row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+                compression = db.execute(
+                    "SELECT value FROM meta WHERE key='object_compression'"
+                ).fetchone()
                 has_tags = (
                     db.execute(
                         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
@@ -239,8 +250,18 @@ class Repository:
                 )
         except sqlite3.Error as exc:
             raise SproutError(f"cannot read repository: {exc}") from exc
-        if row is None or row[0] != SCHEMA_VERSION:
-            raise SproutError("unsupported repository schema version")
+        found_version = row[0] if row is not None else "missing"
+        if found_version != SCHEMA_VERSION:
+            raise SproutError(
+                f"unsupported repository schema version: {found_version} "
+                f"(expected {SCHEMA_VERSION})"
+            )
+        found_compression = compression[0] if compression is not None else "missing"
+        if found_compression != OBJECT_COMPRESSION:
+            raise SproutError(
+                f"unsupported object compression: {found_compression} "
+                f"(expected {OBJECT_COMPRESSION})"
+            )
         if not has_tags:
             with self.lock():
                 with self.connect() as db:
@@ -597,17 +618,24 @@ class Repository:
         size = 0
         try:
             with os.fdopen(fd, "wb") as target, source.open("rb") as input_file:
-                for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
-                    digest.update(chunk)
-                    size += len(chunk)
-                    target.write(chunk)
+                compressor = zstandard.ZstdCompressor(level=OBJECT_COMPRESSION_LEVEL)
+                with compressor.stream_writer(target, closefd=False) as compressed:
+                    for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        size += len(chunk)
+                        compressed.write(chunk)
                 target.flush()
                 os.fsync(target.fileno())
             object_hash = digest.hexdigest()
             destination = self.objects / object_hash[:2] / object_hash
             destination.parent.mkdir(exist_ok=True)
             if destination.exists():
-                existing_hash, existing_size = self.hash_file(destination)
+                try:
+                    existing_hash, existing_size = self._read_object(destination)
+                except SproutError as exc:
+                    raise SproutError(
+                        f"corrupt object already exists: {object_hash}"
+                    ) from exc
                 if existing_hash != object_hash or existing_size != size:
                     raise SproutError(f"corrupt object already exists: {object_hash}")
                 Path(temp_name).unlink()
@@ -617,6 +645,34 @@ class Repository:
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             raise
+
+    @staticmethod
+    def _read_object(source: Path, target: BinaryIO | None = None) -> tuple[str, int]:
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with source.open("rb") as compressed:
+                reader = zstandard.ZstdDecompressor().stream_reader(compressed)
+                with reader:
+                    for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        size += len(chunk)
+                        if target is not None:
+                            target.write(chunk)
+        except (OSError, zstandard.ZstdError) as exc:
+            raise SproutError(f"cannot read compressed object: {source.name}") from exc
+        return digest.hexdigest(), size
+
+    def _copy_verified_object(self, item: FileState, target: BinaryIO | None = None) -> None:
+        source = self.objects / item.object_hash[:2] / item.object_hash
+        if not source.is_file():
+            raise SproutError(f"missing object {item.object_hash} for {item.path}")
+        try:
+            digest, size = self._read_object(source, target)
+        except SproutError as exc:
+            raise SproutError(f"corrupt object {item.object_hash} for {item.path}") from exc
+        if digest != item.object_hash or size != item.size:
+            raise SproutError(f"corrupt object {item.object_hash} for {item.path}")
 
     @locked
     def commit(self, message: str) -> CommitResult:
@@ -778,7 +834,10 @@ class Repository:
             if not path.is_file():
                 issues.append(DoctorIssue("missing_object", object_hash))
                 continue
-            digest, _ = self.hash_file(path)
+            try:
+                digest, _ = self._read_object(path)
+            except SproutError:
+                digest = ""
             if digest != object_hash:
                 issues.append(DoctorIssue("corrupt_object", object_hash))
 
@@ -985,12 +1044,7 @@ class Repository:
 
     def _verify_manifest(self, target: dict[str, FileState]) -> None:
         for item in target.values():
-            source = self.objects / item.object_hash[:2] / item.object_hash
-            if not source.is_file():
-                raise SproutError(f"missing object {item.object_hash} for {item.path}")
-            digest, size = self.hash_file(source)
-            if digest != item.object_hash or size != item.size:
-                raise SproutError(f"corrupt object {item.object_hash} for {item.path}")
+            self._copy_verified_object(item)
 
     def _set_active_operation(self, operation_id: str) -> None:
         with self.connect() as db:
@@ -1103,8 +1157,8 @@ class Repository:
             for relative, item in target.items():
                 output = staged / Path(relative)
                 output.parent.mkdir(parents=True, exist_ok=True)
-                source = self.objects / item.object_hash[:2] / item.object_hash
-                shutil.copyfile(source, output)
+                with output.open("wb") as target_file:
+                    self._copy_verified_object(item, target_file)
             self._write_operation_plan(operation_dir / "plan.json", plan)
             self._set_active_operation(operation_id)
             active_registered = True
