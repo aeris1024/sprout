@@ -431,6 +431,11 @@ def test_completion_scripts_and_install_callback(
         result = invoke(["--show-completion", shell], tmp_path, monkeypatch)
         assert result.exit_code == 0
         assert marker in result.stdout
+        if shell == "powershell":
+            assert "try {" in result.stdout
+            assert "finally {" in result.stdout
+            assert "Remove-Item Env:_ROOT_COMPLETE" in result.stdout
+            assert "$previousComplete" in result.stdout
 
     installed: list[str] = []
 
@@ -448,6 +453,37 @@ def test_completion_scripts_and_install_callback(
     monkeypatch.setattr(sys, "argv", ["sprout", "--show-completion", "bash"])
     assert cli.main() == 0
     assert "complete_bash" in capsys.readouterr().out
+
+
+def test_main_recovers_from_stale_powershell_completion_environment(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = tmp_path / "project"
+    Repository.init(project)
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(sys, "argv", ["sprout", "status"])
+    monkeypatch.setenv("_SPROUT_COMPLETE", "complete_powershell")
+    monkeypatch.setenv("_TYPER_COMPLETE_ARGS", "sprout branch .\\")
+    monkeypatch.setenv("_TYPER_COMPLETE_WORD_TO_COMPLETE", ".\\")
+
+    assert cli.main() == 0
+    assert "Working tree clean" in capsys.readouterr().out
+    for name in cli._COMPLETION_ENVIRONMENT_VARIABLES:
+        assert name not in os.environ
+
+
+def test_completion_environment_is_preserved_for_real_completion_invocation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("_SPROUT_COMPLETE", "complete_powershell")
+    monkeypatch.setenv("_TYPER_COMPLETE_ARGS", "sprout branch .\\")
+    monkeypatch.setenv("_TYPER_COMPLETE_WORD_TO_COMPLETE", ".\\")
+
+    cli._clear_stale_completion_environment(["sprout"])
+
+    assert os.environ["_SPROUT_COMPLETE"] == "complete_powershell"
+    assert os.environ["_TYPER_COMPLETE_ARGS"] == "sprout branch .\\"
+    assert os.environ["_TYPER_COMPLETE_WORD_TO_COMPLETE"] == ".\\"
 
 
 def test_dynamic_completion_returns_refs_and_is_safe_outside_repository(

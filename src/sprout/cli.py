@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -10,10 +11,74 @@ from typing import Annotated, Any, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
+import typer._completion_shared as typer_completion_shared
 
 from . import __version__
 from .errors import SproutError
 from .repository import FileState, Repository
+
+_POWERSHELL_COMPLETION_SCRIPT = """
+Import-Module PSReadLine
+Set-PSReadLineKeyHandler -Chord Tab -Function MenuComplete
+$scriptblock = {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $previousComplete = $Env:%(autocomplete_var)s
+    $previousArgs = $Env:_TYPER_COMPLETE_ARGS
+    $previousWord = $Env:_TYPER_COMPLETE_WORD_TO_COMPLETE
+    try {
+        $Env:%(autocomplete_var)s = "complete_powershell"
+        $Env:_TYPER_COMPLETE_ARGS = $commandAst.ToString()
+        $Env:_TYPER_COMPLETE_WORD_TO_COMPLETE = $wordToComplete
+        %(prog_name)s | ForEach-Object {
+            $commandArray = $_ -Split ":::"
+            $command = $commandArray[0]
+            $helpString = $commandArray[1]
+            [System.Management.Automation.CompletionResult]::new(
+                $command, $command, 'ParameterValue', $helpString
+            )
+        }
+    }
+    finally {
+        if ($null -eq $previousComplete) {
+            Remove-Item Env:%(autocomplete_var)s -ErrorAction SilentlyContinue
+        }
+        else {
+            $Env:%(autocomplete_var)s = $previousComplete
+        }
+        if ($null -eq $previousArgs) {
+            Remove-Item Env:_TYPER_COMPLETE_ARGS -ErrorAction SilentlyContinue
+        }
+        else {
+            $Env:_TYPER_COMPLETE_ARGS = $previousArgs
+        }
+        if ($null -eq $previousWord) {
+            Remove-Item Env:_TYPER_COMPLETE_WORD_TO_COMPLETE -ErrorAction SilentlyContinue
+        }
+        else {
+            $Env:_TYPER_COMPLETE_WORD_TO_COMPLETE = $previousWord
+        }
+    }
+}
+Register-ArgumentCompleter -Native -CommandName %(prog_name)s -ScriptBlock $scriptblock
+"""
+_COMPLETION_ENVIRONMENT_VARIABLES = (
+    "_SPROUT_COMPLETE",
+    "_TYPER_COMPLETE_ARGS",
+    "_TYPER_COMPLETE_WORD_TO_COMPLETE",
+)
+
+
+def _install_safe_powershell_completion_template() -> None:
+    typer_completion_shared.COMPLETION_SCRIPT_POWER_SHELL = (
+        _POWERSHELL_COMPLETION_SCRIPT
+    )
+    typer_completion_shared._completion_scripts["powershell"] = (
+        _POWERSHELL_COMPLETION_SCRIPT
+    )
+    typer_completion_shared._completion_scripts["pwsh"] = _POWERSHELL_COMPLETION_SCRIPT
+
+
+_install_safe_powershell_completion_template()
 
 app = typer.Typer(
     add_completion=True,
@@ -673,7 +738,18 @@ def _handle_cli_exception(exc: BaseException) -> int | None:
     return None
 
 
+def _clear_stale_completion_environment(argv: list[str]) -> None:
+    if len(argv) <= 1:
+        return
+    instruction = os.environ.get("_SPROUT_COMPLETE", "")
+    if not instruction.startswith("complete_"):
+        return
+    for name in _COMPLETION_ENVIRONMENT_VARIABLES:
+        os.environ.pop(name, None)
+
+
 def main() -> int:
+    _clear_stale_completion_environment(sys.argv)
     try:
         app(standalone_mode=False)
     except typer.Exit as exc:
