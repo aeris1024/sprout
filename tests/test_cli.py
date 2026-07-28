@@ -62,6 +62,44 @@ def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
     assert "Explore colors" in invoke(["branch"], project, monkeypatch).stdout
 
 
+def test_branch_cli_renames_and_deletes(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "asset.bin").write_bytes(b"data")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "experiment", "-m", "案"], project, monkeypatch).exit_code == 0
+
+    renamed = invoke(
+        ["branch", "experiment", "--rename", "prototype"], project, monkeypatch
+    )
+    assert renamed.exit_code == 0
+    assert renamed.stdout == "Renamed branch experiment to prototype\n"
+    branches = json.loads(invoke(["branch", "--json"], project, monkeypatch).stdout)
+    assert any(
+        branch["name"] == "prototype" and branch["comment"] == "案"
+        for branch in branches
+    )
+    assert all(branch["name"] != "experiment" for branch in branches)
+
+    deleted = invoke(["branch", "--delete", "prototype"], project, monkeypatch)
+    assert deleted.exit_code == 0
+    assert deleted.stdout == "Deleted branch prototype\n"
+    assert "prototype" not in invoke(["branch"], project, monkeypatch).stdout
+
+    current = invoke(["branch", "--delete", "main"], project, monkeypatch)
+    assert current.exit_code != 0
+    assert "cannot delete current branch" in str(current.exception)
+
+    conflict = invoke(
+        ["branch", "main", "--rename", "trunk", "--set-comment", "note"],
+        project,
+        monkeypatch,
+    )
+    assert conflict.exit_code != 0
+    assert "--rename cannot be combined with comment options" in str(conflict.exception)
+
+
 def test_track_and_untrack_warn_when_nothing_matches(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

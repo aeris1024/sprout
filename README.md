@@ -93,6 +93,13 @@ sprout switch experiment
   experiment           b98fe76dc543  # 別の方法を試す
 ```
 
+ブランチ名を変更する場合は、現在の名前を位置引数、新しい名前を`--rename`へ指定します。現在のブランチを変更した場合も、そのブランチを選択した状態が保たれます。不要なブランチは`--delete`で削除できますが、現在のブランチは削除できません。
+
+```powershell
+sprout branch experiment --rename prototype
+sprout branch --delete prototype
+```
+
 ## 過去の状態へ戻る
 
 ブランチを切り替える場合は`switch`、特定のコミットを作業フォルダへ復元する場合は`restore`を使います。
@@ -190,7 +197,7 @@ sprout commit -m "ファイルを移動"
 | `log [PATH] [-n COUNT] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、件数、表示形式を指定できる |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
-| `branch [NAME] [--json]` | ブランチの一覧表示または作成を行う。JSONは一覧表示時のみ指定できる |
+| `branch [NAME] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。JSONは一覧表示時のみ指定できる |
 | `switch BRANCH` | 別のブランチへ切り替える |
 | `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |

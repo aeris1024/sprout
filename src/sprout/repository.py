@@ -848,12 +848,16 @@ class Repository:
                 for row in db.execute("SELECT name, commit_id, comment FROM branches ORDER BY name")
             ]
 
+    @staticmethod
+    def _validate_reference_name(name: str, kind: str) -> None:
+        if not name or any(c.isspace() for c in name) or name.startswith("-"):
+            raise SproutError(f"{kind} name must be non-empty and contain no whitespace")
+        if HEX_BRANCH_NAME.fullmatch(name):
+            raise SproutError(f"{kind} name cannot look like a commit id prefix")
+
     @locked
     def create_branch(self, name: str, comment: str = "") -> None:
-        if not name or any(c.isspace() for c in name) or name.startswith("-"):
-            raise SproutError("branch name must be non-empty and contain no whitespace")
-        if HEX_BRANCH_NAME.fullmatch(name):
-            raise SproutError("branch name cannot look like a commit id prefix")
+        self._validate_reference_name(name, "branch")
         head = self.head_commit()
         if head is None:
             raise SproutError("cannot create branch before first commit")
@@ -865,6 +869,37 @@ class Repository:
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
+
+    @locked
+    def delete_branch(self, name: str) -> None:
+        with self.connect() as db:
+            branch = db.execute("SELECT 1 FROM branches WHERE name=?", (name,)).fetchone()
+            if branch is None:
+                raise SproutError(f"unknown branch: {name}")
+            current = db.execute(
+                "SELECT value FROM meta WHERE key='head_branch'"
+            ).fetchone()[0]
+            if name == current:
+                raise SproutError(f"cannot delete current branch: {name}")
+            db.execute("DELETE FROM branches WHERE name=?", (name,))
+
+    @locked
+    def rename_branch(self, old_name: str, new_name: str) -> None:
+        self._validate_reference_name(new_name, "branch")
+        with self.connect() as db:
+            branch = db.execute("SELECT 1 FROM branches WHERE name=?", (old_name,)).fetchone()
+            if branch is None:
+                raise SproutError(f"unknown branch: {old_name}")
+            duplicate = db.execute(
+                "SELECT 1 FROM branches WHERE name=?", (new_name,)
+            ).fetchone()
+            if duplicate is not None:
+                raise SproutError(f"branch already exists: {new_name}")
+            db.execute("UPDATE branches SET name=? WHERE name=?", (new_name, old_name))
+            db.execute(
+                "UPDATE meta SET value=? WHERE key='head_branch' AND value=?",
+                (new_name, old_name),
+            )
 
     @locked
     def set_branch_comment(self, name: str, comment: str) -> None:

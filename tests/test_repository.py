@@ -221,6 +221,42 @@ def test_branch_switch_and_dirty_protection(tmp_path: Path, monkeypatch: pytest.
         repo.set_branch_comment("missing", "nope")
 
 
+def test_branch_delete_and_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"main")
+    repo.track([asset])
+    main_commit = repo.commit("main").commit_id
+    repo.create_branch("experiment", "Try a different shape")
+    repo.create_branch("other")
+
+    repo.rename_branch("experiment", "prototype")
+    assert ("prototype", main_commit, "Try a different shape") in repo.branches()
+    assert all(name != "experiment" for name, _, _ in repo.branches())
+
+    with pytest.raises(SproutError, match="branch already exists: other"):
+        repo.rename_branch("prototype", "other")
+    with pytest.raises(SproutError, match="unknown branch: missing"):
+        repo.rename_branch("missing", "new-name")
+    for invalid_name in ("", "bad name", "-bad", "dead"):
+        with pytest.raises(SproutError, match="branch name"):
+            repo.rename_branch("prototype", invalid_name)
+
+    repo.rename_branch("main", "trunk")
+    assert repo.head_branch() == "trunk"
+    assert repo.head_commit() == main_commit
+
+    with pytest.raises(SproutError, match="cannot delete current branch: trunk"):
+        repo.delete_branch("trunk")
+    with pytest.raises(SproutError, match="unknown branch: missing"):
+        repo.delete_branch("missing")
+
+    repo.delete_branch("prototype")
+    assert all(name != "prototype" for name, _, _ in repo.branches())
+    row, _ = repo.commit_info(main_commit)
+    assert row["id"] == main_commit
+
+
 def test_switch_allows_saved_snapshot_without_discard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
