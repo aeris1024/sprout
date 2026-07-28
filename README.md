@@ -31,6 +31,34 @@ uv tool install .
 sprout --help
 ```
 
+### シェル補完
+
+コマンド名、オプション、ブランチ名、タグ名をTabキーで補完できます。利用するシェル内でインストールコマンドを実行し、その後ターミナルを再起動してください。現在のシェルは自動検出されます。
+
+PowerShell:
+
+```powershell
+sprout --install-completion
+```
+
+bash:
+
+```bash
+sprout --install-completion
+```
+
+zsh:
+
+```zsh
+sprout --install-completion
+```
+
+設定ファイルへ書き込まず補完スクリプトだけ確認したい場合は、各シェル内で次を実行します。
+
+```text
+sprout --show-completion
+```
+
 ## クイックスタート
 
 まず、管理したいフォルダへ移動してSproutを初期化します。

@@ -1,10 +1,12 @@
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import typer
+import typer.completion as typer_completion
 from typer.testing import CliRunner
 
 from sprout.cli import app
@@ -358,6 +360,59 @@ def test_discard_help_describes_tracked_and_untracked_behavior(
     help_text = " ".join(result.stdout.split())
     assert "Discard tracked changes on restored paths" in help_text
     assert "untouched" in help_text
+
+
+def test_completion_scripts_and_install_callback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION", "1")
+    expected_markers = {
+        "powershell": "complete_powershell",
+        "bash": "complete_bash",
+        "zsh": "complete_zsh",
+    }
+    for shell, marker in expected_markers.items():
+        result = invoke(["--show-completion", shell], tmp_path, monkeypatch)
+        assert result.exit_code == 0
+        assert marker in result.stdout
+
+    installed: list[str] = []
+
+    def fake_install(shell: str | None = None):
+        installed.append(getattr(shell, "value", str(shell)))
+        return "powershell", tmp_path / "Microsoft.PowerShell_profile.ps1"
+
+    monkeypatch.setattr(typer_completion, "install", fake_install)
+    result = invoke(["--install-completion", "powershell"], tmp_path, monkeypatch)
+    assert result.exit_code == 0
+    assert installed == ["powershell"]
+    assert "powershell completion installed" in result.stdout
+    assert "restart the terminal" in result.stdout
+
+    monkeypatch.setattr(sys, "argv", ["sprout", "--show-completion", "bash"])
+    assert cli.main() == 0
+    assert "complete_bash" in capsys.readouterr().out
+
+
+def test_dynamic_completion_returns_refs_and_is_safe_outside_repository(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert cli._complete_branches() == []
+    assert cli._complete_references() == []
+
+    project = tmp_path / "project"
+    repository = Repository.init(project)
+    monkeypatch.chdir(project)
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    repository.track([asset])
+    repository.commit("first")
+    repository.create_branch("experiment")
+    repository.create_tag("submitted")
+
+    assert cli._complete_branches() == ["experiment", "main"]
+    assert cli._complete_references() == ["experiment", "main", "submitted"]
 
 
 def test_gc_cli_reports_removed_objects_and_supports_dry_run(

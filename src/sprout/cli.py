@@ -13,7 +13,11 @@ from . import __version__
 from .errors import SproutError
 from .repository import FileState, Repository
 
-app = typer.Typer(no_args_is_help=True, help="Offline snapshot version control for local files.")
+app = typer.Typer(
+    add_completion=True,
+    no_args_is_help=True,
+    help="Offline snapshot version control for local files.",
+)
 
 
 def _version(value: bool) -> None:
@@ -31,6 +35,23 @@ def callback(
 
 def repo() -> Repository:
     return Repository.discover()
+
+
+def _complete_branches() -> list[str]:
+    try:
+        return [name for name, _commit_id, _comment in repo().branches()]
+    except (OSError, SproutError, sqlite3.Error):
+        return []
+
+
+def _complete_references() -> list[str]:
+    try:
+        repository = repo()
+        branches = [name for name, _commit_id, _comment in repository.branches()]
+        tags = [name for name, _commit_id, _comment, _created_at in repository.tags()]
+        return sorted(branches + tags)
+    except (OSError, SproutError, sqlite3.Error):
+        return []
 
 
 def _echo_json(value: Any) -> None:
@@ -284,7 +305,13 @@ def diff(
 
 @app.command()
 def show(
-    commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")],
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
     timezone_name: Annotated[
         str,
         typer.Option(
@@ -387,7 +414,10 @@ def tag(
     name: Annotated[str | None, typer.Argument(help="Tag name")] = None,
     commit: Annotated[
         str | None,
-        typer.Argument(help="Commit ID, prefix, branch, or tag; defaults to HEAD"),
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag; defaults to HEAD",
+            autocompletion=_complete_references,
+        ),
     ] = None,
     comment: Annotated[
         str, typer.Option("--comment", "-m", help="Comment for a new tag")
@@ -421,7 +451,9 @@ def tag(
 
 @app.command(name="switch")
 def switch_command(
-    branch_name: Annotated[str, typer.Argument()],
+    branch_name: Annotated[
+        str, typer.Argument(autocompletion=_complete_branches)
+    ],
     discard: Annotated[
         bool,
         typer.Option(
@@ -437,7 +469,13 @@ def switch_command(
 
 @app.command()
 def restore(
-    commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")],
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
     paths: Annotated[
         list[Path] | None,
         typer.Argument(help="Optional files or directories to restore from the commit"),
