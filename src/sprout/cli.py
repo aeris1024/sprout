@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 
 from . import __version__
 from .errors import SproutError
-from .repository import Repository
+from .repository import FileState, Repository
 
 app = typer.Typer(no_args_is_help=True, help="Offline snapshot version control for local files.")
 
@@ -30,6 +33,71 @@ def repo() -> Repository:
     return Repository.discover()
 
 
+def _echo_json(value: Any) -> None:
+    typer.echo(json.dumps(value, ensure_ascii=False))
+
+
+def _log_json(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": row["id"],
+            "parent_id": row["parent_id"],
+            "created_at": row["created_at"],
+            "message": row["message"],
+        }
+        for row in rows
+    ]
+
+
+def _show_json(row: sqlite3.Row, files: list[FileState]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "parent_id": row["parent_id"],
+        "branch_name": row["branch_name"],
+        "created_at": row["created_at"],
+        "message": row["message"],
+        "files": [
+            {
+                "path": item.path,
+                "object_hash": item.object_hash,
+                "size": item.size,
+                "mtime_ns": item.mtime_ns,
+            }
+            for item in files
+        ],
+    }
+
+
+def _branches_json(repository: Repository) -> list[dict[str, Any]]:
+    current = repository.head_branch()
+    return [
+        {
+            "name": name,
+            "commit_id": commit_id,
+            "comment": comment,
+            "current": name == current,
+        }
+        for name, commit_id, comment in repository.branches()
+    ]
+
+
+def _display_timezone(name: str) -> tzinfo | None:
+    if name.lower() == "local":
+        return None
+    if name.upper() == "UTC":
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise SproutError(f"unknown timezone: {name}") from exc
+
+
+def _format_datetime(value: datetime, display_timezone: tzinfo | None) -> str:
+    converted = value.astimezone() if display_timezone is None else value.astimezone(display_timezone)
+    zone_name = converted.tzname() or converted.strftime("%z")
+    return f"{converted:%Y-%m-%d %H:%M:%S} {zone_name}"
+
+
 @app.command()
 def init(path: Annotated[Path, typer.Argument()] = Path(".")) -> None:
     """Initialize a Sprout project."""
@@ -41,6 +109,9 @@ def init(path: Annotated[Path, typer.Argument()] = Path(".")) -> None:
 def track(paths: Annotated[list[Path], typer.Argument(help="Files or directories to track")]) -> None:
     """Register files for future commits."""
     added = repo().track(paths)
+    if not added:
+        typer.echo("Warning: no files were tracked", err=True)
+        return
     for path in added:
         typer.echo(f"track  {path}")
 
@@ -49,6 +120,9 @@ def track(paths: Annotated[list[Path], typer.Argument(help="Files or directories
 def untrack(paths: Annotated[list[Path], typer.Argument(help="Files or directories to stop tracking")]) -> None:
     """Stop tracking paths without deleting working files."""
     removed = repo().untrack(paths)
+    if not removed:
+        typer.echo("Warning: no matching tracked paths", err=True)
+        return
     for path in removed:
         typer.echo(f"untrack  {path}")
 
@@ -68,17 +142,43 @@ def status(
     paths: Annotated[list[Path] | None, typer.Argument(help="Paths whose tracking state should be checked")] = None,
     tracked: Annotated[bool, typer.Option("--tracked", help="List every tracked file")] = False,
     untracked: Annotated[bool, typer.Option("--untracked", help="List every untracked file")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """Show changes or whether specific paths are tracked."""
     repository = repo()
-    typer.echo(f"On branch {repository.head_branch()}")
+    branch_name = repository.head_branch()
     if paths:
         if tracked or untracked:
             raise SproutError("path status cannot be combined with --tracked or --untracked")
-        for path, is_tracked in repository.tracking_status(paths):
+        path_entries = repository.tracking_status(paths)
+        if json_output:
+            _echo_json(
+                {
+                    "branch": branch_name,
+                    "paths": [
+                        {"path": path, "tracked": is_tracked}
+                        for path, is_tracked in path_entries
+                    ],
+                }
+            )
+            return
+        typer.echo(f"On branch {branch_name}")
+        for path, is_tracked in path_entries:
             typer.echo(f"{'tracked' if is_tracked else 'untracked':<9} {path}")
         return
     entries = repository.status()
+    if json_output:
+        payload: dict[str, Any] = {
+            "branch": branch_name,
+            "changes": [{"state": entry.state, "path": entry.path} for entry in entries],
+        }
+        if tracked:
+            payload["tracked"] = sorted(repository.tracked())
+        if untracked:
+            payload["untracked"] = repository.untracked_files()
+        _echo_json(payload)
+        return
+    typer.echo(f"On branch {branch_name}")
     if not entries:
         typer.echo("Working tree clean")
     for entry in entries:
@@ -113,10 +213,29 @@ def log_command(
         Path | None,
         typer.Argument(help="Show only commits that changed this path"),
     ] = None,
+    max_count: Annotated[
+        int | None,
+        typer.Option(
+            "--max-count",
+            "-n",
+            min=1,
+            help="Limit the number of displayed commits",
+        ),
+    ] = None,
+    oneline: Annotated[
+        bool,
+        typer.Option("--oneline", help="Show each commit as a one-line summary"),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """Show history of the current branch."""
+    if json_output and oneline:
+        raise SproutError("--json and --oneline cannot be used together")
     repository = repo()
-    rows = repository.log(path)
+    rows = repository.log(path, limit=max_count)
+    if json_output:
+        _echo_json(_log_json(rows))
+        return
     if not rows:
         if path is not None:
             typer.echo(f"No history for path: {path.as_posix()}")
@@ -124,6 +243,9 @@ def log_command(
             typer.echo("No commits yet")
         return
     for row in rows:
+        if oneline:
+            typer.echo(f"{row['id'][:12]} {row['message']}")
+            continue
         typer.echo(f"commit {row['id']}")
         typer.echo(f"Date:   {row['created_at']}")
         typer.echo(f"\n    {row['message']}\n")
@@ -159,16 +281,39 @@ def diff(
 
 
 @app.command()
-def show(commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")]) -> None:
+def show(
+    commit: Annotated[str, typer.Argument(help="Commit ID, prefix, or branch")],
+    timezone_name: Annotated[
+        str,
+        typer.Option(
+            "--timezone",
+            help="Display timezone: UTC, local, or an IANA name such as Asia/Tokyo",
+        ),
+    ] = "UTC",
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
     """Show a commit and its files."""
     row, files = repo().commit_info(commit)
+    if json_output:
+        if timezone_name.upper() != "UTC":
+            raise SproutError("--timezone cannot be used with --json")
+        _echo_json(_show_json(row, files))
+        return
+    display_timezone = _display_timezone(timezone_name)
+    created_at = datetime.fromisoformat(row["created_at"])
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
     typer.echo(f"commit {row['id']}")
     typer.echo(f"Parent: {row['parent_id'] or '-'}")
     typer.echo(f"Branch: {row['branch_name']}")
-    typer.echo(f"Date:   {row['created_at']}")
+    typer.echo(f"Date:   {_format_datetime(created_at, display_timezone)}")
     typer.echo(f"\n    {row['message']}\n")
     for item in files:
-        typer.echo(f"{item.object_hash[:12]}  {item.size:>10}  {item.mtime_ns}  {item.path}")
+        modified_at = datetime.fromtimestamp(item.mtime_ns // 1_000_000_000, tz=timezone.utc)
+        typer.echo(
+            f"{item.object_hash[:12]}  {item.size:>10}  "
+            f"{_format_datetime(modified_at, display_timezone)}  {item.path}"
+        )
 
 
 @app.command()
@@ -178,9 +323,12 @@ def branch(
     set_comment: Annotated[
         str | None, typer.Option("--set-comment", help="Replace an existing branch comment")
     ] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """List branches, create one, or edit its comment."""
     repository = repo()
+    if json_output and (name is not None or comment or set_comment is not None):
+        raise SproutError("--json can only be used when listing branches")
     if set_comment is not None:
         if name is None:
             raise SproutError("a branch name is required with --set-comment")
@@ -195,6 +343,9 @@ def branch(
         return
     if comment:
         raise SproutError("a branch name is required with --comment")
+    if json_output:
+        _echo_json(_branches_json(repository))
+        return
     current = repository.head_branch()
     for branch_name, commit_id, branch_comment in repository.branches():
         marker = "*" if branch_name == current else " "

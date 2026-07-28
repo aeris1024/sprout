@@ -973,6 +973,31 @@ def test_log_path_filters_to_commits_that_change_content(
     assert repo.log(Path("missing.bin")) == []
 
 
+def test_log_limit_returns_latest_matching_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    target = write(repo.root, "target.bin", b"v1")
+    other = write(repo.root, "other.bin", b"other-v1")
+    repo.track([target, other])
+    first = repo.commit("add both")
+
+    target.write_bytes(b"v2")
+    second = repo.commit("change target")
+    other.write_bytes(b"other-v2")
+    third = repo.commit("change other")
+    target.write_bytes(b"v3")
+    fourth = repo.commit("change target again")
+
+    assert [row["id"] for row in repo.log(limit=2)] == [fourth, third]
+    assert [row["id"] for row in repo.log(Path("target.bin"), limit=2)] == [fourth, second]
+    assert [row["id"] for row in repo.log()] == [fourth, third, second, first]
+
+    with pytest.raises(SproutError, match="log limit must be at least 1"):
+        repo.log(limit=0)
+
+
 def test_log_path_includes_deletion_commits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1,4 +1,8 @@
+import json
+import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import typer
 from typer.testing import CliRunner
@@ -56,6 +60,89 @@ def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
     result = invoke(["branch", "ideas", "--set-comment", "Explore colors"], project, monkeypatch)
     assert result.exit_code == 0
     assert "Explore colors" in invoke(["branch"], project, monkeypatch).stdout
+
+
+def test_track_and_untrack_warn_when_nothing_matches(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "empty").mkdir()
+
+    track_result = invoke(["track", "empty"], project, monkeypatch)
+    assert track_result.exit_code == 0
+    assert track_result.stdout == ""
+    assert "Warning: no files were tracked" in track_result.stderr
+
+    untrack_result = invoke(["untrack", "missing.txt"], project, monkeypatch)
+    assert untrack_result.exit_code == 0
+    assert untrack_result.stdout == ""
+    assert "Warning: no matching tracked paths" in untrack_result.stderr
+
+
+def test_track_and_untrack_keep_success_output(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "scene.blend").write_bytes(b"scene")
+
+    track_result = invoke(["track", "scene.blend"], project, monkeypatch)
+    assert track_result.exit_code == 0
+    assert track_result.stdout == "track  scene.blend\n"
+    assert track_result.stderr == ""
+
+    untrack_result = invoke(["untrack", "scene.blend"], project, monkeypatch)
+    assert untrack_result.exit_code == 0
+    assert untrack_result.stdout == "untrack  scene.blend\n"
+    assert untrack_result.stderr == ""
+
+
+def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "scene.blend"
+    asset.write_bytes(b"scene")
+    mtime_ns = 1_704_067_200_123_456_789
+    os.utime(asset, ns=(mtime_ns, mtime_ns))
+    stored_mtime_ns = asset.stat().st_mtime_ns
+    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+
+    repository = Repository.discover()
+    commit_row = repository.log()[0]
+    commit_id = commit_row["id"]
+    _, files = repository.commit_info(commit_id)
+    assert files[0].mtime_ns == stored_mtime_ns
+
+    utc_result = invoke(["show", commit_id], project, monkeypatch)
+    assert utc_result.exit_code == 0
+    assert "Date:   " in utc_result.stdout
+    assert " UTC\n" in utc_result.stdout
+    assert "2024-01-01 00:00:00 UTC  scene.blend" in utc_result.stdout
+    assert str(stored_mtime_ns) not in utc_result.stdout
+
+    tokyo_result = invoke(
+        ["show", commit_id, "--timezone", "Asia/Tokyo"], project, monkeypatch
+    )
+    assert tokyo_result.exit_code == 0
+    created_at = datetime.fromisoformat(commit_row["created_at"])
+    expected_created_at = created_at.astimezone(ZoneInfo("Asia/Tokyo"))
+    assert f"Date:   {expected_created_at:%Y-%m-%d %H:%M:%S} JST" in tokyo_result.stdout
+    assert "2024-01-01 09:00:00 JST  scene.blend" in tokyo_result.stdout
+
+    local_result = invoke(["show", commit_id, "--timezone", "local"], project, monkeypatch)
+    assert local_result.exit_code == 0
+    assert str(stored_mtime_ns) not in local_result.stdout
+
+
+def test_show_rejects_unknown_timezone(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "scene.blend").write_bytes(b"scene")
+    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    commit_id = Repository.discover().log()[0]["id"]
+
+    result = invoke(["show", commit_id, "--timezone", "Mars/Olympus"], project, monkeypatch)
+    assert result.exit_code != 0
+    assert "unknown timezone: Mars/Olympus" in str(result.exception)
 
 
 def test_main_formats_operating_system_errors(monkeypatch, capsys) -> None:
@@ -320,3 +407,141 @@ def test_log_path_cli_filters_history(tmp_path: Path, monkeypatch) -> None:
     missing = invoke(["log", "missing.bin"], project, monkeypatch)
     assert missing.exit_code == 0
     assert "No history for path: missing.bin" in missing.stdout
+
+
+def test_log_cli_limits_and_summarizes_history(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    commit_ids: list[str] = []
+    for version in ("first", "second", "third"):
+        asset.write_text(version)
+        result = invoke(["commit", "-m", version], project, monkeypatch)
+        assert result.exit_code == 0
+        commit_ids.append(Repository.discover().log()[0]["id"])
+
+    limited = invoke(["log", "-n", "2"], project, monkeypatch)
+    assert limited.exit_code == 0
+    assert "third" in limited.stdout
+    assert "second" in limited.stdout
+    assert "first" not in limited.stdout
+
+    full = invoke(["log"], project, monkeypatch)
+    assert full.exit_code == 0
+    assert all(message in full.stdout for message in ("first", "second", "third"))
+
+    oneline = invoke(["log", "--max-count", "2", "--oneline"], project, monkeypatch)
+    assert oneline.exit_code == 0
+    assert oneline.stdout.splitlines() == [
+        f"{commit_ids[2][:12]} third",
+        f"{commit_ids[1][:12]} second",
+    ]
+
+    invalid = invoke(["log", "-n", "0"], project, monkeypatch)
+    assert invalid.exit_code != 0
+    assert "x>=1" in invalid.stderr
+
+
+def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "作品" / "絵.psd"
+    asset.parent.mkdir()
+    asset.write_bytes(b"image")
+    stored_mtime_ns = asset.stat().st_mtime_ns
+    assert invoke(["track", "作品/絵.psd"], project, monkeypatch).exit_code == 0
+
+    status_result = invoke(
+        ["status", "--tracked", "--untracked", "--json"], project, monkeypatch
+    )
+    assert status_result.exit_code == 0
+    assert "作品/絵.psd" in status_result.stdout
+    assert "\\u" not in status_result.stdout
+    assert "On branch" not in status_result.stdout
+    assert json.loads(status_result.stdout) == {
+        "branch": "main",
+        "changes": [{"state": "added", "path": "作品/絵.psd"}],
+        "tracked": ["作品/絵.psd"],
+        "untracked": [],
+    }
+
+    path_status = invoke(["status", "作品/絵.psd", "--json"], project, monkeypatch)
+    assert path_status.exit_code == 0
+    assert json.loads(path_status.stdout) == {
+        "branch": "main",
+        "paths": [{"path": "作品/絵.psd", "tracked": True}],
+    }
+
+    assert invoke(["commit", "-m", "日本語コミット"], project, monkeypatch).exit_code == 0
+    commit_id = Repository.discover().log()[0]["id"]
+
+    log_result = invoke(["log", "-n", "1", "--json"], project, monkeypatch)
+    assert log_result.exit_code == 0
+    log_payload = json.loads(log_result.stdout)
+    assert log_payload == [
+        {
+            "id": commit_id,
+            "parent_id": None,
+            "created_at": log_payload[0]["created_at"],
+            "message": "日本語コミット",
+        }
+    ]
+    assert "commit " not in log_result.stdout
+    assert json.loads(invoke(["log", "missing.bin", "--json"], project, monkeypatch).stdout) == []
+
+    show_result = invoke(["show", commit_id, "--json"], project, monkeypatch)
+    assert show_result.exit_code == 0
+    show_payload = json.loads(show_result.stdout)
+    assert show_payload == {
+        "id": commit_id,
+        "parent_id": None,
+        "branch_name": "main",
+        "created_at": log_payload[0]["created_at"],
+        "message": "日本語コミット",
+        "files": [
+            {
+                "path": "作品/絵.psd",
+                "object_hash": show_payload["files"][0]["object_hash"],
+                "size": 5,
+                "mtime_ns": stored_mtime_ns,
+            }
+        ],
+    }
+    assert "Date:" not in show_result.stdout
+
+    assert invoke(["branch", "ideas", "-m", "案"], project, monkeypatch).exit_code == 0
+    branch_result = invoke(["branch", "--json"], project, monkeypatch)
+    assert branch_result.exit_code == 0
+    assert json.loads(branch_result.stdout) == [
+        {"name": "ideas", "commit_id": commit_id, "comment": "案", "current": False},
+        {"name": "main", "commit_id": commit_id, "comment": "", "current": True},
+    ]
+    assert "* main" not in branch_result.stdout
+
+
+def test_json_output_rejects_conflicting_display_or_mutation_options(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    commit_id = Repository.discover().log()[0]["id"]
+
+    log_result = invoke(["log", "--json", "--oneline"], project, monkeypatch)
+    assert log_result.exit_code != 0
+    assert "--json and --oneline cannot be used together" in str(log_result.exception)
+
+    show_result = invoke(
+        ["show", commit_id, "--json", "--timezone", "Asia/Tokyo"], project, monkeypatch
+    )
+    assert show_result.exit_code != 0
+    assert "--timezone cannot be used with --json" in str(show_result.exception)
+
+    branch_result = invoke(["branch", "ideas", "--json"], project, monkeypatch)
+    assert branch_result.exit_code != 0
+    assert "--json can only be used when listing branches" in str(branch_result.exception)

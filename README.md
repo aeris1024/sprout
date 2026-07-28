@@ -61,6 +61,20 @@ sprout show <commit-id>
 ```
 
 `sprout log` にパスを指定すると、そのファイル内容が変わったコミットだけを表示します。内容が同じままのコミットは省かれます。一度も登場していないパスでは `No history for path:` と表示されます。
+表示件数は`-n/--max-count`で制限でき、`--oneline`を指定すると各コミットを1行で表示できます。
+
+```powershell
+sprout log -n 5
+sprout log --oneline
+sprout log scene.blend -n 5 --oneline
+```
+
+`sprout show`のコミット日時とファイル更新日時は、既定ではUTCで表示されます。ローカルタイム、またはIANAタイムゾーン名を指定することもできます。
+
+```powershell
+sprout show <commit-id> --timezone local
+sprout show <commit-id> --timezone Asia/Tokyo
+```
 
 ## ブランチを使う
 
@@ -171,12 +185,12 @@ sprout commit -m "ファイルを移動"
 | `track PATH...` | ファイルを追跡対象へ登録する |
 | `untrack PATH...` | ファイルの追跡をやめる |
 | `move OLD NEW` | 追跡済みファイルを移動する |
-| `status` | 現在の変更や追跡状態を確認する |
+| `status [--json]` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE` | 現在の状態をコミットする |
-| `log [PATH]` | 現在のブランチの履歴を表示する。パスを指定するとそのファイルが変わったコミットだけを表示する |
+| `log [PATH] [-n COUNT] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、件数、表示形式を指定できる |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
-| `show COMMIT` | コミットの詳細を表示する |
-| `branch [NAME]` | ブランチの一覧表示または作成を行う |
+| `show COMMIT [--json]` | コミットの詳細を表示する |
+| `branch [NAME] [--json]` | ブランチの一覧表示または作成を行う。JSONは一覧表示時のみ指定できる |
 | `switch BRANCH` | 別のブランチへ切り替える |
 | `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
@@ -190,6 +204,70 @@ sprout commit -m "ファイルを移動"
 リポジトリの健全性だけ確認したい場合は`doctor`を使います。参照されているオブジェクトの欠落・内容破損、中断中の操作記録、残った一時ファイルを報告します。問題がなければ`OK`を表示し、問題があれば終了コード1で終了します。作業ツリーや追跡状態は変更しません。
 
 容量と重複排除の効果を確認したい場合は`stats`を使います。objectsの件数・合計サイズ、コミット数、追跡パス数に加え、コミット上の論理サイズと実ユニークサイズの差（`Dedup saved`）を表示します。読み取り専用です。
+
+## JSON出力
+
+`status`、`log`、`show`、`branch`の一覧表示では、`--json`を指定すると人間向けの装飾を含まないJSONを1つ出力します。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+
+```powershell
+sprout status --tracked --untracked --json
+sprout log -n 5 --json
+sprout show <commit-id> --json
+sprout branch --json
+```
+
+各コマンドのスキーマは次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。
+
+```text
+status:
+{
+  "branch": string,
+  "changes": [{"state": string, "path": string}],
+  "tracked"?: [string],
+  "untracked"?: [string]
+}
+
+status PATH:
+{
+  "branch": string,
+  "paths": [{"path": string, "tracked": boolean}]
+}
+
+log:
+[{
+  "id": string,
+  "parent_id": string | null,
+  "created_at": string,
+  "message": string
+}]
+
+show:
+{
+  "id": string,
+  "parent_id": string | null,
+  "branch_name": string,
+  "created_at": string,
+  "message": string,
+  "files": [{
+    "path": string,
+    "object_hash": string,
+    "size": number,
+    "mtime_ns": number
+  }]
+}
+
+branch:
+[{
+  "name": string,
+  "commit_id": string | null,
+  "comment": string,
+  "current": boolean
+}]
+```
+
+JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数のまま返します。そのため、`show --json`と`--timezone`は同時指定できません。`log --json`と`--oneline`も表示形式が競合するため同時指定できません。
+
+今後のバージョンではJSONスキーマのキーを削除・改名しません。機能追加に伴って新しいキーを追加する可能性はあるため、利用側は未知のキーを無視してください。
 
 ## 無視パターン (`.sproutignore`)
 

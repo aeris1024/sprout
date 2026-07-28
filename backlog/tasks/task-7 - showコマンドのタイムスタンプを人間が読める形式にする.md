@@ -1,9 +1,11 @@
 ---
 id: TASK-7
 title: showコマンドのタイムスタンプを人間が読める形式にする
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-07-15 16:15'
+updated_date: '2026-07-28 18:22'
 labels: []
 dependencies: []
 references:
@@ -27,7 +29,28 @@ ordinal: 7000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `sprout show`のファイル行に日時が読める形式で表示される
-- [ ] #2 DBおよび復元時のタイムスタンプ精度(ナノ秒)は変わらない
-- [ ] #3 CLIテストで表示形式が検証されている
+- [x] #1 `sprout show`のファイル行に日時が読める形式で表示される
+- [x] #2 DBおよび復元時のタイムスタンプ精度(ナノ秒)は変わらない
+- [x] #3 CLIテストで表示形式が検証されている
+- [x] #4 既定ではコミット日時とファイル更新日時がUTCで表示される
+- [x] #5 --timezoneでIANAタイムゾーン名またはlocalを指定でき、無効な値は明確なエラーになる
+- [x] #6 READMEにタイムゾーン指定方法が記載されている
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. tzdataを依存関係へ追加し、UTC・local・IANA名を解決する日時整形ヘルパーを実装する。 2. showへ--timezoneを追加し、コミット日時とファイルmtimeを同じ読みやすい形式で表示する。 3. 既定UTC、Asia/Tokyo、local、無効値、mtime_ns不変をCLIテストで検証する。 4. READMEを更新し、関連テストと全体テストを実行する。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+ユーザー承認によりスコープを拡張し、既定UTCに加えて--timezoneでlocal/IANA名を指定できるようにした。WindowsでもIANAデータを保証するためtzdataを追加。コミット日時とファイルmtimeを同じタイムゾーンで整形し、DB値は変更しない。全テスト: 74 passed, 2 skipped。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+showのコミット日時とファイル更新日時を既定UTCの読みやすい形式へ統一し、--timezoneでlocalまたはIANA名を選べるようにした。Windows対応のためtzdataを追加し、READMEとCLIテストを更新。全テスト74件成功・2件スキップで、mtime_nsが変更されないことも確認した。
+<!-- SECTION:FINAL_SUMMARY:END -->

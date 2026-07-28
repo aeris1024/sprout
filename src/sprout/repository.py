@@ -692,7 +692,9 @@ class Repository:
         ).fetchone()
         return row[0] if row else None
 
-    def log(self, path: Path | None = None) -> list[sqlite3.Row]:
+    def log(self, path: Path | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+        if limit is not None and limit < 1:
+            raise SproutError("log limit must be at least 1")
         relative: str | None = None
         if path is not None:
             relative = self._relative_file(path, must_exist=False)
@@ -713,6 +715,8 @@ class Repository:
                     )
                     if current_hash != parent_hash:
                         rows.append(row)
+                if limit is not None and len(rows) >= limit:
+                    break
                 current = row["parent_id"]
         return rows
 
