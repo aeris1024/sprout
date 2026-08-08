@@ -15,7 +15,7 @@ import typer._completion_shared as typer_completion_shared
 
 from . import __version__
 from .errors import SproutError
-from .repository import CommitAttachment, FileState, Repository
+from .repository import CommitAnnotations, CommitAttachment, FileState, Repository
 
 _POWERSHELL_COMPLETION_SCRIPT = """
 Import-Module PSReadLine
@@ -175,13 +175,24 @@ def _echo_json(value: Any) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False))
 
 
-def _log_json(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+def _annotations_json(annotations: CommitAnnotations) -> dict[str, Any]:
+    return {
+        "note": annotations.note,
+        "note_updated_at": annotations.note_updated_at,
+        "labels": list(annotations.labels),
+    }
+
+
+def _log_json(
+    rows: list[sqlite3.Row], annotations: dict[str, CommitAnnotations]
+) -> list[dict[str, Any]]:
     return [
         {
             "id": row["id"],
             "parent_id": row["parent_id"],
             "created_at": row["created_at"],
             "message": row["message"],
+            **_annotations_json(annotations[row["id"]]),
         }
         for row in rows
     ]
@@ -204,6 +215,7 @@ def _show_json(
     row: sqlite3.Row,
     files: list[FileState],
     thumbnail: CommitAttachment | None,
+    annotations: CommitAnnotations,
 ) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -211,6 +223,7 @@ def _show_json(
         "branch_name": row["branch_name"],
         "created_at": row["created_at"],
         "message": row["message"],
+        **_annotations_json(annotations),
         "thumbnail": _attachment_json(thumbnail) if thumbnail is not None else None,
         "files": [
             {
@@ -393,14 +406,19 @@ def log_command(
         typer.Option("--oneline", help="Show each commit as a one-line summary"),
     ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+    label: Annotated[
+        str | None,
+        typer.Option("--label", help="Show commits with this exact label"),
+    ] = None,
 ) -> None:
     """Show history of the current branch."""
     if json_output and oneline:
         raise SproutError("--json and --oneline cannot be used together")
     repository = repo()
-    rows = repository.log(path, limit=max_count)
+    rows = repository.log(path, limit=max_count, label=label)
+    annotations = repository.annotations_many([row["id"] for row in rows])
     if json_output:
-        _echo_json(_log_json(rows))
+        _echo_json(_log_json(rows, annotations))
         return
     if not rows:
         if path is not None:
@@ -414,6 +432,12 @@ def log_command(
             continue
         typer.echo(f"commit {row['id']}")
         typer.echo(f"Date:   {row['created_at']}")
+        annotation = annotations[row["id"]]
+        if annotation.labels:
+            typer.echo(f"Labels: {', '.join(annotation.labels)}")
+        if annotation.note is not None:
+            typer.echo(f"Note:   {annotation.note.replace(chr(10), chr(10) + '        ')}")
+            typer.echo(f"Note updated: {annotation.note_updated_at}")
         typer.echo(f"\n    {row['message']}\n")
 
 
@@ -470,10 +494,11 @@ def show(
     repository = repo()
     row, files = repository.commit_info(commit)
     thumbnail = repository.thumbnail(row["id"])
+    annotations = repository.annotations(row["id"])
     if json_output:
         if timezone_name.upper() != "UTC":
             raise SproutError("--timezone cannot be used with --json")
-        _echo_json(_show_json(row, files, thumbnail))
+        _echo_json(_show_json(row, files, thumbnail, annotations))
         return
     display_timezone = _display_timezone(timezone_name)
     created_at = datetime.fromisoformat(row["created_at"])
@@ -483,6 +508,13 @@ def show(
     typer.echo(f"Parent: {row['parent_id'] or '-'}")
     typer.echo(f"Branch: {row['branch_name']}")
     typer.echo(f"Date:   {_format_datetime(created_at, display_timezone)}")
+    if annotations.labels:
+        typer.echo(f"Labels: {', '.join(annotations.labels)}")
+    if annotations.note is not None:
+        typer.echo(
+            f"Note:   {annotations.note.replace(chr(10), chr(10) + '        ')}"
+        )
+        typer.echo(f"Note updated: {annotations.note_updated_at}")
     typer.echo(f"\n    {row['message']}\n")
     if thumbnail is not None:
         typer.echo(
@@ -568,6 +600,82 @@ def thumbnail(
     typer.echo(f"Size:    {attachment.size}")
     typer.echo(f"Created: {attachment.created_at}")
     typer.echo(f"Updated: {attachment.updated_at}")
+
+
+@app.command()
+def note(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    text: Annotated[
+        str | None,
+        typer.Argument(help="Note text to set; omit to inspect"),
+    ] = None,
+    delete: Annotated[
+        bool,
+        typer.Option("--delete", help="Delete the commit note"),
+    ] = False,
+) -> None:
+    """Inspect, set, or delete an editable commit note."""
+    if text is not None and delete:
+        raise SproutError("note text and --delete cannot be combined")
+    repository = repo()
+    if text is not None or delete:
+        annotations = repository.set_note(commit, "" if delete else text or "")
+        if annotations.note is None:
+            typer.echo(f"Deleted note from {annotations.commit_id[:12]}")
+        else:
+            typer.echo(f"Set note for {annotations.commit_id[:12]}")
+        return
+    annotations = repository.annotations(commit)
+    if annotations.note is None:
+        typer.echo("No note")
+        return
+    typer.echo(f"Note for {annotations.commit_id}")
+    typer.echo(f"Updated: {annotations.note_updated_at}")
+    typer.echo(annotations.note)
+
+
+@app.command()
+def label(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    value: Annotated[
+        str | None,
+        typer.Argument(help="Label to add; omit to inspect"),
+    ] = None,
+    delete: Annotated[
+        str | None,
+        typer.Option("--delete", help="Label to remove"),
+    ] = None,
+) -> None:
+    """Inspect, add, or remove editable commit labels."""
+    if value is not None and delete is not None:
+        raise SproutError("label value and --delete cannot be combined")
+    repository = repo()
+    if value is not None:
+        annotations = repository.add_label(commit, value)
+        typer.echo(f"Added label to {annotations.commit_id[:12]}: {value.strip()}")
+        return
+    if delete is not None:
+        annotations = repository.remove_label(commit, delete)
+        typer.echo(f"Removed label from {annotations.commit_id[:12]}: {delete.strip()}")
+        return
+    annotations = repository.annotations(commit)
+    if not annotations.labels:
+        typer.echo("No labels")
+        return
+    for item in annotations.labels:
+        typer.echo(item)
 
 
 @app.command()

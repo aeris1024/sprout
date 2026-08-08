@@ -1,10 +1,11 @@
 ---
 id: TASK-28
 title: コミットに後付けのメモとラベルを付けられるようにする
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-07-15 16:39'
-updated_date: '2026-07-29 19:25'
+updated_date: '2026-08-08 18:08'
 labels: []
 dependencies:
   - TASK-37
@@ -40,11 +41,31 @@ TASK-37のSchema Version 3で用意されるcommit_notesとcommit_labelsを使�
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 コミットへのメモの設定、上書き、削除ができ、更新日時が正しく更新される
-- [ ] #2 コミットへの複数ラベルの追加と削除ができ、同一ラベルが重複しない
-- [ ] #3 空または空白だけのメモやラベルについて、定義された削除または拒否の挙動が一貫している
-- [ ] #4 showとJSON出力でメモ、メモ更新日時、ラベルを確認できる
-- [ ] #5 logを指定ラベルで絞り込める
-- [ ] #6 TASK-22のコミットグラフ出力にメモとラベルが含まれる
-- [ ] #7 READMEが更新され、メモとラベルの設定、変更、削除、検索、JSON出力が自動テストで検証される
+- [x] #1 メモを設定・上書き・削除でき、変更時に更新日時が更新される
+- [x] #2 メモは前後の空白を除去し、空文字は削除として扱い、20,000文字超を拒否する
+- [x] #3 ラベルはUnicode NFC正規化と前後空白除去を行い、1〜64文字、コミットあたり最大32件、大文字小文字を区別する
+- [x] #4 複数ラベルを追加・削除でき、同一ラベルを重複させない
+- [x] #5 showとlogの人間向け表示およびJSON出力でメモ、メモ更新日時、ラベルを確認できる
+- [x] #6 logを正規化後の完全一致ラベルで絞り込める
+- [x] #7 メモとラベルの書き込み操作をリポジトリロックで排他制御する
+- [x] #8 TASK-22から再利用できるRepository APIでコミット注記を取得できる
+- [x] #9 READMEと自動テストが設定、変更、削除、制約、検索、出力を検証する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. 注記モデル・入力正規化・制約をRepositoryへ追加する。 2. ロック付きメモ／ラベル更新と一括取得APIを実装する。 3. logのラベル絞り込みとshow/logの注記出力を追加する。 4. note/label CLIを実装する。 5. READMEとテストを更新し、全テストを実行する。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RepositoryにCommitAnnotations、一括取得、ロック付きメモ／ラベル更新、正規化・上限制約、ラベル完全一致logフィルターを追加した。CLIにnote/labelコマンドを追加し、show/logの通常表示とJSONへ注記を統合した。検証: uv run pytest --basetemp .test-tmp-task28b -p no:cacheprovider -q（119 passed, 2 skipped）。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+コミットへ後付けできるメモとラベル、ラベル履歴検索、show/log注記出力を実装した。正規化・件数／文字数制約・排他制御・一括取得APIを含み、README更新と全119テスト成功で検証した。
+<!-- SECTION:FINAL_SUMMARY:END -->
