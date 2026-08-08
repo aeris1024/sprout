@@ -365,23 +365,23 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 
 | コマンド | 説明 |
 | --- | --- |
-| `init [PATH]` | Sproutの管理情報を作成する |
-| `track PATH...` | ファイルを追跡対象へ登録する |
-| `untrack PATH...` | ファイルの追跡をやめる |
+| `init [PATH] [--json]` | Sproutの管理情報を作成する |
+| `track PATH... [--json]` | ファイルを追跡対象へ登録する |
+| `untrack PATH... [--json]` | ファイルの追跡をやめる |
 | `move OLD NEW` | 追跡済みファイルを移動する |
 | `status [--json]` | 現在の変更や追跡状態を確認する |
-| `commit -m MESSAGE [--thumbnail IMAGE]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
+| `commit -m MESSAGE [--thumbnail IMAGE] [--json]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
 | `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
 | `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
-| `note COMMIT [TEXT] [--delete]` | コミットのメモを確認・設定・削除する |
-| `label COMMIT [LABEL] [--delete LABEL]` | コミットのラベルを一覧・追加・削除する |
-| `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替え。JSONは一覧表示時のみ指定できる |
+| `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
+| `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
+| `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
-| `switch BRANCH` | 別のブランチへ切り替える |
-| `restore COMMIT [PATH...]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
+| `switch BRANCH [--json]` | 別のブランチへ切り替える |
+| `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
@@ -398,7 +398,7 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 
 ## JSON出力
 
-`status`、`log`、`tree`、`show`、`branch`の一覧表示では、`--json`を指定すると人間向けの装飾を含まないJSONを1つ出力します。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -406,9 +406,23 @@ sprout log -n 5 --json
 sprout tree --json
 sprout show <commit-id> --json
 sprout branch --json
+sprout commit -m "first" --json
+sprout switch ideas --json
 ```
 
-各コマンドのスキーマは次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。
+更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`name`と`previous_name`、削除は`name`と`deleted`、コメント更新は`name`と`comment`を返します。
+
+```text
+init:       {"root": string}
+track:      {"paths": [string]}
+untrack:    {"paths": [string]}
+commit:     {"id": string, "branch": string, "message": string, "removed_paths": [string]}
+note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
+switch:     {"branch": string, "commit_id": string | null}
+restore:    {"commit_id": string, "paths": [string] | null}
+```
+
+読み取り系コマンドのスキーマは次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。
 
 ```text
 status:
@@ -511,7 +525,15 @@ branch:
 
 JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数のまま返します。そのため、`show --json`と`--timezone`は同時指定できません。`log --json`と`--oneline`も表示形式が競合するため同時指定できません。
 
-今後のバージョンではJSONスキーマのキーを削除・改名しません。機能追加に伴って新しいキーを追加する可能性はあるため、利用側は未知のキーを無視してください。
+JSONモードで期待されるエラーが起きた場合は、非0で終了し、stdoutを空のまま保ってstderrへ次のJSONを1つ出力します。
+
+```json
+{"code":"uncommitted_changes","message":"working tree has uncommitted changes (use --discard to replace them)","details":{"can_discard":true}}
+```
+
+エラーは常に`code`、`message`、`details`を持ちます。代表的な`code`は、一般的な操作エラーの`sprout_error`、他の操作がロック中の`repository_locked`、未コミット変更がある`uncommitted_changes`、OSまたはSQLite操作の`repository_error`、引数指定の`usage_error`です。`repository_locked`の`details.retryable`と`uncommitted_changes`の`details.can_discard`をGUIの再試行・確認フローに利用できます。
+
+今後のバージョンでは成功JSONのキーとエラーJSONの必須キーを削除・改名せず、既存の`code`の意味も変更しません。機能追加に伴って新しいキーやエラーコードを追加する可能性はあるため、利用側は未知のキーとコードを許容してください。`--json`を指定しない場合の人間向け出力と終了動作は従来どおりです。
 
 ## 無視パターン (`.sproutignore`)
 
