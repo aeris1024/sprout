@@ -38,6 +38,25 @@ def write_image(
     return path
 
 
+def make_schema_v2_fixture(repo: Repository, *, drop_tags: bool = False) -> None:
+    """Convert a v3 test repository to the exact additive subset used by v2."""
+    with repo.connect() as db:
+        db.execute("DROP TABLE commit_attachments")
+        db.execute("DROP TABLE commit_notes")
+        db.execute("DROP TABLE commit_labels")
+        if drop_tags:
+            db.execute("DROP TABLE tags")
+        db.execute(
+            "DELETE FROM meta WHERE key IN ('repository_id', 'repository_created_at')"
+        )
+        db.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
+
+
+def database_rows(repo: Repository, table: str) -> list[tuple[object, ...]]:
+    with repo.connect() as db:
+        return [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+
+
 def test_commit_multiple_files_restore_and_deduplicate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = create_repo(tmp_path)
     monkeypatch.chdir(repo.root)
@@ -94,24 +113,222 @@ def test_objects_are_compressed_and_repository_records_format(
         )
 
 
-def test_discover_rejects_old_repository_schema_without_modifying_it(
+def test_discover_migrates_populated_schema_v2_and_preserves_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    repo.create_branch("archive", start_point=first)
+    repo.create_tag("baseline", first, "original")
+
+    preserved_tables = ("commits", "commit_files", "branches", "tags", "tracked_paths")
+    before_rows = {table: database_rows(repo, table) for table in preserved_tables}
+    object_bytes = {
+        path.relative_to(repo.objects).as_posix(): path.read_bytes()
+        for path in repo.objects.glob("*/*")
+    }
+    with repo.connect() as db:
+        earliest_commit = db.execute("SELECT MIN(created_at) FROM commits").fetchone()[0]
+    make_schema_v2_fixture(repo)
+
+    migrated = Repository.discover(repo.root)
+
+    with migrated.connect() as db:
+        metadata = dict(db.execute("SELECT key, value FROM meta"))
+        tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        label_indexes = {
+            row[1] for row in db.execute("PRAGMA index_list('commit_labels')")
+        }
+        attachment_indexes = {
+            row[1]
+            for row in db.execute("PRAGMA index_list('commit_attachments')")
+        }
+    assert metadata["schema_version"] == "3"
+    assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
+    assert metadata["repository_created_at"] == earliest_commit
+    assert {"commit_attachments", "commit_notes", "commit_labels"} <= tables
+    assert "idx_commit_labels_label" in label_indexes
+    assert "idx_commit_attachments_object_hash" in attachment_indexes
+    assert {
+        table: database_rows(migrated, table) for table in preserved_tables
+    } == before_rows
+    assert {
+        path.relative_to(migrated.objects).as_posix(): path.read_bytes()
+        for path in migrated.objects.glob("*/*")
+    } == object_bytes
+    assert migrated.annotations(first).note is None
+    assert migrated.attachments_many([first, second]) == {first: (), second: ()}
+
+    assert migrated.set_note(first, "migrated note").note == "migrated note"
+    assert migrated.add_label(first, "Migrated").labels == ("Migrated",)
+    thumbnail = write_image(repo.root / "migrated-thumbnail.png")
+    assert migrated.set_thumbnail(first, thumbnail).role == "thumbnail"
+
+    backups = list((migrated.control / "backups").glob("repository-v2-*.db"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as backup:
+        assert backup.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()[0] == "2"
+        backup_tables = {
+            row[0]
+            for row in backup.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert not {"commit_attachments", "commit_notes", "commit_labels"} & backup_tables
+        assert backup.execute("SELECT COUNT(*) FROM commits").fetchone()[0] == 2
+
+    repository_id = metadata["repository_id"]
+    repository_created_at = metadata["repository_created_at"]
+    rediscovered = Repository.discover(repo.root)
+    with rediscovered.connect() as db:
+        repeated_metadata = dict(db.execute("SELECT key, value FROM meta"))
+    assert repeated_metadata["repository_id"] == repository_id
+    assert repeated_metadata["repository_created_at"] == repository_created_at
+    assert len(list((repo.control / "backups").glob("repository-v2-*.db"))) == 1
+
+    asset.write_bytes(b"dirty")
+    rediscovered.restore(first, discard=True)
+    assert asset.read_bytes() == b"v1"
+
+
+def test_schema_v2_migration_uses_migration_time_for_empty_repository(
     tmp_path: Path,
 ) -> None:
     repo = create_repo(tmp_path)
+    make_schema_v2_fixture(repo, drop_tags=True)
+    before = datetime.now(timezone.utc)
+
+    migrated = Repository.discover(repo.root)
+
+    after = datetime.now(timezone.utc)
+    with migrated.connect() as db:
+        metadata = dict(db.execute("SELECT key, value FROM meta"))
+        has_tags = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
+        ).fetchone()
+    created_at = datetime.fromisoformat(metadata["repository_created_at"])
+    assert before <= created_at <= after
+    assert has_tags is not None
+    assert migrated.tags() == []
+
+
+@pytest.mark.parametrize("version", ["1", "4"])
+def test_discover_rejects_unsupported_schema_without_modifying_it(
+    tmp_path: Path, version: str
+) -> None:
+    repo = create_repo(tmp_path)
     with repo.connect() as db:
-        db.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
 
     with pytest.raises(
         SproutError,
-        match=r"unsupported repository schema version: 2 \(expected 3\); reinitialize",
+        match=rf"unsupported repository schema version: {version} \(expected 3\)",
     ):
         Repository.discover(repo.root)
 
     with repo.connect() as db:
         assert (
             db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-            == "2"
+            == version
         )
+    assert not (repo.control / "backups").exists()
+
+
+def test_schema_v2_migration_rejects_malformed_repository_without_changes(
+    tmp_path: Path,
+) -> None:
+    repo = create_repo(tmp_path)
+    make_schema_v2_fixture(repo)
+    with repo.connect() as db:
+        db.execute("DROP TABLE commit_files")
+
+    with pytest.raises(SproutError, match="missing tables: commit_files"):
+        Repository.discover(repo.root)
+
+    with repo.connect() as db:
+        assert db.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()[0] == "2"
+        tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert not {"commit_attachments", "commit_notes", "commit_labels"} & tables
+    assert not (repo.control / "backups").exists()
+
+
+def test_schema_v2_migration_rolls_back_database_changes_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    make_schema_v2_fixture(repo)
+
+    def fail_after_first_statement(
+        db: sqlite3.Connection,
+        *,
+        has_tags: bool,
+        repository_id: str,
+        repository_created_at: str,
+    ) -> None:
+        del has_tags, repository_id, repository_created_at
+        db.execute(
+            "CREATE TABLE commit_attachments (commit_id TEXT PRIMARY KEY)"
+        )
+        raise sqlite3.OperationalError("simulated migration failure")
+
+    monkeypatch.setattr(
+        Repository,
+        "_apply_v2_migration",
+        staticmethod(fail_after_first_statement),
+    )
+
+    with pytest.raises(SproutError, match="simulated migration failure"):
+        Repository.discover(repo.root)
+
+    with repo.connect() as db:
+        metadata = dict(db.execute("SELECT key, value FROM meta"))
+        tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert metadata["schema_version"] == "2"
+    assert "repository_id" not in metadata
+    assert "repository_created_at" not in metadata
+    assert not {"commit_attachments", "commit_notes", "commit_labels"} & tables
+    assert len(list((repo.control / "backups").glob("repository-v2-*.db"))) == 1
+
+
+def test_schema_v2_migration_is_rejected_while_repository_is_locked(
+    tmp_path: Path,
+) -> None:
+    repo = create_repo(tmp_path)
+    make_schema_v2_fixture(repo)
+
+    with repo.lock():
+        with pytest.raises(SproutError, match="already running"):
+            Repository.discover(repo.root)
+
+    with repo.connect() as db:
+        assert db.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()[0] == "2"
+    assert not (repo.control / "backups").exists()
 
 
 def test_schema_version_3_initializes_metadata_tables_and_indexes(
