@@ -390,6 +390,64 @@ def test_main_formats_sprout_errors(monkeypatch, capsys) -> None:
     assert "Error: bad branch" in capsys.readouterr().err
 
 
+def test_main_formats_structured_json_errors(monkeypatch, capsys) -> None:
+    def fail(**kwargs) -> None:
+        raise SproutError(
+            "別の操作が実行中です",
+            code="repository_locked",
+            details={"retryable": True},
+        )
+
+    monkeypatch.setattr(cli, "app", fail)
+    monkeypatch.setattr(sys, "argv", ["sprout", "status", "--json"])
+
+    assert cli.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "code": "repository_locked",
+        "message": "別の操作が実行中です",
+        "details": {"retryable": True},
+    }
+
+
+def test_main_reports_real_command_errors_as_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "ideas"], project, monkeypatch).exit_code == 0
+    asset.write_bytes(b"changed")
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "ideas", "--json"])
+
+    assert cli.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "code": "uncommitted_changes",
+        "message": "working tree has uncommitted changes (use --discard to replace them)",
+        "details": {"can_discard": True},
+    }
+
+
+def test_main_reports_usage_errors_as_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "--json"])
+
+    assert cli.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload["code"] == "usage_error"
+    assert payload["details"] == {"exit_code": 2}
+    assert "BRANCH_NAME" in payload["message"] or "branch_name" in payload["message"]
+
+
 def test_status_path_mode_rejects_listing_flags(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
@@ -1128,7 +1186,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert "* main" not in branch_result.stdout
 
 
-def test_json_output_rejects_conflicting_display_or_mutation_options(
+def test_json_output_rejects_conflicting_display_options(
     tmp_path: Path, monkeypatch
 ) -> None:
     project = tmp_path / "project"
@@ -1149,6 +1207,95 @@ def test_json_output_rejects_conflicting_display_or_mutation_options(
     assert show_result.exit_code != 0
     assert "--timezone cannot be used with --json" in str(show_result.exception)
 
-    branch_result = invoke(["branch", "ideas", "--json"], project, monkeypatch)
-    assert branch_result.exit_code != 0
-    assert "--json can only be used when listing branches" in str(branch_result.exception)
+
+
+def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "日本語プロジェクト"
+    initialized = invoke(["init", str(project), "--json"], tmp_path, monkeypatch)
+    assert initialized.exit_code == 0
+    assert json.loads(initialized.stdout) == {"root": str(project.resolve())}
+    assert initialized.stderr == ""
+
+    asset = project / "作品" / "絵.psd"
+    asset.parent.mkdir()
+    asset.write_bytes(b"image")
+    tracked = invoke(["track", "作品/絵.psd", "--json"], project, monkeypatch)
+    assert tracked.exit_code == 0
+    assert json.loads(tracked.stdout) == {"paths": ["作品/絵.psd"]}
+    assert tracked.stderr == ""
+
+    empty = project / "empty"
+    empty.mkdir()
+    no_tracks = invoke(["track", "empty", "--json"], project, monkeypatch)
+    assert json.loads(no_tracks.stdout) == {"paths": []}
+    assert no_tracks.stderr == ""
+
+    committed = invoke(
+        ["commit", "-m", "日本語コミット", "--json"], project, monkeypatch
+    )
+    assert committed.exit_code == 0
+    commit_payload = json.loads(committed.stdout)
+    commit_id = commit_payload["id"]
+    assert commit_payload == {
+        "id": commit_id,
+        "branch": "main",
+        "message": "日本語コミット",
+        "removed_paths": [],
+    }
+    assert committed.stderr == ""
+
+    preview = write_image(project / "preview.png")
+    thumbnail_result = invoke(
+        ["thumbnail", commit_id, str(preview), "--json"], project, monkeypatch
+    )
+    assert thumbnail_result.exit_code == 0
+    assert json.loads(thumbnail_result.stdout)["original_name"] == "preview.png"
+    assert thumbnail_result.stderr == ""
+
+    noted = invoke(
+        ["note", commit_id, "確認メモ", "--json"], project, monkeypatch
+    )
+    assert noted.exit_code == 0
+    assert json.loads(noted.stdout) == {
+        "commit_id": commit_id,
+        "note": "確認メモ",
+        "note_updated_at": json.loads(noted.stdout)["note_updated_at"],
+        "labels": [],
+    }
+
+    labeled = invoke(
+        ["label", commit_id, "承認済み", "--json"], project, monkeypatch
+    )
+    assert labeled.exit_code == 0
+    assert json.loads(labeled.stdout)["labels"] == ["承認済み"]
+
+    created = invoke(
+        ["branch", "案", commit_id, "--comment", "検討中", "--json"],
+        project,
+        monkeypatch,
+    )
+    assert created.exit_code == 0
+    assert json.loads(created.stdout) == {
+        "name": "案",
+        "commit_id": commit_id,
+        "comment": "検討中",
+        "current": False,
+    }
+
+    switched = invoke(["switch", "案", "--json"], project, monkeypatch)
+    assert switched.exit_code == 0
+    assert json.loads(switched.stdout) == {
+        "branch": "案",
+        "commit_id": commit_id,
+    }
+
+    restored = invoke(["restore", commit_id, "--json"], project, monkeypatch)
+    assert restored.exit_code == 0
+    assert json.loads(restored.stdout) == {"commit_id": commit_id, "paths": None}
+
+    untracked = invoke(
+        ["untrack", "作品/絵.psd", "--json"], project, monkeypatch
+    )
+    assert untracked.exit_code == 0
+    assert json.loads(untracked.stdout) == {"paths": ["作品/絵.psd"]}
+    assert untracked.stderr == ""

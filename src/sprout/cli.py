@@ -133,10 +133,12 @@ class _ProgressDisplay:
 
 
 @contextmanager
-def _show_progress(repository: Repository) -> Iterator[None]:
+def _show_progress(
+    repository: Repository, *, enabled: bool = True
+) -> Iterator[None]:
     display = _ProgressDisplay()
     previous = repository.progress
-    repository.progress = display if display.enabled else None
+    repository.progress = display if enabled and display.enabled else None
     try:
         yield
     finally:
@@ -180,6 +182,22 @@ def _complete_references() -> list[str]:
 
 def _echo_json(value: Any) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False))
+
+
+def _echo_json_error(
+    code: str, message: str, details: dict[str, Any] | None = None
+) -> None:
+    typer.echo(
+        json.dumps(
+            {"code": code, "message": message, "details": details or {}},
+            ensure_ascii=False,
+        ),
+        err=True,
+    )
+
+
+def _json_requested(argv: list[str]) -> bool:
+    return "--json" in argv[1:]
 
 
 def _annotations_json(annotations: CommitAnnotations) -> dict[str, Any]:
@@ -385,16 +403,32 @@ def _format_datetime(value: datetime, display_timezone: tzinfo | None) -> str:
 
 
 @app.command()
-def init(path: Annotated[Path, typer.Argument()] = Path(".")) -> None:
+def init(
+    path: Annotated[Path, typer.Argument()] = Path("."),
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
     """Initialize a Sprout project."""
     created = Repository.init(path)
+    if json_output:
+        _echo_json({"root": str(created.root)})
+        return
     typer.echo(f"Initialized Sprout project in {created.root}")
 
 
 @app.command()
-def track(paths: Annotated[list[Path], typer.Argument(help="Files or directories to track")]) -> None:
+def track(
+    paths: Annotated[list[Path], typer.Argument(help="Files or directories to track")],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
     """Register files for future commits."""
     added = repo().track(paths)
+    if json_output:
+        _echo_json({"paths": added})
+        return
     if not added:
         typer.echo("Warning: no files were tracked", err=True)
         return
@@ -403,9 +437,17 @@ def track(paths: Annotated[list[Path], typer.Argument(help="Files or directories
 
 
 @app.command()
-def untrack(paths: Annotated[list[Path], typer.Argument(help="Files or directories to stop tracking")]) -> None:
+def untrack(
+    paths: Annotated[list[Path], typer.Argument(help="Files or directories to stop tracking")],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
     """Stop tracking paths without deleting working files."""
     removed = repo().untrack(paths)
+    if json_output:
+        _echo_json({"paths": removed})
+        return
     if not removed:
         typer.echo("Warning: no matching tracked paths", err=True)
         return
@@ -452,7 +494,7 @@ def status(
         for path, is_tracked in path_entries:
             typer.echo(f"{'tracked' if is_tracked else 'untracked':<9} {path}")
         return
-    with _show_progress(repository):
+    with _show_progress(repository, enabled=not json_output):
         entries = repository.status()
     if json_output:
         payload: dict[str, Any] = {
@@ -493,11 +535,24 @@ def commit_command(
         Path | None,
         typer.Option("--thumbnail", help="PNG, JPEG, or WebP thumbnail image"),
     ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Save a snapshot of all tracked files."""
     repository = repo()
-    with _show_progress(repository):
+    with _show_progress(repository, enabled=not json_output):
         result = repository.commit(message, thumbnail=thumbnail)
+    if json_output:
+        _echo_json(
+            {
+                "id": result.commit_id,
+                "branch": repository.head_branch(),
+                "message": message.strip(),
+                "removed_paths": list(result.removed_paths),
+            }
+        )
+        return
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
     typer.echo(f"[{repository.head_branch()} {result.commit_id[:12]}] {message.strip()}")
@@ -702,13 +757,13 @@ def thumbnail(
         raise SproutError("image, --delete, and --output cannot be combined")
     if force and output is None:
         raise SproutError("--force requires --output")
-    if json_output and operations:
-        raise SproutError("--json can only be used when inspecting a thumbnail")
-
     repository = repo()
     if image is not None:
-        with _show_progress(repository):
+        with _show_progress(repository, enabled=not json_output):
             attachment = repository.set_thumbnail(commit, image)
+        if json_output:
+            _echo_json(_attachment_json(attachment))
+            return
         typer.echo(
             f"Set thumbnail for {attachment.commit_id[:12]}: "
             f"{attachment.original_name}"
@@ -716,11 +771,17 @@ def thumbnail(
         return
     if delete:
         attachment = repository.delete_thumbnail(commit)
+        if json_output:
+            _echo_json({**_attachment_json(attachment), "deleted": True})
+            return
         typer.echo(f"Deleted thumbnail from {attachment.commit_id[:12]}")
         return
     if output is not None:
-        with _show_progress(repository):
+        with _show_progress(repository, enabled=not json_output):
             destination = repository.export_thumbnail(commit, output, force=force)
+        if json_output:
+            _echo_json({"output": str(destination)})
+            return
         typer.echo(f"Exported thumbnail to {destination}")
         return
 
@@ -756,6 +817,9 @@ def note(
         bool,
         typer.Option("--delete", help="Delete the commit note"),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Inspect, set, or delete an editable commit note."""
     if text is not None and delete:
@@ -763,12 +827,22 @@ def note(
     repository = repo()
     if text is not None or delete:
         annotations = repository.set_note(commit, "" if delete else text or "")
+        if json_output:
+            _echo_json(
+                {"commit_id": annotations.commit_id, **_annotations_json(annotations)}
+            )
+            return
         if annotations.note is None:
             typer.echo(f"Deleted note from {annotations.commit_id[:12]}")
         else:
             typer.echo(f"Set note for {annotations.commit_id[:12]}")
         return
     annotations = repository.annotations(commit)
+    if json_output:
+        _echo_json(
+            {"commit_id": annotations.commit_id, **_annotations_json(annotations)}
+        )
+        return
     if annotations.note is None:
         typer.echo("No note")
         return
@@ -794,6 +868,9 @@ def label(
         str | None,
         typer.Option("--delete", help="Label to remove"),
     ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Inspect, add, or remove editable commit labels."""
     if value is not None and delete is not None:
@@ -801,13 +878,28 @@ def label(
     repository = repo()
     if value is not None:
         annotations = repository.add_label(commit, value)
+        if json_output:
+            _echo_json(
+                {"commit_id": annotations.commit_id, **_annotations_json(annotations)}
+            )
+            return
         typer.echo(f"Added label to {annotations.commit_id[:12]}: {value.strip()}")
         return
     if delete is not None:
         annotations = repository.remove_label(commit, delete)
+        if json_output:
+            _echo_json(
+                {"commit_id": annotations.commit_id, **_annotations_json(annotations)}
+            )
+            return
         typer.echo(f"Removed label from {annotations.commit_id[:12]}: {delete.strip()}")
         return
     annotations = repository.annotations(commit)
+    if json_output:
+        _echo_json(
+            {"commit_id": annotations.commit_id, **_annotations_json(annotations)}
+        )
+        return
     if not annotations.labels:
         typer.echo("No labels")
         return
@@ -847,16 +939,6 @@ def branch(
 ) -> None:
     """List, create, delete, rename, or edit a branch."""
     repository = repo()
-    if json_output and (
-        name is not None
-        or start_point is not None
-        or comment
-        or set_comment is not None
-        or delete is not None
-        or rename is not None
-        or switch
-    ):
-        raise SproutError("--json can only be used when listing branches")
     if delete is not None:
         if (
             name is not None
@@ -868,6 +950,9 @@ def branch(
         ):
             raise SproutError("--delete cannot be combined with other branch operations")
         repository.delete_branch(delete)
+        if json_output:
+            _echo_json({"name": delete, "deleted": True})
+            return
         typer.echo(f"Deleted branch {delete}")
         return
     if rename is not None:
@@ -876,6 +961,9 @@ def branch(
         if start_point is not None or comment or set_comment is not None or switch:
             raise SproutError("--rename cannot be combined with comment options")
         repository.rename_branch(name, rename)
+        if json_output:
+            _echo_json({"name": rename, "previous_name": name})
+            return
         typer.echo(f"Renamed branch {name} to {rename}")
         return
     if set_comment is not None:
@@ -884,13 +972,26 @@ def branch(
         if start_point is not None or comment or switch:
             raise SproutError("--comment and --set-comment cannot be used together")
         repository.set_branch_comment(name, set_comment)
+        if json_output:
+            _echo_json({"name": name, "comment": set_comment.strip()})
+            return
         typer.echo(f"Updated comment for branch {name}")
         return
     if name is not None:
-        with _show_progress(repository):
-            repository.create_branch(
+        with _show_progress(repository, enabled=not json_output):
+            commit_id = repository.create_branch(
                 name, comment, start_point=start_point, switch=switch
             )
+        if json_output:
+            _echo_json(
+                {
+                    "name": name,
+                    "commit_id": commit_id,
+                    "comment": comment.strip(),
+                    "current": switch,
+                }
+            )
+            return
         if switch:
             typer.echo(f"Created and switched to branch {name}")
         else:
@@ -962,11 +1063,17 @@ def switch_command(
             help="Discard all tracked changes; leave untracked files untouched",
         ),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Switch to a branch and restore its tip."""
     repository = repo()
-    with _show_progress(repository):
-        repository.switch(branch_name, discard=discard)
+    with _show_progress(repository, enabled=not json_output):
+        commit_id = repository.switch(branch_name, discard=discard)
+    if json_output:
+        _echo_json({"branch": branch_name, "commit_id": commit_id})
+        return
     typer.echo(f"Switched to branch {branch_name}")
 
 
@@ -990,11 +1097,22 @@ def restore(
             help="Discard tracked changes on restored paths; leave other files untouched",
         ),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Restore a snapshot, or only selected paths, without moving the branch tip."""
     repository = repo()
-    with _show_progress(repository):
+    with _show_progress(repository, enabled=not json_output):
         commit_id = repository.restore(commit, paths, discard=discard)
+    if json_output:
+        _echo_json(
+            {
+                "commit_id": commit_id,
+                "paths": [path.as_posix() for path in paths] if paths else None,
+            }
+        )
+        return
     if paths:
         typer.echo(f"Restored paths from {commit_id[:12]} (branch tip unchanged)")
     else:
@@ -1109,10 +1227,19 @@ def _system_exit_code(value: object) -> int:
     return 1
 
 
-def _handle_cli_exception(exc: BaseException) -> int | None:
+def _handle_cli_exception(
+    exc: BaseException, *, json_output: bool = False
+) -> int | None:
     show = getattr(exc, "show", None)
     exit_code = getattr(exc, "exit_code", None)
     if callable(show) and isinstance(exit_code, int):
+        if json_output:
+            format_message = getattr(exc, "format_message", None)
+            message = format_message() if callable(format_message) else str(exc)
+            _echo_json_error(
+                "usage_error", message, {"exit_code": exit_code}
+            )
+            return exit_code
         show()
         return exit_code
     return None
@@ -1130,6 +1257,7 @@ def _clear_stale_completion_environment(argv: list[str]) -> None:
 
 def main() -> int:
     _clear_stale_completion_environment(sys.argv)
+    json_output = _json_requested(sys.argv)
     try:
         app(standalone_mode=False)
     except typer.Exit as exc:
@@ -1137,13 +1265,22 @@ def main() -> int:
     except SystemExit as exc:
         return _system_exit_code(exc.code)
     except SproutError as exc:
-        typer.echo(f"Error: {exc}", err=True)
+        if json_output:
+            _echo_json_error(exc.code, str(exc), exc.details)
+        else:
+            typer.echo(f"Error: {exc}", err=True)
         return 1
     except (OSError, sqlite3.Error) as exc:
-        typer.echo(f"Error: repository operation failed: {exc}", err=True)
+        message = f"repository operation failed: {exc}"
+        if json_output:
+            _echo_json_error(
+                "repository_error", message, {"type": type(exc).__name__}
+            )
+        else:
+            typer.echo(f"Error: {message}", err=True)
         return 1
     except BaseException as exc:
-        exit_code = _handle_cli_exception(exc)
+        exit_code = _handle_cli_exception(exc, json_output=json_output)
         if exit_code is None:
             raise
         return exit_code

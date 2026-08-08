@@ -693,7 +693,11 @@ class Repository:
 
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
-                raise SproutError("another Sprout operation is already running") from exc
+                raise SproutError(
+                    "another Sprout operation is already running",
+                    code="repository_locked",
+                    details={"retryable": True},
+                ) from exc
             try:
                 yield
             finally:
@@ -1897,7 +1901,9 @@ class Repository:
         if switch and self._has_unsaved_changes():
             raise SproutError(
                 "working tree has uncommitted changes; commit them first, or discard "
-                "tracked changes with switch/restore --discard before creating and switching"
+                "tracked changes with switch/restore --discard before creating and switching",
+                code="uncommitted_changes",
+                details={"can_discard": True},
             )
         try:
             with self.connect() as db:
@@ -2365,14 +2371,18 @@ class Repository:
             selected = self._resolve_manifest_paths(paths, commit_manifest)
             if self._has_unsaved_changes(selected) and not discard:
                 raise SproutError(
-                    "working tree has uncommitted changes (use --discard to replace them)"
+                    "working tree has uncommitted changes (use --discard to replace them)",
+                    code="uncommitted_changes",
+                    details={"can_discard": True},
                 )
             target = {path: commit_manifest[path] for path in selected}
             self._materialize(target, partial=True)
         else:
             if self._has_unsaved_changes() and not discard:
                 raise SproutError(
-                    "working tree has uncommitted changes (use --discard to replace them)"
+                    "working tree has uncommitted changes (use --discard to replace them)",
+                    code="uncommitted_changes",
+                    details={"can_discard": True},
                 )
             self._materialize(commit_manifest)
         return commit_id
@@ -2384,7 +2394,11 @@ class Repository:
         if row is None:
             raise SproutError(f"unknown branch: {name}")
         if self._has_unsaved_changes() and not discard:
-            raise SproutError("working tree has uncommitted changes (use --discard to replace them)")
+            raise SproutError(
+                "working tree has uncommitted changes (use --discard to replace them)",
+                code="uncommitted_changes",
+                details={"can_discard": True},
+            )
         target = self.manifest(row[0])
         self._materialize(target, head_branch=name)
         return row[0]
