@@ -355,7 +355,11 @@ sprout commit -m "ファイルを移動"
 
 現在のリポジトリ形式はSchema Version 3です。コミット履歴に加えて、後続機能で使用する添付、メモ、ラベルの保存領域と、リポジトリ固有ID・作成日時を持ちます。
 
-Schema Version 2以前からの移行には対応していません。開発中に旧形式で初期化したリポジトリを使用している場合は、必要なファイルを退避してから`.sprout`を削除し、現在のSproutで`sprout init`を実行してください。この操作では旧リポジトリの履歴が失われます。
+Schema Version 2のリポジトリは、現在のSproutで最初に開いたときに自動でVersion 3へ移行します。移行では既存のコミット、ファイル、ブランチ、タグ、追跡状態、objectsを変更せず、Version 3の保存領域とメタデータだけを追加します。`repository_id`は移行時に生成され、`repository_created_at`は履歴があれば最古コミットの日時、空のリポジトリでは移行日時になります。
+
+変換前のSQLiteデータベースは`.sprout/backups/repository-v2-*.db`へ保存されます。移行後の動作を確認するまでは削除しないでください。復旧が必要な場合はSproutをすべて終了し、`.sprout`全体を別の場所へ退避してから、バックアップを`.sprout/repository.db`としてコピーします。その際、旧データベースと組み合わせないよう既存の`repository.db-wal`と`repository.db-shm`も退避してください。現在のSproutで再び開くと、復旧したVersion 2データベースは再度Version 3へ移行されます。
+
+移行はリポジトリロックとSQLiteトランザクションで保護され、失敗した場合はVersion 2のまま維持されます。Schema Version 1、将来のVersion、必須構造が壊れたVersion 2は自動変換せず、データを変更しないままエラーにします。
 
 ## コマンド一覧
 
