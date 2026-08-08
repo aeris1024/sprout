@@ -947,6 +947,103 @@ def test_note_and_label_cli_reject_conflicting_or_invalid_input(
     assert "label cannot be empty" in str(invalid.exception)
 
 
+def test_tree_cli_shows_complete_graph_and_structured_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    first = Repository.discover().log()[0]["id"]
+    asset.write_bytes(b"main-v2")
+    assert invoke(["commit", "-m", "main work"], project, monkeypatch).exit_code == 0
+    main_tip = Repository.discover().log()[0]["id"]
+
+    assert invoke(
+        ["branch", "side", first, "--switch"], project, monkeypatch
+    ).exit_code == 0
+    asset.write_bytes(b"side-v2")
+    assert invoke(["commit", "-m", "side work"], project, monkeypatch).exit_code == 0
+    side_tip = Repository.discover().log()[0]["id"]
+    thumbnail = write_image(project / "preview.png")
+    assert invoke(["thumbnail", side_tip, str(thumbnail)], project, monkeypatch).exit_code == 0
+    assert invoke(["note", side_tip, "review this"], project, monkeypatch).exit_code == 0
+    assert invoke(["label", side_tip, "Candidate"], project, monkeypatch).exit_code == 0
+    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "archive", first], project, monkeypatch).exit_code == 0
+    assert invoke(["tag", "baseline", first, "-m", "shared root"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "--delete", "side"], project, monkeypatch).exit_code == 0
+
+    human = invoke(["tree"], project, monkeypatch)
+    assert human.exit_code == 0
+    assert f"* {first[:12]} first" in human.stdout
+    assert f"{main_tip[:12]} main work" in human.stdout
+    assert f"{side_tip[:12]} side work" in human.stdout
+    assert "|- *" in human.stdout
+    assert "`- *" in human.stdout
+    assert "[created:main]" in human.stdout
+    assert "[branch:archive]" in human.stdout
+    assert "[branch:*main]" in human.stdout
+    assert "[tag:baseline]" in human.stdout
+    assert "[created:side]" in human.stdout
+    assert "[branch:side]" not in human.stdout
+    assert "[thumbnail]" in human.stdout
+    assert "[note]" in human.stdout
+    assert "[labels:Candidate]" in human.stdout
+
+    result = invoke(["tree", "--json"], project, monkeypatch)
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [commit["id"] for commit in payload["commits"]] == [
+        side_tip,
+        main_tip,
+        first,
+    ]
+    commits = {commit["id"]: commit for commit in payload["commits"]}
+    assert set(commits) == {first, main_tip, side_tip}
+    assert commits[side_tip]["parent_id"] == first
+    assert commits[side_tip]["branch_name"] == "side"
+    assert commits[side_tip]["message"] == "side work"
+    assert commits[side_tip]["note"] == "review this"
+    assert commits[side_tip]["note_updated_at"] is not None
+    assert commits[side_tip]["labels"] == ["Candidate"]
+    assert len(commits[side_tip]["attachments"]) == 1
+    attachment = commits[side_tip]["attachments"][0]
+    assert attachment["commit_id"] == side_tip
+    assert attachment["role"] == "thumbnail"
+    assert attachment["original_name"] == "preview.png"
+    assert attachment["media_type"] == "image/png"
+    assert attachment["size"] > 0
+    assert attachment["created_at"]
+    assert attachment["updated_at"]
+    assert payload["branches"] == [
+        {"name": "archive", "commit_id": first, "comment": "", "current": False},
+        {"name": "main", "commit_id": main_tip, "comment": "", "current": True},
+    ]
+    assert len(payload["tags"]) == 1
+    assert payload["tags"][0]["name"] == "baseline"
+    assert payload["tags"][0]["commit_id"] == first
+    assert payload["tags"][0]["comment"] == "shared root"
+    assert payload["tags"][0]["created_at"]
+
+
+def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+
+    assert invoke(["tree"], project, monkeypatch).stdout == "No commits yet\n"
+    payload = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    assert payload == {
+        "commits": [],
+        "branches": [
+            {"name": "main", "commit_id": None, "comment": "", "current": True}
+        ],
+        "tags": [],
+    }
+
+
 def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

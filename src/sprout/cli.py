@@ -15,7 +15,14 @@ import typer._completion_shared as typer_completion_shared
 
 from . import __version__
 from .errors import SproutError
-from .repository import CommitAnnotations, CommitAttachment, FileState, Repository
+from .repository import (
+    CommitAnnotations,
+    CommitAttachment,
+    CommitGraph,
+    FileState,
+    GraphCommit,
+    Repository,
+)
 
 _POWERSHELL_COMPLETION_SCRIPT = """
 Import-Module PSReadLine
@@ -250,6 +257,116 @@ def _branches_json(repository: Repository) -> list[dict[str, Any]]:
     ]
 
 
+def _graph_json(graph: CommitGraph) -> dict[str, Any]:
+    return {
+        "commits": [
+            {
+                "id": commit.id,
+                "parent_id": commit.parent_id,
+                "branch_name": commit.branch_name,
+                "created_at": commit.created_at,
+                "message": commit.message,
+                "attachments": [
+                    _attachment_json(attachment)
+                    for attachment in commit.attachments
+                ],
+                "note": commit.note,
+                "note_updated_at": commit.note_updated_at,
+                "labels": list(commit.labels),
+            }
+            for commit in graph.commits
+        ],
+        "branches": [
+            {
+                "name": branch.name,
+                "commit_id": branch.commit_id,
+                "comment": branch.comment,
+                "current": branch.current,
+            }
+            for branch in graph.branches
+        ],
+        "tags": [
+            {
+                "name": tag.name,
+                "commit_id": tag.commit_id,
+                "comment": tag.comment,
+                "created_at": tag.created_at,
+            }
+            for tag in graph.tags
+        ],
+    }
+
+
+def _tree_text_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _tree_commit_text(
+    commit: GraphCommit,
+    branches_by_commit: dict[str, list[str]],
+    tags_by_commit: dict[str, list[str]],
+) -> str:
+    markers = [f"created:{commit.branch_name}"]
+    markers.extend(
+        f"branch:{branch}" for branch in branches_by_commit.get(commit.id, [])
+    )
+    markers.extend(f"tag:{tag}" for tag in tags_by_commit.get(commit.id, []))
+    for attachment in commit.attachments:
+        if attachment.role == "thumbnail":
+            markers.append("thumbnail")
+        else:
+            markers.append(f"attachment:{attachment.role}")
+    if commit.note is not None:
+        markers.append("note")
+    if commit.labels:
+        markers.append(
+            f"labels:{','.join(_tree_text_value(label) for label in commit.labels)}"
+        )
+    suffix = " ".join(f"[{marker}]" for marker in markers)
+    return f"{commit.id[:12]} {_tree_text_value(commit.message)} {suffix}"
+
+
+def _tree_lines(graph: CommitGraph) -> list[str]:
+    if not graph.commits:
+        return []
+    branches_by_commit: dict[str, list[str]] = {}
+    for branch in graph.branches:
+        if branch.commit_id is not None:
+            marker = f"{'*' if branch.current else ''}{branch.name}"
+            branches_by_commit.setdefault(branch.commit_id, []).append(marker)
+    tags_by_commit: dict[str, list[str]] = {}
+    for tag in graph.tags:
+        tags_by_commit.setdefault(tag.commit_id, []).append(tag.name)
+    children: dict[str | None, list[GraphCommit]] = {}
+    commit_ids = {commit.id for commit in graph.commits}
+    for commit in graph.commits:
+        parent = commit.parent_id if commit.parent_id in commit_ids else None
+        children.setdefault(parent, []).append(commit)
+    for items in children.values():
+        items.sort(key=lambda item: (item.created_at, item.id))
+
+    lines: list[str] = []
+    for root in children.get(None, []):
+        lines.append(
+            f"* {_tree_commit_text(root, branches_by_commit, tags_by_commit)}"
+        )
+        root_children = children.get(root.id, [])
+        stack: list[tuple[GraphCommit, str, bool]] = [
+            (child, "", index == len(root_children) - 1)
+            for index, child in reversed(list(enumerate(root_children)))
+        ]
+        while stack:
+            commit, prefix, is_last = stack.pop()
+            connector = "`- " if is_last else "|- "
+            text = _tree_commit_text(commit, branches_by_commit, tags_by_commit)
+            lines.append(f"{prefix}{connector}* {text}")
+            child_prefix = prefix + ("   " if is_last else "|  ")
+            nested = children.get(commit.id, [])
+            for index, child in reversed(list(enumerate(nested))):
+                stack.append((child, child_prefix, index == len(nested) - 1))
+    return lines
+
+
 def _display_timezone(name: str) -> tzinfo | None:
     if name.lower() == "local":
         return None
@@ -439,6 +556,26 @@ def log_command(
             typer.echo(f"Note:   {annotation.note.replace(chr(10), chr(10) + '        ')}")
             typer.echo(f"Note updated: {annotation.note_updated_at}")
         typer.echo(f"\n    {row['message']}\n")
+
+
+@app.command()
+def tree(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output the complete commit graph as JSON"),
+    ] = False,
+) -> None:
+    """Show every commit and current reference in the repository."""
+    graph = repo().commit_graph()
+    if json_output:
+        _echo_json(_graph_json(graph))
+        return
+    lines = _tree_lines(graph)
+    if not lines:
+        typer.echo("No commits yet")
+        return
+    for line in lines:
+        typer.echo(line)
 
 
 @app.command()

@@ -92,6 +92,7 @@ sprout commit -m "色を調整" --thumbnail preview.png
 sprout log
 sprout log scene.blend
 sprout show <commit-id>
+sprout tree
 ```
 
 `sprout log` にパスを指定すると、そのファイル内容が変わったコミットだけを表示します。内容が同じままのコミットは省かれます。一度も登場していないパスでは `No history for path:` と表示されます。
@@ -183,6 +184,24 @@ sprout tag --delete first-draft
 sprout show submitted
 sprout restore submitted
 ```
+
+## リポジトリ全体の履歴を見る
+
+`log`は現在のブランチだけをたどります。分岐した履歴や、削除済みブランチから作られたコミットを含む全履歴を見る場合は`tree`を使います。
+
+```powershell
+sprout tree
+```
+
+人間向け表示は古いコミットから新しいコミットへ親子関係をASCII枝で示します。`created`はコミット作成時のブランチ名、`branch`と`tag`は現在そのコミットを指す参照です。現在のブランチには`*`が付きます。サムネイル、メモ、ラベルもマーカーで確認できます。
+
+```text
+* a12bc34de567 initial [created:main] [tag:baseline]
+|- * b23cd45ef678 main work [created:main] [branch:*main]
+`- * c34de56fa789 side work [created:side] [thumbnail] [note] [labels:Candidate]
+```
+
+削除したブランチ名は現在の`branch`参照から消えますが、そのブランチで作成したコミットと`created`の値は保持されます。GUIや外部ツールから利用する場合は`tree --json`で平坦なコミット配列と現在の参照を取得できます。人間向けツリーは古い順、JSONの`commits`配列は新しい順です。
 
 ## 過去の状態へ戻る
 
@@ -349,6 +368,7 @@ Schema Version 2以前からの移行には対応していません。開発中�
 | `status [--json]` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE [--thumbnail IMAGE]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
 | `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
+| `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
@@ -374,11 +394,12 @@ Schema Version 2以前からの移行には対応していません。開発中�
 
 ## JSON出力
 
-`status`、`log`、`show`、`branch`の一覧表示では、`--json`を指定すると人間向けの装飾を含まないJSONを1つ出力します。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+`status`、`log`、`tree`、`show`、`branch`の一覧表示では、`--json`を指定すると人間向けの装飾を含まないJSONを1つ出力します。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
 sprout log -n 5 --json
+sprout tree --json
 sprout show <commit-id> --json
 sprout branch --json
 ```
@@ -410,6 +431,42 @@ log:
   "note_updated_at": string | null,
   "labels": [string]
 }]
+
+tree:
+{
+  "commits": [{
+    "id": string,
+    "parent_id": string | null,
+    "branch_name": string,
+    "created_at": string,
+    "message": string,
+    "attachments": [{
+      "commit_id": string,
+      "role": string,
+      "original_name": string,
+      "media_type": string,
+      "object_hash": string,
+      "size": number,
+      "created_at": string,
+      "updated_at": string
+    }],
+    "note": string | null,
+    "note_updated_at": string | null,
+    "labels": [string]
+  }],
+  "branches": [{
+    "name": string,
+    "commit_id": string | null,
+    "comment": string,
+    "current": boolean
+  }],
+  "tags": [{
+    "name": string,
+    "commit_id": string,
+    "comment": string,
+    "created_at": string
+  }]
+}
 
 show:
 {
@@ -470,7 +527,7 @@ JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数の
 
 ## 現在の制限
 
-最初のリリースでは、リモート同期、マージ、タグ、GUIには対応していません。
+最初のリリースでは、リモート同期、マージ、GUIには対応していません。
 大きなファイルを頻繁に更新すると、`.sprout/objects`の使用量は増えますが、不要になったオブジェクトは`gc`で削除できます。
 
 ## テスト
