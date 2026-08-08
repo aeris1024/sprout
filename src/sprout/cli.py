@@ -15,7 +15,7 @@ import typer._completion_shared as typer_completion_shared
 
 from . import __version__
 from .errors import SproutError
-from .repository import FileState, Repository
+from .repository import CommitAttachment, FileState, Repository
 
 _POWERSHELL_COMPLETION_SCRIPT = """
 Import-Module PSReadLine
@@ -187,13 +187,31 @@ def _log_json(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     ]
 
 
-def _show_json(row: sqlite3.Row, files: list[FileState]) -> dict[str, Any]:
+def _attachment_json(attachment: CommitAttachment) -> dict[str, Any]:
+    return {
+        "commit_id": attachment.commit_id,
+        "role": attachment.role,
+        "original_name": attachment.original_name,
+        "media_type": attachment.media_type,
+        "object_hash": attachment.object_hash,
+        "size": attachment.size,
+        "created_at": attachment.created_at,
+        "updated_at": attachment.updated_at,
+    }
+
+
+def _show_json(
+    row: sqlite3.Row,
+    files: list[FileState],
+    thumbnail: CommitAttachment | None,
+) -> dict[str, Any]:
     return {
         "id": row["id"],
         "parent_id": row["parent_id"],
         "branch_name": row["branch_name"],
         "created_at": row["created_at"],
         "message": row["message"],
+        "thumbnail": _attachment_json(thumbnail) if thumbnail is not None else None,
         "files": [
             {
                 "path": item.path,
@@ -339,11 +357,17 @@ def status(
 
 
 @app.command(name="commit")
-def commit_command(message: Annotated[str, typer.Option("--message", "-m")]) -> None:
+def commit_command(
+    message: Annotated[str, typer.Option("--message", "-m")],
+    thumbnail: Annotated[
+        Path | None,
+        typer.Option("--thumbnail", help="PNG, JPEG, or WebP thumbnail image"),
+    ] = None,
+) -> None:
     """Save a snapshot of all tracked files."""
     repository = repo()
     with _show_progress(repository):
-        result = repository.commit(message)
+        result = repository.commit(message, thumbnail=thumbnail)
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
     typer.echo(f"[{repository.head_branch()} {result.commit_id[:12]}] {message.strip()}")
@@ -443,11 +467,13 @@ def show(
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """Show a commit and its files."""
-    row, files = repo().commit_info(commit)
+    repository = repo()
+    row, files = repository.commit_info(commit)
+    thumbnail = repository.thumbnail(row["id"])
     if json_output:
         if timezone_name.upper() != "UTC":
             raise SproutError("--timezone cannot be used with --json")
-        _echo_json(_show_json(row, files))
+        _echo_json(_show_json(row, files, thumbnail))
         return
     display_timezone = _display_timezone(timezone_name)
     created_at = datetime.fromisoformat(row["created_at"])
@@ -458,12 +484,90 @@ def show(
     typer.echo(f"Branch: {row['branch_name']}")
     typer.echo(f"Date:   {_format_datetime(created_at, display_timezone)}")
     typer.echo(f"\n    {row['message']}\n")
+    if thumbnail is not None:
+        typer.echo(
+            f"Thumbnail: {thumbnail.original_name} "
+            f"({thumbnail.media_type}, {thumbnail.size} bytes)"
+        )
     for item in files:
         modified_at = datetime.fromtimestamp(item.mtime_ns // 1_000_000_000, tz=timezone.utc)
         typer.echo(
             f"{item.object_hash[:12]}  {item.size:>10}  "
             f"{_format_datetime(modified_at, display_timezone)}  {item.path}"
         )
+
+
+@app.command()
+def thumbnail(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    image: Annotated[
+        Path | None,
+        typer.Argument(help="PNG, JPEG, or WebP image to register"),
+    ] = None,
+    delete: Annotated[
+        bool,
+        typer.Option("--delete", help="Delete the registered thumbnail"),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Write the thumbnail to this file"),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing output file"),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output structured thumbnail metadata"),
+    ] = False,
+) -> None:
+    """Inspect, register, delete, or export a commit thumbnail."""
+    operations = sum((image is not None, delete, output is not None))
+    if operations > 1:
+        raise SproutError("image, --delete, and --output cannot be combined")
+    if force and output is None:
+        raise SproutError("--force requires --output")
+    if json_output and operations:
+        raise SproutError("--json can only be used when inspecting a thumbnail")
+
+    repository = repo()
+    if image is not None:
+        with _show_progress(repository):
+            attachment = repository.set_thumbnail(commit, image)
+        typer.echo(
+            f"Set thumbnail for {attachment.commit_id[:12]}: "
+            f"{attachment.original_name}"
+        )
+        return
+    if delete:
+        attachment = repository.delete_thumbnail(commit)
+        typer.echo(f"Deleted thumbnail from {attachment.commit_id[:12]}")
+        return
+    if output is not None:
+        with _show_progress(repository):
+            destination = repository.export_thumbnail(commit, output, force=force)
+        typer.echo(f"Exported thumbnail to {destination}")
+        return
+
+    attachment = repository.thumbnail(commit)
+    if json_output:
+        _echo_json(_attachment_json(attachment) if attachment is not None else None)
+        return
+    if attachment is None:
+        typer.echo("No thumbnail")
+        return
+    typer.echo(f"Thumbnail for {attachment.commit_id}")
+    typer.echo(f"File:    {attachment.original_name}")
+    typer.echo(f"Type:    {attachment.media_type}")
+    typer.echo(f"Size:    {attachment.size}")
+    typer.echo(f"Created: {attachment.created_at}")
+    typer.echo(f"Updated: {attachment.updated_at}")
 
 
 @app.command()

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import typer
 import typer.completion as typer_completion
+from PIL import Image
 from typer.testing import CliRunner
 
 from sprout.cli import app
@@ -20,6 +21,12 @@ runner = CliRunner()
 def invoke(args: list[str], cwd: Path, monkeypatch):
     monkeypatch.chdir(cwd)
     return runner.invoke(app, args)
+
+
+def write_image(path: Path, image_format: str = "PNG", color: str = "navy") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (16, 12), color).save(path, format=image_format)
+    return path
 
 
 def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
@@ -721,6 +728,56 @@ def test_export_and_cat_cli(tmp_path: Path, monkeypatch) -> None:
     assert asset.read_bytes() == b"working"
 
 
+def test_thumbnail_cli_commit_show_replace_export_and_delete(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    first = write_image(tmp_path / "first.png")
+    second = write_image(tmp_path / "second.webp", "WEBP", "green")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+
+    committed = invoke(
+        ["commit", "-m", "with thumbnail", "--thumbnail", str(first)],
+        project,
+        monkeypatch,
+    )
+    assert committed.exit_code == 0
+    commit_id = Repository.discover(project).head_commit()
+    assert commit_id is not None
+
+    shown = invoke(["show", commit_id], project, monkeypatch)
+    assert shown.exit_code == 0
+    assert "Thumbnail: first.png (image/png" in shown.stdout
+    payload = json.loads(
+        invoke(["show", commit_id, "--json"], project, monkeypatch).stdout
+    )
+    assert payload["thumbnail"]["role"] == "thumbnail"
+    assert payload["thumbnail"]["original_name"] == "first.png"
+    inspected = json.loads(
+        invoke(["thumbnail", commit_id, "--json"], project, monkeypatch).stdout
+    )
+    assert inspected == payload["thumbnail"]
+
+    replaced = invoke(["thumbnail", commit_id, str(second)], project, monkeypatch)
+    assert replaced.exit_code == 0
+    assert "Set thumbnail" in replaced.stdout
+    output = tmp_path / "exported.webp"
+    exported = invoke(
+        ["thumbnail", commit_id, "--output", str(output)], project, monkeypatch
+    )
+    assert exported.exit_code == 0
+    assert output.read_bytes() == second.read_bytes()
+
+    deleted = invoke(["thumbnail", commit_id, "--delete"], project, monkeypatch)
+    assert deleted.exit_code == 0
+    assert json.loads(
+        invoke(["thumbnail", commit_id, "--json"], project, monkeypatch).stdout
+    ) is None
+
+
 def test_diff_cli_shows_commit_and_working_tree_changes(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -861,6 +918,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
         "branch_name": "main",
         "created_at": log_payload[0]["created_at"],
         "message": "日本語コミット",
+        "thumbnail": None,
         "files": [
             {
                 "path": "作品/絵.psd",

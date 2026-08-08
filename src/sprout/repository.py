@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator, TypeVar
 
 import zstandard
+from PIL import Image, UnidentifiedImageError
 
 from .errors import SproutError
 
@@ -27,6 +28,14 @@ SCHEMA_VERSION = "3"
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
 IO_CHUNK_SIZE = 1024 * 1024
+THUMBNAIL_ROLE = "thumbnail"
+THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
+THUMBNAIL_MAX_DIMENSION = 4096
+THUMBNAIL_MEDIA_TYPES = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
 HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
@@ -153,6 +162,18 @@ class DiffEntry:
 class CommitResult:
     commit_id: str
     removed_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CommitAttachment:
+    commit_id: str
+    role: str
+    original_name: str
+    media_type: str
+    object_hash: str
+    size: int
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -782,8 +803,74 @@ class Repository:
         if digest != item.object_hash or size != item.size:
             raise SproutError(f"corrupt object {item.object_hash} for {item.path}")
 
+    def _prepare_thumbnail(
+        self, source: Path
+    ) -> tuple[str, str, str, int]:
+        original_name = source.name
+        try:
+            resolved = source.resolve(strict=True)
+        except OSError as exc:
+            raise SproutError(f"thumbnail file does not exist: {source}") from exc
+        if not resolved.is_file():
+            raise SproutError(f"thumbnail is not a file: {source}")
+        before = resolved.stat()
+        if before.st_size > THUMBNAIL_MAX_BYTES:
+            raise SproutError(
+                f"thumbnail exceeds {THUMBNAIL_MAX_BYTES} byte limit: {before.st_size}"
+            )
+        try:
+            with Image.open(resolved) as image:
+                media_type = THUMBNAIL_MEDIA_TYPES.get(image.format or "")
+                if media_type is None:
+                    raise SproutError(
+                        "unsupported thumbnail format; use PNG, JPEG, or WebP"
+                    )
+                width, height = image.size
+                if width > THUMBNAIL_MAX_DIMENSION or height > THUMBNAIL_MAX_DIMENSION:
+                    raise SproutError(
+                        "thumbnail dimensions exceed "
+                        f"{THUMBNAIL_MAX_DIMENSION}x{THUMBNAIL_MAX_DIMENSION}: "
+                        f"{width}x{height}"
+                    )
+                if getattr(image, "n_frames", 1) != 1:
+                    raise SproutError("animated images cannot be used as thumbnails")
+                image.load()
+        except SproutError:
+            raise
+        except (
+            Image.DecompressionBombError,
+            UnidentifiedImageError,
+            OSError,
+            SyntaxError,
+            ValueError,
+        ) as exc:
+            raise SproutError(f"invalid thumbnail image: {source}") from exc
+
+        object_hash, size = self._store_object(resolved)
+        after = resolved.stat()
+        if (
+            before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or size != after.st_size
+        ):
+            raise SproutError(f"thumbnail changed while reading: {source}")
+        return original_name, media_type, object_hash, size
+
+    @staticmethod
+    def _attachment_from_row(row: sqlite3.Row) -> CommitAttachment:
+        return CommitAttachment(
+            commit_id=row["commit_id"],
+            role=row["role"],
+            original_name=row["original_name"],
+            media_type=row["media_type"],
+            object_hash=row["object_hash"],
+            size=row["size"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
     @locked
-    def commit(self, message: str) -> CommitResult:
+    def commit(self, message: str, thumbnail: Path | None = None) -> CommitResult:
         if not message.strip():
             raise SproutError("commit message cannot be empty")
         tracked = self.tracked()
@@ -839,6 +926,9 @@ class Repository:
             raise SproutError("nothing to commit")
         if parent is None and not files:
             raise SproutError("nothing to commit")
+        prepared_thumbnail = (
+            self._prepare_thumbnail(thumbnail) if thumbnail is not None else None
+        )
         commit_id = uuid.uuid4().hex
         branch = self.head_branch()
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -851,6 +941,23 @@ class Repository:
                 "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
                 ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
             )
+            if prepared_thumbnail is not None:
+                original_name, media_type, object_hash, size = prepared_thumbnail
+                db.execute(
+                    "INSERT INTO commit_attachments("
+                    "commit_id, role, original_name, media_type, object_hash, size, "
+                    "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        commit_id,
+                        THUMBNAIL_ROLE,
+                        original_name,
+                        media_type,
+                        object_hash,
+                        size,
+                        created_at,
+                        created_at,
+                    ),
+                )
             db.execute("UPDATE branches SET commit_id=? WHERE name=?", (commit_id, branch))
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
         return CommitResult(commit_id, tuple(missing))
@@ -881,6 +988,117 @@ class Repository:
         with self.connect() as db:
             row = db.execute("SELECT * FROM commits WHERE id=?", (commit_id,)).fetchone()
         return row, list(self.manifest(commit_id).values())
+
+    def thumbnail(self, value: str) -> CommitAttachment | None:
+        commit_id = self.resolve_commit(value)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM commit_attachments WHERE commit_id=? AND role=?",
+                (commit_id, THUMBNAIL_ROLE),
+            ).fetchone()
+        return self._attachment_from_row(row) if row is not None else None
+
+    @locked
+    def set_thumbnail(self, value: str, source: Path) -> CommitAttachment:
+        commit_id = self.resolve_commit(value)
+        original_name, media_type, object_hash, size = self._prepare_thumbnail(source)
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO commit_attachments("
+                "commit_id, role, original_name, media_type, object_hash, size, "
+                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(commit_id, role) DO UPDATE SET "
+                "original_name=excluded.original_name, "
+                "media_type=excluded.media_type, "
+                "object_hash=excluded.object_hash, size=excluded.size, "
+                "updated_at=excluded.updated_at",
+                (
+                    commit_id,
+                    THUMBNAIL_ROLE,
+                    original_name,
+                    media_type,
+                    object_hash,
+                    size,
+                    updated_at,
+                    updated_at,
+                ),
+            )
+        result = self.thumbnail(commit_id)
+        if result is None:
+            raise SproutError(f"failed to store thumbnail for commit: {commit_id}")
+        return result
+
+    @locked
+    def delete_thumbnail(self, value: str) -> CommitAttachment:
+        commit_id = self.resolve_commit(value)
+        existing = self.thumbnail(commit_id)
+        if existing is None:
+            raise SproutError(f"commit has no thumbnail: {commit_id}")
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM commit_attachments WHERE commit_id=? AND role=?",
+                (commit_id, THUMBNAIL_ROLE),
+            )
+        return existing
+
+    def export_thumbnail(
+        self, value: str, output: Path, *, force: bool = False
+    ) -> Path:
+        attachment = self.thumbnail(value)
+        if attachment is None:
+            raise SproutError(f"commit has no thumbnail: {self.resolve_commit(value)}")
+        destination = output.resolve(strict=False)
+        if destination == self.control or self.control in destination.parents:
+            raise SproutError("cannot export thumbnail into Sprout metadata")
+        if destination.exists() and not destination.is_file():
+            raise SproutError(f"thumbnail output is not a file: {output}")
+        try:
+            relative = destination.relative_to(self.root).as_posix()
+        except ValueError:
+            relative = None
+        if relative is not None and self._path_key(relative) in {
+            self._path_key(path) for path in self.tracked()
+        }:
+            raise SproutError(f"thumbnail output would change tracked file: {relative}")
+        if destination.exists() and not force:
+            raise SproutError(f"thumbnail output already exists: {output}")
+
+        item = FileState(
+            attachment.original_name,
+            attachment.object_hash,
+            attachment.size,
+            0,
+        )
+        self._copy_verified_object(item)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not force:
+            try:
+                with destination.open("xb") as target:
+                    self._copy_verified_object(item, target)
+                    target.flush()
+                    os.fsync(target.fileno())
+            except FileExistsError as exc:
+                raise SproutError(f"thumbnail output already exists: {output}") from exc
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
+            return destination
+
+        fd, temp_name = tempfile.mkstemp(
+            dir=destination.parent,
+            prefix=f".{destination.name}.thumbnail-",
+        )
+        try:
+            with os.fdopen(fd, "wb") as target:
+                self._copy_verified_object(item, target)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temp_name, destination)
+        except Exception:
+            Path(temp_name).unlink(missing_ok=True)
+            raise
+        return destination
 
     @staticmethod
     def _commit_path_hash(db: sqlite3.Connection, commit_id: str, path: str) -> str | None:
@@ -921,7 +1139,13 @@ class Repository:
     def referenced_object_hashes(self) -> set[str]:
         """Return object hashes still referenced by any commit."""
         with self.connect() as db:
-            return {row[0] for row in db.execute("SELECT DISTINCT object_hash FROM commit_files")}
+            return {
+                row[0]
+                for row in db.execute(
+                    "SELECT object_hash FROM commit_files "
+                    "UNION SELECT object_hash FROM commit_attachments"
+                )
+            }
 
     def doctor(self) -> DoctorResult:
         """Inspect repository integrity without changing the working tree."""
@@ -929,7 +1153,10 @@ class Repository:
         with self.connect() as db:
             hashes = [
                 row[0]
-                for row in db.execute("SELECT DISTINCT object_hash FROM commit_files ORDER BY 1")
+                for row in db.execute(
+                    "SELECT object_hash FROM commit_files "
+                    "UNION SELECT object_hash FROM commit_attachments ORDER BY 1"
+                )
             ]
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:

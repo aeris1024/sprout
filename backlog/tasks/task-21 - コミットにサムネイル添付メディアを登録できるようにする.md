@@ -1,10 +1,11 @@
 ---
 id: TASK-21
 title: コミットにサイズ制限付き画像サムネイルを登録できるようにする
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-07-15 16:26'
-updated_date: '2026-07-29 19:46'
+updated_date: '2026-08-08 17:56'
 labels: []
 dependencies:
   - TASK-37
@@ -42,14 +43,32 @@ TASK-10のgcとdoctorはcommit_attachmentsが参照するオブジェクトを�
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 commit時に対応する静止画像をrole=thumbnailとして登録できる
-- [ ] #2 既存コミットへのサムネイルの登録、置き換え、削除ができ、置き換え時は作成日時を維持して更新日時が更新される
-- [ ] #3 元ファイル名、正しい画像media_type、サイズ、作成日時、更新日時が保持される
-- [ ] #4 音声、動画、アニメーション画像、3Dモデル、文書、未知のバイナリをthumbnailとして登録できない
-- [ ] #5 定義されたサムネイルサイズ上限を超える画像を明確なエラーで拒否する
-- [ ] #6 添付の実体が既存のobjectsストアに保存され、通常ファイルと重複排除される
-- [ ] #7 サムネイルを作業ツリーへ影響させずに任意の出力先へ取り出せる
-- [ ] #8 showおよびJSON出力でサムネイルの有無、元ファイル名、media_type、サイズ、日時を確認できる
-- [ ] #9 gcが参照中のサムネイルを削除せず、doctorがサムネイルオブジェクトの欠落と破損を検査する
-- [ ] #10 READMEが更新され、画像形式検証、サイズ上限、登録、置き換え、削除、export、gc、doctorが自動テストで検証される
+- [x] #1 commit --thumbnailでPNG・JPEG・WebPの静止画像をrole=thumbnailとして登録できる
+- [x] #2 既存コミットへのサムネイルの登録、置き換え、削除ができ、置き換え時は作成日時を維持して更新日時を更新する
+- [x] #3 元ファイル名、正しいmedia_type、サイズ、作成日時、更新日時を保持する
+- [x] #4 画像をPillowでデコード検証し、アニメーション、破損画像、非対応形式、未知のバイナリを拒否する
+- [x] #5 2 MiBまたは4096×4096ピクセルを超える画像を明確なエラーで拒否する
+- [x] #6 添付を既存objectsストアへ保存し、通常ファイルと重複排除する
+- [x] #7 サムネイルを追跡作業ツリーへ影響させず任意の出力ファイルへ安全に取り出せる
+- [x] #8 showとJSON出力でサムネイルの有無と全メタデータを確認できる
+- [x] #9 gcが参照中のサムネイルを保持し、doctorがサムネイルオブジェクトの欠落と破損を検査する
+- [x] #10 READMEを更新し、形式・上限・登録・置換・削除・取得・gc・doctorを自動テストで検証する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Pillowを依存へ追加し、サムネイルのデータ型とPNG・JPEG・WebP静止画像の内容・容量・寸法検証をRepository層へ実装する。 2. commit時登録と既存コミットへの登録・置換・削除・取得をロック付きで実装し、objectsストアを共有する。 3. 参照中オブジェクト判定とdoctorを添付対応し、追跡ファイルを上書きしない原子的なexportを追加する。 4. commit --thumbnail、thumbnail操作、show表示・JSONをCLIへ追加する。 5. Repository/CLIテストとREADMEを更新し全テストを実行する。
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Pillow 12.3.0を追加し、PNG・JPEG・WebPの静止画像を2 MiB・4096×4096以下でピクセルデコード検証する。commit時登録と既存コミットへの登録・置換・削除・安全なexport、show/thumbnail JSON、objects重複排除、gc/doctor連携を実装した。検証結果: サムネイル対象テスト7件成功、CLIヘルプ表示成功、全テスト113 passed・2 skipped、git diff --check成功。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+サイズ制限付き静止画像サムネイルをコミット時または後付けで管理できるようにし、objectsストア、show JSON、export、gc、doctorへ統合した。PNG・JPEG・WebPの内容、アニメーション、破損、容量、寸法を検証し、全テスト113件成功・2件スキップで確認した。
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -80,6 +80,12 @@ sprout status
 sprout commit -m "最初のスナップショット"
 ```
 
+コミットへ小さな静止画像を付ける場合は`--thumbnail`を指定します。PNG、JPEG、WebPに対応し、ファイルサイズは2 MiB以下、幅と高さはそれぞれ4096ピクセル以下に制限されます。画像は実際の内容をデコードして検証され、破損画像、アニメーション画像、拡張子だけを変更した非画像ファイルは拒否されます。
+
+```powershell
+sprout commit -m "色を調整" --thumbnail preview.png
+```
+
 保存した履歴は、次のコマンドで確認できます。
 
 ```powershell
@@ -243,6 +249,30 @@ sprout export <commit-id> assets/ --output ../preview --force
 sprout cat <commit-id> assets/image.png > old-image.png
 ```
 
+## コミットのサムネイルを管理する
+
+既存コミットにもサムネイルを後付けできます。画像を置き換えても、最初に登録した日時は維持され、更新日時だけが変わります。
+
+```powershell
+# 登録または置き換え
+sprout thumbnail <commit-id> preview.webp
+
+# メタデータを確認
+sprout thumbnail <commit-id>
+sprout thumbnail <commit-id> --json
+
+# 作業ツリーを変更せず指定ファイルへ取り出す
+sprout thumbnail <commit-id> --output ../preview.png
+
+# 既存の出力ファイルを置き換える
+sprout thumbnail <commit-id> --output ../preview.png --force
+
+# 登録を削除
+sprout thumbnail <commit-id> --delete
+```
+
+サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
+
 ## ファイルの追跡状態を確認する
 
 ```powershell
@@ -293,10 +323,11 @@ Schema Version 2以前からの移行には対応していません。開発中�
 | `untrack PATH...` | ファイルの追跡をやめる |
 | `move OLD NEW` | 追跡済みファイルを移動する |
 | `status [--json]` | 現在の変更や追跡状態を確認する |
-| `commit -m MESSAGE` | 現在の状態をコミットする |
+| `commit -m MESSAGE [--thumbnail IMAGE]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
 | `log [PATH] [-n COUNT] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、件数、表示形式を指定できる |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
+| `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替え。JSONは一覧表示時のみ指定できる |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
@@ -358,6 +389,16 @@ show:
   "branch_name": string,
   "created_at": string,
   "message": string,
+  "thumbnail": {
+    "commit_id": string,
+    "role": "thumbnail",
+    "original_name": string,
+    "media_type": "image/png" | "image/jpeg" | "image/webp",
+    "object_hash": string,
+    "size": number,
+    "created_at": string,
+    "updated_at": string
+  } | null,
   "files": [{
     "path": string,
     "object_hash": string,
