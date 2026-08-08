@@ -23,7 +23,7 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
 IO_CHUNK_SIZE = 1024 * 1024
@@ -32,14 +32,25 @@ HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
 ProgressCallback = Callable[[str, int, int], None]
 
-TAG_SCHEMA = """
-CREATE TABLE IF NOT EXISTS tags (
-    name TEXT PRIMARY KEY,
-    commit_id TEXT NOT NULL REFERENCES commits(id),
-    comment TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
-);
-"""
+REQUIRED_SCHEMA_TABLES = {
+    "meta",
+    "commits",
+    "commit_files",
+    "commit_attachments",
+    "commit_notes",
+    "commit_labels",
+    "branches",
+    "tags",
+    "tracked_paths",
+}
+REQUIRED_META_KEYS = {
+    "schema_version",
+    "object_compression",
+    "head_branch",
+    "active_operation",
+    "repository_id",
+    "repository_created_at",
+}
 
 
 def locked(method: Callable[..., T]) -> Callable[..., T]:
@@ -74,6 +85,27 @@ CREATE TABLE IF NOT EXISTS commit_files (
     mtime_ns INTEGER NOT NULL,
     PRIMARY KEY (commit_id, path)
 );
+CREATE TABLE IF NOT EXISTS commit_attachments (
+    commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    object_hash TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (size >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (commit_id, role)
+);
+CREATE TABLE IF NOT EXISTS commit_notes (
+    commit_id TEXT PRIMARY KEY REFERENCES commits(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS commit_labels (
+    commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    PRIMARY KEY (commit_id, label)
+);
 CREATE TABLE IF NOT EXISTS branches (
     name TEXT PRIMARY KEY,
     commit_id TEXT REFERENCES commits(id),
@@ -89,6 +121,9 @@ CREATE TABLE IF NOT EXISTS tracked_paths (
     path TEXT PRIMARY KEY
 );
 CREATE INDEX IF NOT EXISTS idx_commits_parent ON commits(parent_id);
+CREATE INDEX IF NOT EXISTS idx_commit_attachments_object_hash
+    ON commit_attachments(object_hash);
+CREATE INDEX IF NOT EXISTS idx_commit_labels_label ON commit_labels(label);
 """
 
 
@@ -204,6 +239,14 @@ class Repository:
                 )
                 db.execute("INSERT INTO meta(key, value) VALUES('head_branch', 'main')")
                 db.execute("INSERT INTO meta(key, value) VALUES('active_operation', '')")
+                db.execute(
+                    "INSERT INTO meta(key, value) VALUES('repository_id', ?)",
+                    (str(uuid.uuid4()),),
+                )
+                db.execute(
+                    "INSERT INTO meta(key, value) VALUES('repository_created_at', ?)",
+                    (datetime.now(timezone.utc).isoformat(),),
+                )
                 db.execute("INSERT INTO branches(name, commit_id, comment) VALUES('main', NULL, '')")
         except Exception:
             shutil.rmtree(control, ignore_errors=True)
@@ -253,34 +296,56 @@ class Repository:
     def check_schema(self) -> None:
         try:
             with self.connect() as db:
-                row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                compression = db.execute(
-                    "SELECT value FROM meta WHERE key='object_compression'"
-                ).fetchone()
-                has_tags = (
-                    db.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
-                    ).fetchone()
-                    is not None
-                )
+                metadata = {
+                    row["key"]: row["value"]
+                    for row in db.execute("SELECT key, value FROM meta")
+                }
+                tables = {
+                    row["name"]
+                    for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
         except sqlite3.Error as exc:
             raise SproutError(f"cannot read repository: {exc}") from exc
-        found_version = row[0] if row is not None else "missing"
+        found_version = metadata.get("schema_version", "missing")
         if found_version != SCHEMA_VERSION:
             raise SproutError(
                 f"unsupported repository schema version: {found_version} "
-                f"(expected {SCHEMA_VERSION})"
+                f"(expected {SCHEMA_VERSION}); reinitialize the repository "
+                "with this Sprout version"
             )
-        found_compression = compression[0] if compression is not None else "missing"
+        missing_tables = sorted(REQUIRED_SCHEMA_TABLES - tables)
+        if missing_tables:
+            raise SproutError(
+                "repository schema is incomplete; missing tables: "
+                + ", ".join(missing_tables)
+            )
+        missing_metadata = sorted(REQUIRED_META_KEYS - metadata.keys())
+        if missing_metadata:
+            raise SproutError(
+                "repository metadata is incomplete; missing keys: "
+                + ", ".join(missing_metadata)
+            )
+        found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
             raise SproutError(
                 f"unsupported object compression: {found_compression} "
                 f"(expected {OBJECT_COMPRESSION})"
             )
-        if not has_tags:
-            with self.lock():
-                with self.connect() as db:
-                    db.executescript(TAG_SCHEMA)
+        try:
+            uuid.UUID(metadata["repository_id"])
+        except (ValueError, AttributeError) as exc:
+            raise SproutError("repository has an invalid repository_id") from exc
+        try:
+            created_at = datetime.fromisoformat(metadata["repository_created_at"])
+        except ValueError as exc:
+            raise SproutError("repository has an invalid repository_created_at") from exc
+        if (
+            created_at.tzinfo is None
+            or created_at.utcoffset() != timezone.utc.utcoffset(None)
+        ):
+            raise SproutError("repository_created_at must be a UTC datetime")
 
     @contextmanager
     def lock(self) -> Iterator[None]:
