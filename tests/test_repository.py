@@ -1,6 +1,8 @@
 import os
 import json
 import sqlite3
+import uuid
+from datetime import datetime, timezone
 from io import BytesIO
 from contextlib import contextmanager
 from pathlib import Path
@@ -79,15 +81,128 @@ def test_objects_are_compressed_and_repository_records_format(
         )
 
 
-def test_discover_rejects_old_repository_schema(tmp_path: Path) -> None:
+def test_discover_rejects_old_repository_schema_without_modifying_it(
+    tmp_path: Path,
+) -> None:
     repo = create_repo(tmp_path)
     with repo.connect() as db:
-        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
 
     with pytest.raises(
-        SproutError, match=r"unsupported repository schema version: 1 \(expected 2\)"
+        SproutError,
+        match=r"unsupported repository schema version: 2 \(expected 3\); reinitialize",
     ):
         Repository.discover(repo.root)
+
+    with repo.connect() as db:
+        assert (
+            db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+            == "2"
+        )
+
+
+def test_schema_version_3_initializes_metadata_tables_and_indexes(
+    tmp_path: Path,
+) -> None:
+    first = create_repo(tmp_path)
+    second = Repository.init(tmp_path / "other-project")
+
+    with first.connect() as db:
+        metadata = dict(db.execute("SELECT key, value FROM meta"))
+        tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        label_indexes = {
+            row[1] for row in db.execute("PRAGMA index_list('commit_labels')")
+        }
+    with second.connect() as db:
+        second_repository_id = db.execute(
+            "SELECT value FROM meta WHERE key='repository_id'"
+        ).fetchone()[0]
+
+    assert metadata["schema_version"] == "3"
+    assert {
+        "commit_attachments",
+        "commit_notes",
+        "commit_labels",
+    } <= tables
+    assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
+    assert metadata["repository_id"] != second_repository_id
+    created_at = datetime.fromisoformat(metadata["repository_created_at"])
+    assert created_at.utcoffset() == timezone.utc.utcoffset(None)
+    assert "idx_commit_labels_label" in label_indexes
+
+    discovered = Repository.discover(first.root)
+    with discovered.connect() as db:
+        assert (
+            db.execute("SELECT value FROM meta WHERE key='repository_id'").fetchone()[0]
+            == metadata["repository_id"]
+        )
+
+
+def test_schema_version_3_attachment_note_and_label_constraints(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+    commit_id = "a" * 64
+    timestamp = "2026-08-09T00:00:00+00:00"
+
+    with repo.connect() as db:
+        db.execute(
+            "INSERT INTO commits(id, parent_id, branch_name, created_at, message) "
+            "VALUES(?, NULL, 'main', ?, 'schema fixture')",
+            (commit_id, timestamp),
+        )
+        db.execute(
+            "INSERT INTO commit_attachments("
+            "commit_id, role, original_name, media_type, object_hash, size, "
+            "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                commit_id,
+                "future-role",
+                "asset.future",
+                "application/x-future",
+                "b" * 64,
+                10**12,
+                timestamp,
+                timestamp,
+            ),
+        )
+        db.execute(
+            "INSERT INTO commit_notes(commit_id, note, updated_at) VALUES(?, ?, ?)",
+            (commit_id, "note", timestamp),
+        )
+        db.execute(
+            "INSERT INTO commit_labels(commit_id, label) VALUES(?, 'Draft')",
+            (commit_id,),
+        )
+        db.execute(
+            "INSERT INTO commit_labels(commit_id, label) VALUES(?, 'draft')",
+            (commit_id,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "INSERT INTO commit_attachments("
+                "commit_id, role, original_name, media_type, object_hash, size, "
+                "created_at, updated_at) VALUES(?, ?, 'other', 'other/type', ?, 1, ?, ?)",
+                (commit_id, "future-role", "c" * 64, timestamp, timestamp),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "INSERT INTO commit_labels(commit_id, label) VALUES(?, 'Draft')",
+                (commit_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "INSERT INTO commit_notes(commit_id, note, updated_at) "
+                "VALUES('missing', 'note', ?)",
+                (timestamp,),
+            )
+        db.execute("DELETE FROM commits WHERE id=?", (commit_id,))
+        assert db.execute("SELECT COUNT(*) FROM commit_attachments").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM commit_notes").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM commit_labels").fetchone()[0] == 0
 
 
 def test_progress_callback_reports_commit_and_restore_bytes(
@@ -1362,20 +1477,22 @@ def test_discover_skips_lock_when_no_active_operation(
     assert discovered.root == repo.root
 
 
-def test_discover_adds_compatible_tags_table_to_existing_schema(tmp_path: Path) -> None:
+def test_discover_rejects_incomplete_schema_without_repairing_it(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
     with repo.connect() as db:
         db.execute("DROP TABLE tags")
 
-    discovered = Repository.discover(repo.root)
+    with pytest.raises(
+        SproutError, match="repository schema is incomplete; missing tables: tags"
+    ):
+        Repository.discover(repo.root)
 
-    assert discovered.tags() == []
-    with discovered.connect() as db:
+    with repo.connect() as db:
         assert (
             db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
             ).fetchone()
-            is not None
+            is None
         )
 
 
