@@ -59,6 +59,18 @@ sprout --install-completion
 sprout --show-completion
 ```
 
+## デスクトップGUI
+
+`gui/`にはTauri 2 + React + TypeScript + Viteで構築したWindows向けGUIがあります。GUIはSproutの管理データへ直接触れず、PATHまたは設定画面で指定したCLIを`--json`付きで呼び出します。
+
+```powershell
+cd gui
+pnpm install
+pnpm tauri dev
+```
+
+フォルダ選択、未初期化フォルダへの`sprout init`提案、`status`表示、構造化エラー通知、最近使ったプロジェクトの保存に対応しています。必要なNode.js、Rust、Visual Studio環境とビルド手順は[gui/README.md](gui/README.md)を参照してください。
+
 ## クイックスタート
 
 まず、管理したいフォルダへ移動してSproutを初期化します。
