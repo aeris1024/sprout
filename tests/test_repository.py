@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import zstandard
+from PIL import Image
 
 from sprout.errors import SproutError
 from sprout.repository import Repository
@@ -22,6 +23,18 @@ def write(root: Path, relative: str, content: bytes) -> Path:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+    return path
+
+
+def write_image(
+    path: Path,
+    image_format: str = "PNG",
+    size: tuple[int, int] = (16, 12),
+    color: str = "navy",
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", size, color)
+    image.save(path, format=image_format)
     return path
 
 
@@ -1086,6 +1099,168 @@ def test_cat_writes_verified_binary_content(
     assert output.getvalue() == content
     with pytest.raises(SproutError, match="path not in commit"):
         repo.cat(commit_id, Path("missing.bin"), BytesIO())
+
+
+@pytest.mark.parametrize(
+    ("image_format", "suffix", "media_type"),
+    [
+        ("PNG", ".png", "image/png"),
+        ("JPEG", ".jpg", "image/jpeg"),
+        ("WEBP", ".webp", "image/webp"),
+    ],
+)
+def test_commit_registers_supported_thumbnail_and_deduplicates_object(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    image_format: str,
+    suffix: str,
+    media_type: str,
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    thumbnail = write_image(repo.root / f"thumbnail{suffix}", image_format)
+    repo.track([thumbnail])
+
+    commit_id = repo.commit("with thumbnail", thumbnail=thumbnail).commit_id
+    attachment = repo.thumbnail(commit_id)
+
+    assert attachment is not None
+    assert attachment.role == "thumbnail"
+    assert attachment.original_name == thumbnail.name
+    assert attachment.media_type == media_type
+    assert attachment.size == thumbnail.stat().st_size
+    assert attachment.created_at == attachment.updated_at
+    assert attachment.object_hash == repo.manifest(commit_id)[thumbnail.name].object_hash
+    assert len(list(repo.objects.glob("*/*"))) == 1
+
+
+def test_thumbnail_can_be_replaced_exported_and_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"working data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+    first_source = write_image(tmp_path / "outside" / "first.png", color="red")
+    second_source = write_image(
+        tmp_path / "outside" / "second.jpg", "JPEG", color="green"
+    )
+
+    first = repo.set_thumbnail(commit_id, first_source)
+    output = tmp_path / "exports" / "thumbnail.png"
+    assert repo.export_thumbnail(commit_id, output) == output.resolve()
+    assert output.read_bytes() == first_source.read_bytes()
+    assert repo.status() == []
+    with pytest.raises(SproutError, match="output already exists"):
+        repo.export_thumbnail(commit_id, output)
+    with pytest.raises(SproutError, match="would change tracked file"):
+        repo.export_thumbnail(commit_id, asset, force=True)
+    assert asset.read_bytes() == b"working data"
+
+    second = repo.set_thumbnail(commit_id, second_source)
+    assert second.created_at == first.created_at
+    assert second.updated_at != first.updated_at
+    assert second.original_name == "second.jpg"
+    assert second.media_type == "image/jpeg"
+    assert second.object_hash != first.object_hash
+    repo.export_thumbnail(commit_id, output, force=True)
+    assert output.read_bytes() == second_source.read_bytes()
+
+    deleted = repo.delete_thumbnail(commit_id)
+    assert deleted == second
+    assert repo.thumbnail(commit_id) is None
+    with pytest.raises(SproutError, match="has no thumbnail"):
+        repo.delete_thumbnail(commit_id)
+
+
+def test_thumbnail_rejects_invalid_animated_and_oversized_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+
+    invalid = write(tmp_path, "invalid.bin", b"not an image")
+    with pytest.raises(SproutError, match="invalid thumbnail image"):
+        repo.set_thumbnail(commit_id, invalid)
+
+    gif = write_image(tmp_path / "static.gif", "GIF")
+    with pytest.raises(SproutError, match="unsupported thumbnail format"):
+        repo.set_thumbnail(commit_id, gif)
+
+    first_frame = Image.new("RGB", (8, 8), "red")
+    second_frame = Image.new("RGB", (8, 8), "blue")
+    animated = tmp_path / "animated.png"
+    first_frame.save(
+        animated,
+        format="PNG",
+        save_all=True,
+        append_images=[second_frame],
+        duration=100,
+        loop=0,
+    )
+    with pytest.raises(SproutError, match="animated images"):
+        repo.set_thumbnail(commit_id, animated)
+
+    wide = write_image(tmp_path / "wide.png", size=(4097, 1))
+    with pytest.raises(SproutError, match="dimensions exceed 4096x4096"):
+        repo.set_thumbnail(commit_id, wide)
+
+    too_large = write_image(tmp_path / "too-large.png")
+    with too_large.open("ab") as file:
+        file.write(b"x" * (2 * 1024 * 1024))
+    with pytest.raises(SproutError, match="exceeds 2097152 byte limit"):
+        repo.set_thumbnail(commit_id, too_large)
+
+    corrupt = write(tmp_path, "corrupt.png", b"\x89PNG\r\n\x1a\ntruncated")
+    with pytest.raises(SproutError, match="invalid thumbnail image"):
+        repo.set_thumbnail(commit_id, corrupt)
+    assert repo.thumbnail(commit_id) is None
+
+
+def test_gc_and_doctor_include_thumbnail_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+    source = write_image(tmp_path / "outside.png")
+    attachment = repo.set_thumbnail(commit_id, source)
+    object_path = repo.objects / attachment.object_hash[:2] / attachment.object_hash
+
+    assert repo.gc().removed_objects == 0
+    assert object_path.is_file()
+    object_path.unlink()
+    missing = repo.doctor()
+    assert any(
+        issue.kind == "missing_object" and issue.detail == attachment.object_hash
+        for issue in missing.issues
+    )
+
+    attachment = repo.set_thumbnail(commit_id, source)
+    object_path.write_bytes(b"corrupt")
+    corrupt = repo.doctor()
+    assert any(
+        issue.kind == "corrupt_object" and issue.detail == attachment.object_hash
+        for issue in corrupt.issues
+    )
+    protected_output = tmp_path / "existing.png"
+    protected_output.write_bytes(b"keep")
+    with pytest.raises(SproutError, match="corrupt object"):
+        repo.export_thumbnail(commit_id, protected_output, force=True)
+    assert protected_output.read_bytes() == b"keep"
+
+    object_path.unlink()
+    attachment = repo.set_thumbnail(commit_id, source)
+    repo.delete_thumbnail(commit_id)
+    removed = repo.gc()
+    assert attachment.object_hash in removed.objects
+    assert not object_path.exists()
 
 
 def test_manual_delete_still_requires_discard(
