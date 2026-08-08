@@ -189,6 +189,42 @@ class CommitAnnotations:
 
 
 @dataclass(frozen=True)
+class GraphCommit:
+    id: str
+    parent_id: str | None
+    branch_name: str
+    created_at: str
+    message: str
+    attachments: tuple[CommitAttachment, ...]
+    note: str | None
+    note_updated_at: str | None
+    labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BranchReference:
+    name: str
+    commit_id: str | None
+    comment: str
+    current: bool
+
+
+@dataclass(frozen=True)
+class TagReference:
+    name: str
+    commit_id: str
+    comment: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CommitGraph:
+    commits: tuple[GraphCommit, ...]
+    branches: tuple[BranchReference, ...]
+    tags: tuple[TagReference, ...]
+
+
+@dataclass(frozen=True)
 class ExportResult:
     commit_id: str
     paths: tuple[str, ...]
@@ -1009,12 +1045,13 @@ class Repository:
         commit_id = self.resolve_commit(value)
         return self.annotations_many([commit_id])[commit_id]
 
-    def annotations_many(
-        self, commit_ids: list[str]
+    @classmethod
+    def _annotations_many_from_db(
+        cls, db: sqlite3.Connection, commit_ids: list[str]
     ) -> dict[str, CommitAnnotations]:
         unique_ids = list(dict.fromkeys(commit_ids))
         result = {
-            commit_id: self._empty_annotations(commit_id)
+            commit_id: cls._empty_annotations(commit_id)
             for commit_id in unique_ids
         }
         if not unique_ids:
@@ -1022,22 +1059,21 @@ class Repository:
 
         notes: dict[str, tuple[str, str]] = {}
         labels: dict[str, list[str]] = {commit_id: [] for commit_id in unique_ids}
-        with self.connect() as db:
-            for offset in range(0, len(unique_ids), 900):
-                chunk = unique_ids[offset : offset + 900]
-                placeholders = ",".join("?" for _ in chunk)
-                for row in db.execute(
-                    f"SELECT commit_id, note, updated_at FROM commit_notes "
-                    f"WHERE commit_id IN ({placeholders})",
-                    chunk,
-                ):
-                    notes[row["commit_id"]] = (row["note"], row["updated_at"])
-                for row in db.execute(
-                    f"SELECT commit_id, label FROM commit_labels "
-                    f"WHERE commit_id IN ({placeholders}) ORDER BY label",
-                    chunk,
-                ):
-                    labels[row["commit_id"]].append(row["label"])
+        for offset in range(0, len(unique_ids), 900):
+            chunk = unique_ids[offset : offset + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in db.execute(
+                f"SELECT commit_id, note, updated_at FROM commit_notes "
+                f"WHERE commit_id IN ({placeholders})",
+                chunk,
+            ):
+                notes[row["commit_id"]] = (row["note"], row["updated_at"])
+            for row in db.execute(
+                f"SELECT commit_id, label FROM commit_labels "
+                f"WHERE commit_id IN ({placeholders}) ORDER BY label",
+                chunk,
+            ):
+                labels[row["commit_id"]].append(row["label"])
 
         for commit_id in unique_ids:
             note = notes.get(commit_id)
@@ -1048,6 +1084,101 @@ class Repository:
                 labels=tuple(labels[commit_id]),
             )
         return result
+
+    def annotations_many(
+        self, commit_ids: list[str]
+    ) -> dict[str, CommitAnnotations]:
+        with self.connect() as db:
+            return self._annotations_many_from_db(db, commit_ids)
+
+    @classmethod
+    def _attachments_many_from_db(
+        cls, db: sqlite3.Connection, commit_ids: list[str]
+    ) -> dict[str, tuple[CommitAttachment, ...]]:
+        unique_ids = list(dict.fromkeys(commit_ids))
+        grouped: dict[str, list[CommitAttachment]] = {
+            commit_id: [] for commit_id in unique_ids
+        }
+        for offset in range(0, len(unique_ids), 900):
+            chunk = unique_ids[offset : offset + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in db.execute(
+                f"SELECT * FROM commit_attachments "
+                f"WHERE commit_id IN ({placeholders}) ORDER BY role",
+                chunk,
+            ):
+                grouped[row["commit_id"]].append(cls._attachment_from_row(row))
+        return {
+            commit_id: tuple(attachments)
+            for commit_id, attachments in grouped.items()
+        }
+
+    def attachments_many(
+        self, commit_ids: list[str]
+    ) -> dict[str, tuple[CommitAttachment, ...]]:
+        with self.connect() as db:
+            return self._attachments_many_from_db(db, commit_ids)
+
+    def commit_graph(self) -> CommitGraph:
+        """Return every commit and current reference in one read transaction."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            commit_rows = list(
+                db.execute(
+                    "SELECT * FROM commits ORDER BY created_at DESC, rowid DESC"
+                )
+            )
+            commit_ids = [row["id"] for row in commit_rows]
+            annotations = self._annotations_many_from_db(db, commit_ids)
+            attachments = self._attachments_many_from_db(db, commit_ids)
+            current_branch = db.execute(
+                "SELECT value FROM meta WHERE key='head_branch'"
+            ).fetchone()[0]
+            branch_rows = list(
+                db.execute(
+                    "SELECT name, commit_id, comment FROM branches ORDER BY name"
+                )
+            )
+            tag_rows = list(
+                db.execute(
+                    "SELECT name, commit_id, comment, created_at "
+                    "FROM tags ORDER BY name"
+                )
+            )
+
+        commits = tuple(
+            GraphCommit(
+                id=row["id"],
+                parent_id=row["parent_id"],
+                branch_name=row["branch_name"],
+                created_at=row["created_at"],
+                message=row["message"],
+                attachments=attachments[row["id"]],
+                note=annotations[row["id"]].note,
+                note_updated_at=annotations[row["id"]].note_updated_at,
+                labels=annotations[row["id"]].labels,
+            )
+            for row in commit_rows
+        )
+        branches = tuple(
+            BranchReference(
+                name=row["name"],
+                commit_id=row["commit_id"],
+                comment=row["comment"],
+                current=row["name"] == current_branch,
+            )
+            for row in branch_rows
+        )
+        tags = tuple(
+            TagReference(
+                name=row["name"],
+                commit_id=row["commit_id"],
+                comment=row["comment"],
+                created_at=row["created_at"],
+            )
+            for row in tag_rows
+        )
+        return CommitGraph(commits=commits, branches=branches, tags=tags)
 
     @staticmethod
     def _normalize_label(label: str) -> str:

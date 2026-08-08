@@ -1864,6 +1864,71 @@ def test_note_and_label_mutations_are_rejected_while_repository_is_locked(
             repo.add_label(commit_id, "blocked")
 
 
+def test_commit_graph_includes_all_history_references_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"main-v2")
+    main_tip = repo.commit("main work").commit_id
+
+    repo.create_branch("side", start_point=first, switch=True)
+    asset.write_bytes(b"side-v2")
+    side_tip = repo.commit("side work").commit_id
+    thumbnail = write_image(repo.root / "preview.png")
+    repo.set_thumbnail(side_tip, thumbnail)
+    repo.set_note(side_tip, "review this branch")
+    repo.add_label(side_tip, "Candidate")
+    repo.switch("main")
+    repo.create_branch("archive", start_point=first)
+    repo.create_tag("baseline", first, "shared root")
+    repo.delete_branch("side")
+
+    graph = repo.commit_graph()
+    assert [commit.id for commit in graph.commits] == [side_tip, main_tip, first]
+    commits = {commit.id: commit for commit in graph.commits}
+    assert set(commits) == {first, main_tip, side_tip}
+    assert commits[first].parent_id is None
+    assert commits[main_tip].parent_id == first
+    assert commits[side_tip].parent_id == first
+    assert commits[side_tip].branch_name == "side"
+    assert commits[side_tip].note == "review this branch"
+    assert commits[side_tip].note_updated_at is not None
+    assert commits[side_tip].labels == ("Candidate",)
+    assert len(commits[side_tip].attachments) == 1
+    assert commits[side_tip].attachments[0].role == "thumbnail"
+    assert commits[side_tip].attachments[0].original_name == "preview.png"
+
+    assert [branch.name for branch in graph.branches] == ["archive", "main"]
+    assert graph.branches[0].commit_id == first
+    assert graph.branches[0].current is False
+    assert graph.branches[1].commit_id == main_tip
+    assert graph.branches[1].comment == ""
+    assert graph.branches[1].current is True
+    assert len(graph.tags) == 1
+    assert graph.tags[0].name == "baseline"
+    assert graph.tags[0].commit_id == first
+    assert graph.tags[0].comment == "shared root"
+    assert all(branch.name != "side" for branch in graph.branches)
+
+
+def test_commit_graph_handles_an_empty_repository(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
+
+    graph = repo.commit_graph()
+
+    assert graph.commits == ()
+    assert len(graph.branches) == 1
+    assert graph.branches[0].name == "main"
+    assert graph.branches[0].commit_id is None
+    assert graph.branches[0].current is True
+    assert graph.tags == ()
+    assert repo.attachments_many([]) == {}
+
+
 def test_discover_recovers_only_when_active_operation_is_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
