@@ -101,7 +101,10 @@ sprout show <commit-id>
 sprout log -n 5
 sprout log --oneline
 sprout log scene.blend -n 5 --oneline
+sprout log --label submitted
 ```
+
+`--label`は前後の空白とUnicode表現を正規化したうえで、ラベルの大文字小文字を区別して完全一致検索します。パス、件数、表示形式の指定とも併用できます。
 
 `sprout show`のコミット日時とファイル更新日時は、既定ではUTCで表示されます。ローカルタイム、またはIANAタイムゾーン名を指定することもできます。
 
@@ -273,6 +276,27 @@ sprout thumbnail <commit-id> --delete
 
 サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
+## コミットのメモとラベルを管理する
+
+コミットメッセージやタグを変更せず、後から編集できるメモを1件、ラベルを複数付けられます。
+
+```powershell
+# メモの設定・確認・削除
+sprout note <commit-id> "クライアント確認済み"
+sprout note <commit-id>
+sprout note <commit-id> --delete
+
+# ラベルの追加・一覧・削除
+sprout label <commit-id> submitted
+sprout label <commit-id>
+sprout label <commit-id> --delete submitted
+
+# ラベルで履歴を絞り込む
+sprout log --label submitted
+```
+
+メモは前後の空白を除去して保存し、空文字を指定すると削除します。上限は20,000文字です。ラベルも前後の空白を除去し、Unicode NFCで正規化します。ラベルは1件64文字以内、1コミット32件以内で、大文字小文字を区別します。同じラベルの再追加は1件のままです。メモとラベルは`show`と`log`の通常表示およびJSON出力にも含まれます。
+
 ## ファイルの追跡状態を確認する
 
 ```powershell
@@ -324,10 +348,12 @@ Schema Version 2以前からの移行には対応していません。開発中�
 | `move OLD NEW` | 追跡済みファイルを移動する |
 | `status [--json]` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE [--thumbnail IMAGE]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
-| `log [PATH] [-n COUNT] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、件数、表示形式を指定できる |
+| `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
+| `note COMMIT [TEXT] [--delete]` | コミットのメモを確認・設定・削除する |
+| `label COMMIT [LABEL] [--delete LABEL]` | コミットのラベルを一覧・追加・削除する |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替え。JSONは一覧表示時のみ指定できる |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH` | 別のブランチへ切り替える |
@@ -379,7 +405,10 @@ log:
   "id": string,
   "parent_id": string | null,
   "created_at": string,
-  "message": string
+  "message": string,
+  "note": string | null,
+  "note_updated_at": string | null,
+  "labels": [string]
 }]
 
 show:
@@ -389,6 +418,9 @@ show:
   "branch_name": string,
   "created_at": string,
   "message": string,
+  "note": string | null,
+  "note_updated_at": string | null,
+  "labels": [string],
   "thumbnail": {
     "commit_id": string,
     "role": "thumbnail",

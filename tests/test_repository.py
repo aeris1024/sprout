@@ -1752,6 +1752,118 @@ def test_log_path_includes_deletion_commits(
     assert [row["id"] for row in rows] == [deleted, added]
 
 
+def test_commit_notes_can_be_set_replaced_and_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+
+    assert repo.annotations(commit_id).note is None
+    first = repo.set_note(commit_id, "  client review  ")
+    assert first.note == "client review"
+    assert first.note_updated_at is not None
+
+    second = repo.set_note(commit_id, "approved")
+    assert second.note == "approved"
+    assert second.note_updated_at is not None
+    assert second.note_updated_at >= first.note_updated_at
+
+    deleted = repo.set_note(commit_id, " \n\t ")
+    assert deleted.note is None
+    assert deleted.note_updated_at is None
+    with repo.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM commit_notes").fetchone()[0] == 0
+
+    with pytest.raises(SproutError, match="20000 character limit"):
+        repo.set_note(commit_id, "x" * 20_001)
+
+
+def test_commit_labels_are_normalized_bounded_and_case_sensitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+
+    decomposed = "Cafe\u0301"
+    repo.add_label(commit_id, f"  {decomposed}  ")
+    repo.add_label(commit_id, "Café")
+    repo.add_label(commit_id, "Draft")
+    annotations = repo.add_label(commit_id, "draft")
+    assert annotations.labels == ("Café", "Draft", "draft")
+
+    annotations = repo.remove_label(commit_id, decomposed)
+    assert annotations.labels == ("Draft", "draft")
+    repo.remove_label(commit_id, "missing")
+
+    with pytest.raises(SproutError, match="label cannot be empty"):
+        repo.add_label(commit_id, " \t ")
+    with pytest.raises(SproutError, match="64 character limit"):
+        repo.add_label(commit_id, "x" * 65)
+
+    for index in range(30):
+        repo.add_label(commit_id, f"label-{index:02}")
+    assert len(repo.annotations(commit_id).labels) == 32
+    repo.add_label(commit_id, "Draft")
+    with pytest.raises(SproutError, match="more than 32 labels"):
+        repo.add_label(commit_id, "one-too-many")
+
+
+def test_annotations_many_and_log_label_filter_support_graph_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    target = write(repo.root, "target.bin", b"v1")
+    other = write(repo.root, "other.bin", b"other-v1")
+    repo.track([target, other])
+    first = repo.commit("first").commit_id
+    repo.add_label(first, "Keep")
+
+    other.write_bytes(b"other-v2")
+    second = repo.commit("second").commit_id
+    repo.add_label(second, "Keep")
+    repo.set_note(second, "middle")
+
+    target.write_bytes(b"v2")
+    third = repo.commit("third").commit_id
+    repo.add_label(third, "keep")
+
+    annotations = repo.annotations_many([third, second, first, second])
+    assert list(annotations) == [third, second, first]
+    assert annotations[second].note == "middle"
+    assert annotations[first].labels == ("Keep",)
+    assert annotations[third].labels == ("keep",)
+
+    assert [row["id"] for row in repo.log(label=" Keep ")] == [second, first]
+    assert [row["id"] for row in repo.log(label="keep")] == [third]
+    assert [
+        row["id"]
+        for row in repo.log(Path("target.bin"), label="Keep", limit=1)
+    ] == [first]
+
+
+def test_note_and_label_mutations_are_rejected_while_repository_is_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"data")
+    repo.track([asset])
+    commit_id = repo.commit("initial").commit_id
+
+    with repo.lock():
+        with pytest.raises(SproutError, match="already running"):
+            repo.set_note(commit_id, "blocked")
+        with pytest.raises(SproutError, match="already running"):
+            repo.add_label(commit_id, "blocked")
+
+
 def test_discover_recovers_only_when_active_operation_is_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -862,6 +862,91 @@ def test_log_cli_limits_and_summarizes_history(tmp_path: Path, monkeypatch) -> N
     assert "x>=1" in invalid.stderr
 
 
+def test_note_and_label_cli_updates_displays_and_filters_annotations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    first_id = Repository.discover().log()[0]["id"]
+
+    note_set = invoke(["note", first_id, "  client approved  "], project, monkeypatch)
+    assert note_set.exit_code == 0
+    note_show = invoke(["note", first_id], project, monkeypatch)
+    assert "client approved" in note_show.stdout
+    assert "Updated:" in note_show.stdout
+
+    assert invoke(["label", first_id, " Approved "], project, monkeypatch).exit_code == 0
+    assert invoke(["label", first_id, "approved"], project, monkeypatch).exit_code == 0
+    labels = invoke(["label", first_id], project, monkeypatch)
+    assert labels.stdout.splitlines() == ["Approved", "approved"]
+
+    asset.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    second_id = Repository.discover().log()[0]["id"]
+    assert invoke(["label", second_id, "Other"], project, monkeypatch).exit_code == 0
+
+    filtered = invoke(["log", "--label", " Approved "], project, monkeypatch)
+    assert filtered.exit_code == 0
+    assert "first" in filtered.stdout
+    assert "second" not in filtered.stdout
+    assert "Labels: Approved, approved" in filtered.stdout
+    assert "Note:   client approved" in filtered.stdout
+    assert "Note updated:" in filtered.stdout
+
+    show_payload = json.loads(
+        invoke(["show", first_id, "--json"], project, monkeypatch).stdout
+    )
+    assert show_payload["note"] == "client approved"
+    assert show_payload["note_updated_at"] is not None
+    assert show_payload["labels"] == ["Approved", "approved"]
+    log_payload = json.loads(
+        invoke(["log", "--label", "Approved", "--json"], project, monkeypatch).stdout
+    )
+    assert len(log_payload) == 1
+    assert log_payload[0]["id"] == first_id
+    assert log_payload[0]["note"] == "client approved"
+    assert log_payload[0]["labels"] == ["Approved", "approved"]
+
+    assert invoke(
+        ["label", first_id, "--delete", "Approved"], project, monkeypatch
+    ).exit_code == 0
+    assert invoke(["label", first_id], project, monkeypatch).stdout == "approved\n"
+    assert invoke(["note", first_id, "replaced"], project, monkeypatch).exit_code == 0
+    shown = invoke(["show", first_id], project, monkeypatch).stdout
+    assert "replaced" in shown
+    assert "Note updated:" in shown
+    assert invoke(["note", first_id, "--delete"], project, monkeypatch).exit_code == 0
+    assert invoke(["note", first_id], project, monkeypatch).stdout == "No note\n"
+
+
+def test_note_and_label_cli_reject_conflicting_or_invalid_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    commit_id = Repository.discover().log()[0]["id"]
+
+    conflict = invoke(["note", commit_id, "text", "--delete"], project, monkeypatch)
+    assert conflict.exit_code != 0
+    assert "cannot be combined" in str(conflict.exception)
+    conflict = invoke(
+        ["label", commit_id, "value", "--delete", "other"], project, monkeypatch
+    )
+    assert conflict.exit_code != 0
+    assert "cannot be combined" in str(conflict.exception)
+    invalid = invoke(["label", commit_id, "   "], project, monkeypatch)
+    assert invalid.exit_code != 0
+    assert "label cannot be empty" in str(invalid.exception)
+
+
 def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
@@ -904,6 +989,9 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
             "parent_id": None,
             "created_at": log_payload[0]["created_at"],
             "message": "日本語コミット",
+            "note": None,
+            "note_updated_at": None,
+            "labels": [],
         }
     ]
     assert "commit " not in log_result.stdout
@@ -918,6 +1006,9 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
         "branch_name": "main",
         "created_at": log_payload[0]["created_at"],
         "message": "日本語コミット",
+        "note": None,
+        "note_updated_at": None,
+        "labels": [],
         "thumbnail": None,
         "files": [
             {

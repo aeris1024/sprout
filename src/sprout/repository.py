@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -31,6 +32,9 @@ IO_CHUNK_SIZE = 1024 * 1024
 THUMBNAIL_ROLE = "thumbnail"
 THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 THUMBNAIL_MAX_DIMENSION = 4096
+NOTE_MAX_CHARS = 20_000
+LABEL_MAX_CHARS = 64
+LABEL_MAX_COUNT = 32
 THUMBNAIL_MEDIA_TYPES = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
@@ -174,6 +178,14 @@ class CommitAttachment:
     size: int
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class CommitAnnotations:
+    commit_id: str
+    note: str | None
+    note_updated_at: str | None
+    labels: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -989,6 +1001,119 @@ class Repository:
             row = db.execute("SELECT * FROM commits WHERE id=?", (commit_id,)).fetchone()
         return row, list(self.manifest(commit_id).values())
 
+    @staticmethod
+    def _empty_annotations(commit_id: str) -> CommitAnnotations:
+        return CommitAnnotations(commit_id, None, None, ())
+
+    def annotations(self, value: str) -> CommitAnnotations:
+        commit_id = self.resolve_commit(value)
+        return self.annotations_many([commit_id])[commit_id]
+
+    def annotations_many(
+        self, commit_ids: list[str]
+    ) -> dict[str, CommitAnnotations]:
+        unique_ids = list(dict.fromkeys(commit_ids))
+        result = {
+            commit_id: self._empty_annotations(commit_id)
+            for commit_id in unique_ids
+        }
+        if not unique_ids:
+            return result
+
+        notes: dict[str, tuple[str, str]] = {}
+        labels: dict[str, list[str]] = {commit_id: [] for commit_id in unique_ids}
+        with self.connect() as db:
+            for offset in range(0, len(unique_ids), 900):
+                chunk = unique_ids[offset : offset + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                for row in db.execute(
+                    f"SELECT commit_id, note, updated_at FROM commit_notes "
+                    f"WHERE commit_id IN ({placeholders})",
+                    chunk,
+                ):
+                    notes[row["commit_id"]] = (row["note"], row["updated_at"])
+                for row in db.execute(
+                    f"SELECT commit_id, label FROM commit_labels "
+                    f"WHERE commit_id IN ({placeholders}) ORDER BY label",
+                    chunk,
+                ):
+                    labels[row["commit_id"]].append(row["label"])
+
+        for commit_id in unique_ids:
+            note = notes.get(commit_id)
+            result[commit_id] = CommitAnnotations(
+                commit_id=commit_id,
+                note=note[0] if note is not None else None,
+                note_updated_at=note[1] if note is not None else None,
+                labels=tuple(labels[commit_id]),
+            )
+        return result
+
+    @staticmethod
+    def _normalize_label(label: str) -> str:
+        normalized = unicodedata.normalize("NFC", label.strip())
+        if not normalized:
+            raise SproutError("label cannot be empty")
+        if len(normalized) > LABEL_MAX_CHARS:
+            raise SproutError(
+                f"label exceeds {LABEL_MAX_CHARS} character limit"
+            )
+        return normalized
+
+    @locked
+    def set_note(self, value: str, note: str) -> CommitAnnotations:
+        commit_id = self.resolve_commit(value)
+        normalized = note.strip()
+        if len(normalized) > NOTE_MAX_CHARS:
+            raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit")
+        with self.connect() as db:
+            if not normalized:
+                db.execute("DELETE FROM commit_notes WHERE commit_id=?", (commit_id,))
+            else:
+                updated_at = datetime.now(timezone.utc).isoformat()
+                db.execute(
+                    "INSERT INTO commit_notes(commit_id, note, updated_at) "
+                    "VALUES(?, ?, ?) ON CONFLICT(commit_id) DO UPDATE SET "
+                    "note=excluded.note, updated_at=excluded.updated_at",
+                    (commit_id, normalized, updated_at),
+                )
+        return self.annotations(commit_id)
+
+    @locked
+    def add_label(self, value: str, label: str) -> CommitAnnotations:
+        commit_id = self.resolve_commit(value)
+        normalized = self._normalize_label(label)
+        with self.connect() as db:
+            exists = db.execute(
+                "SELECT 1 FROM commit_labels WHERE commit_id=? AND label=?",
+                (commit_id, normalized),
+            ).fetchone()
+            if exists is None:
+                count = db.execute(
+                    "SELECT COUNT(*) FROM commit_labels WHERE commit_id=?",
+                    (commit_id,),
+                ).fetchone()[0]
+                if count >= LABEL_MAX_COUNT:
+                    raise SproutError(
+                        f"commit cannot have more than {LABEL_MAX_COUNT} labels"
+                    )
+                db.execute(
+                    "INSERT INTO commit_labels(commit_id, label) VALUES(?, ?)",
+                    (commit_id, normalized),
+                )
+        return self.annotations(commit_id)
+
+    @locked
+    def remove_label(self, value: str, label: str) -> CommitAnnotations:
+        commit_id = self.resolve_commit(value)
+        normalized = self._normalize_label(label)
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM commit_labels WHERE commit_id=? AND label=?",
+                (commit_id, normalized),
+            )
+        return self.annotations(commit_id)
+
     def thumbnail(self, value: str) -> CommitAttachment | None:
         commit_id = self.resolve_commit(value)
         with self.connect() as db:
@@ -1108,12 +1233,18 @@ class Repository:
         ).fetchone()
         return row[0] if row else None
 
-    def log(self, path: Path | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+    def log(
+        self,
+        path: Path | None = None,
+        limit: int | None = None,
+        label: str | None = None,
+    ) -> list[sqlite3.Row]:
         if limit is not None and limit < 1:
             raise SproutError("log limit must be at least 1")
         relative: str | None = None
         if path is not None:
             relative = self._relative_file(path, must_exist=False)
+        normalized_label = self._normalize_label(label) if label is not None else None
         current = self.head_commit()
         rows: list[sqlite3.Row] = []
         with self.connect() as db:
@@ -1121,16 +1252,26 @@ class Repository:
                 row = db.execute("SELECT * FROM commits WHERE id=?", (current,)).fetchone()
                 if row is None:
                     raise SproutError(f"broken history at commit: {current}")
-                if relative is None:
-                    rows.append(row)
-                else:
+                matches_path = relative is None
+                if relative is not None:
                     current_hash = self._commit_path_hash(db, current, relative)
                     parent_id = row["parent_id"]
                     parent_hash = (
                         self._commit_path_hash(db, parent_id, relative) if parent_id else None
                     )
-                    if current_hash != parent_hash:
-                        rows.append(row)
+                    matches_path = current_hash != parent_hash
+                matches_label = normalized_label is None
+                if normalized_label is not None:
+                    matches_label = (
+                        db.execute(
+                            "SELECT 1 FROM commit_labels "
+                            "WHERE commit_id=? AND label=?",
+                            (current, normalized_label),
+                        ).fetchone()
+                        is not None
+                    )
+                if matches_path and matches_label:
+                    rows.append(row)
                 if limit is not None and len(rows) >= limit:
                     break
                 current = row["parent_id"]
