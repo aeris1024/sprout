@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
 import typer
 import typer.completion as typer_completion
 from PIL import Image
@@ -661,6 +662,71 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     assert "Removed 1 objects, 1 temp files (7 bytes)" in result.stdout
     assert not orphan.exists()
     assert not stale_temp.exists()
+
+
+def test_prune_cli_requires_confirmation_and_supports_json_dry_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"first")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["tag", "start"], project, monkeypatch).exit_code == 0
+    asset.write_bytes(b"middle")
+    assert invoke(["commit", "-m", "middle"], project, monkeypatch).exit_code == 0
+    removed = Repository.discover(project).head_commit()
+    asset.write_bytes(b"last")
+    assert invoke(["commit", "-m", "last"], project, monkeypatch).exit_code == 0
+    assert invoke(["tag", "end"], project, monkeypatch).exit_code == 0
+
+    help_result = invoke(["prune", "--help"], project, monkeypatch)
+    assert help_result.exit_code == 0
+    assert "--all" in help_result.stdout
+    assert "--dry-run" in help_result.stdout
+    assert "--yes" in help_result.stdout
+
+    unconfirmed = invoke(["prune", "start", "end"], project, monkeypatch)
+    assert unconfirmed.exit_code != 0
+    assert "irreversible" in str(unconfirmed.exception)
+
+    conflict = invoke(
+        ["prune", "start", "end", "--all", "--dry-run"],
+        project,
+        monkeypatch,
+    )
+    assert conflict.exit_code != 0
+    assert "cannot be combined" in str(conflict.exception)
+
+    dry = invoke(
+        ["prune", "start", "end", "--dry-run", "--json"],
+        project,
+        monkeypatch,
+    )
+    assert dry.exit_code == 0
+    payload = json.loads(dry.stdout)
+    assert payload["mode"] == "between"
+    assert payload["dry_run"] is True
+    assert [commit["id"] for commit in payload["removed_commits"]] == [removed]
+    assert payload["reclaimable_objects"]
+    assert payload["reclaimable_bytes"] > 0
+    assert Repository.discover(project).resolve_commit(removed) == removed
+
+    all_history = invoke(
+        ["prune", "--all", "--dry-run", "--json"], project, monkeypatch
+    )
+    assert all_history.exit_code == 0
+    assert json.loads(all_history.stdout)["mode"] == "all"
+
+    actual = invoke(
+        ["prune", "start", "end", "--yes"], project, monkeypatch
+    )
+    assert actual.exit_code == 0
+    assert f"commit  {removed[:12]} middle" in actual.stdout
+    assert "Removed 1 commits" in actual.stdout
+    with pytest.raises(SproutError, match="unknown commit"):
+        Repository.discover(project).resolve_commit(removed)
 
 
 def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:

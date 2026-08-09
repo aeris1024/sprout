@@ -2245,6 +2245,248 @@ def test_gc_is_rejected_while_repository_is_locked(
             repo.gc()
 
 
+def test_prune_between_tags_preserves_references_and_reconnects_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_tag("start", first)
+
+    asset.write_bytes(b"v2")
+    branch_tip = repo.commit("branch tip").commit_id
+    repo.create_branch("archive", start_point=branch_tip)
+    asset.write_bytes(b"v3")
+    middle_tag = repo.commit("middle tag").commit_id
+    repo.create_tag("middle", middle_tag)
+    asset.write_bytes(b"v4")
+    removed = repo.commit("remove me").commit_id
+    asset.write_bytes(b"v5")
+    last = repo.commit("last").commit_id
+    repo.create_tag("end", last)
+
+    preserved_before = {
+        commit_id: (
+            {
+                key: repo.commit_info(commit_id)[0][key]
+                for key in ("id", "branch_name", "created_at", "message")
+            },
+            repo.manifest(commit_id),
+        )
+        for commit_id in (first, branch_tip, middle_tag, last)
+    }
+    result = repo.prune("start", "end")
+
+    assert [commit.id for commit in result.commits] == [removed]
+    assert [row["id"] for row in repo.log()] == [
+        last,
+        middle_tag,
+        branch_tip,
+        first,
+    ]
+    with repo.connect() as db:
+        parents = {
+            row["id"]: row["parent_id"]
+            for row in db.execute("SELECT id, parent_id FROM commits")
+        }
+    assert parents == {
+        first: None,
+        branch_tip: first,
+        middle_tag: branch_tip,
+        last: middle_tag,
+    }
+    assert {name: commit_id for name, commit_id, _ in repo.branches()} == {
+        "archive": branch_tip,
+        "main": last,
+    }
+    assert {name: commit_id for name, commit_id, _, _ in repo.tags()} == {
+        "end": last,
+        "middle": middle_tag,
+        "start": first,
+    }
+    for commit_id, expected in preserved_before.items():
+        row = repo.commit_info(commit_id)[0]
+        assert {
+            key: row[key]
+            for key in ("id", "branch_name", "created_at", "message")
+        } == expected[0]
+        assert repo.manifest(commit_id) == expected[1]
+
+
+def test_prune_all_removes_unreferenced_and_deleted_branch_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"root")
+    repo.track([asset])
+    root = repo.commit("root").commit_id
+    repo.create_tag("baseline", root)
+
+    asset.write_bytes(b"main-middle")
+    main_middle = repo.commit("main middle").commit_id
+    asset.write_bytes(b"main-tip")
+    main_tip = repo.commit("main tip").commit_id
+
+    repo.create_branch("side", start_point=root, switch=True)
+    asset.write_bytes(b"side-middle")
+    side_middle = repo.commit("side middle").commit_id
+    asset.write_bytes(b"side-tip")
+    side_tip = repo.commit("side tip").commit_id
+    repo.create_branch("archive", start_point=side_tip)
+
+    repo.create_branch("lost", start_point=root, switch=True)
+    asset.write_bytes(b"lost-one")
+    lost_one = repo.commit("lost one").commit_id
+    asset.write_bytes(b"lost-two")
+    lost_two = repo.commit("lost two").commit_id
+    repo.switch("main", discard=True)
+    repo.delete_branch("side")
+    repo.delete_branch("lost")
+
+    result = repo.prune(all_history=True)
+
+    assert {commit.id for commit in result.commits} == {
+        main_middle,
+        side_middle,
+        lost_one,
+        lost_two,
+    }
+    with repo.connect() as db:
+        parents = {
+            row["id"]: row["parent_id"]
+            for row in db.execute("SELECT id, parent_id FROM commits")
+        }
+    assert parents == {root: None, main_tip: root, side_tip: root}
+    assert {name: commit_id for name, commit_id, _ in repo.branches()} == {
+        "archive": side_tip,
+        "main": main_tip,
+    }
+    assert repo.resolve_commit("baseline") == root
+    assert asset.read_bytes() == b"main-tip"
+
+
+def test_prune_dry_run_reports_gc_space_and_keeps_attachment_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"shared")
+    removed_thumbnail = write_image(repo.root / "removed.png", color="red")
+    kept_thumbnail = write_image(repo.root / "kept.png", color="green")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_tag("start", first)
+
+    asset.write_bytes(b"unique")
+    removed = repo.commit("temporary", thumbnail=removed_thumbnail).commit_id
+    removed_hashes = {
+        repo.manifest(removed)["asset.bin"].object_hash,
+        repo.thumbnail(removed).object_hash,
+    }
+    asset.write_bytes(b"shared")
+    last = repo.commit("last", thumbnail=kept_thumbnail).commit_id
+    repo.create_tag("end", last)
+    kept_hashes = {
+        repo.manifest(last)["asset.bin"].object_hash,
+        repo.thumbnail(last).object_hash,
+    }
+    database_before = {
+        table: database_rows(repo, table)
+        for table in ("commits", "commit_files", "commit_attachments", "tags")
+    }
+
+    dry = repo.prune("start", "end", dry_run=True)
+
+    assert [commit.id for commit in dry.commits] == [removed]
+    assert set(dry.reclaimable_objects) == removed_hashes
+    assert dry.reclaimable_bytes > 0
+    assert database_before == {
+        table: database_rows(repo, table)
+        for table in ("commits", "commit_files", "commit_attachments", "tags")
+    }
+    assert all((repo.objects / item[:2] / item).is_file() for item in removed_hashes)
+
+    actual = repo.prune("start", "end")
+    gc_result = repo.gc()
+    assert actual.reclaimable_objects == dry.reclaimable_objects
+    assert set(gc_result.objects) == removed_hashes
+    assert all(not (repo.objects / item[:2] / item).exists() for item in removed_hashes)
+    assert all((repo.objects / item[:2] / item).is_file() for item in kept_hashes)
+    assert repo.thumbnail(last).original_name == "kept.png"
+
+
+def test_prune_rejects_working_tree_restored_to_removed_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"first")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_tag("start", first)
+    asset.write_bytes(b"temporary")
+    removed = repo.commit("temporary").commit_id
+    asset.write_bytes(b"last")
+    last = repo.commit("last").commit_id
+    repo.create_tag("end", last)
+    repo.restore(removed)
+
+    assert [commit.id for commit in repo.prune("start", "end", dry_run=True).commits] == [
+        removed
+    ]
+    with pytest.raises(SproutError, match="tag that commit or create a branch") as exc:
+        repo.prune("start", "end")
+    assert exc.value.code == "working_snapshot_would_be_pruned"
+    assert exc.value.details == {"commit_id": removed}
+    assert repo.resolve_commit(removed) == removed
+    assert repo.head_commit() == last
+    assert asset.read_bytes() == b"temporary"
+
+
+def test_prune_validates_tag_order_and_rolls_back_database_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"first")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_tag("old", first)
+    asset.write_bytes(b"middle")
+    middle = repo.commit("middle").commit_id
+    asset.write_bytes(b"last")
+    last = repo.commit("last").commit_id
+    repo.create_tag("new", last)
+
+    with pytest.raises(SproutError, match="ancestor"):
+        repo.prune("new", "old", dry_run=True)
+    with pytest.raises(SproutError, match="unknown tag"):
+        repo.prune("missing", "new", dry_run=True)
+    with pytest.raises(SproutError, match="cannot be combined"):
+        repo.prune("old", "new", all_history=True, dry_run=True)
+
+    before = {
+        table: database_rows(repo, table)
+        for table in ("commits", "commit_files", "branches", "tags")
+    }
+    with repo.connect() as db:
+        db.execute(
+            "CREATE TRIGGER fail_prune BEFORE DELETE ON commits "
+            "WHEN OLD.id='" + middle + "' "
+            "BEGIN SELECT RAISE(ABORT, 'simulated prune failure'); END"
+        )
+    with pytest.raises(SproutError, match="repository unchanged") as exc:
+        repo.prune("old", "new")
+    assert exc.value.code == "prune_failed"
+    assert before == {
+        table: database_rows(repo, table)
+        for table in ("commits", "commit_files", "branches", "tags")
+    }
+
+
 def test_doctor_reports_ok_for_healthy_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
