@@ -150,14 +150,6 @@ function App() {
   }
 
   useEffect(() => {
-    const refreshOnFocus = () => {
-      if (projectDir && !operationActive.current) refreshProject();
-    };
-    window.addEventListener("focus", refreshOnFocus);
-    return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [projectDir, sproutProgram]);
-
-  useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     let appWindow: ReturnType<typeof getCurrentWindow>;
