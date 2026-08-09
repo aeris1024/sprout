@@ -742,6 +742,28 @@ def show(
 
 
 @app.command()
+def message(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    text: Annotated[str, typer.Argument(help="New commit message")],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """Replace a commit message without changing the snapshot."""
+    commit_id, normalized = repo().set_message(commit, text)
+    if json_output:
+        _echo_json({"commit_id": commit_id, "message": normalized})
+        return
+    typer.echo(f"Updated message for {commit_id[:12]}: {normalized}")
+
+
+@app.command()
 def thumbnail(
     commit: Annotated[
         str,

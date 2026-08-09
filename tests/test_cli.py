@@ -1010,6 +1010,41 @@ def test_log_cli_limits_and_summarizes_history(tmp_path: Path, monkeypatch) -> N
     assert "x>=1" in invalid.stderr
 
 
+def test_message_cli_updates_human_and_json_views(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    commit_id = Repository.discover().log()[0]["id"]
+
+    updated = invoke(
+        ["message", commit_id, "  renamed snapshot  ", "--json"],
+        project,
+        monkeypatch,
+    )
+    assert updated.exit_code == 0
+    assert json.loads(updated.stdout) == {
+        "commit_id": commit_id,
+        "message": "renamed snapshot",
+    }
+    show_payload = json.loads(
+        invoke(["show", commit_id, "--json"], project, monkeypatch).stdout
+    )
+    log_payload = json.loads(invoke(["log", "--json"], project, monkeypatch).stdout)
+    assert show_payload["message"] == "renamed snapshot"
+    assert log_payload[0]["message"] == "renamed snapshot"
+
+    human = invoke(["message", commit_id, "final name"], project, monkeypatch)
+    assert human.exit_code == 0
+    assert human.stdout == f"Updated message for {commit_id[:12]}: final name\n"
+
+    invalid = invoke(["message", commit_id, "   "], project, monkeypatch)
+    assert invalid.exit_code != 0
+    assert "commit message cannot be empty" in str(invalid.exception)
+
+
 def test_note_and_label_cli_updates_displays_and_filters_annotations(
     tmp_path: Path, monkeypatch
 ) -> None:

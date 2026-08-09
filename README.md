@@ -328,9 +328,17 @@ sprout thumbnail <commit-id> --delete
 
 サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
+## コミットメッセージを変更する
+
+```powershell
+sprout message <commit-id> "クライアント確認後の最終案"
+```
+
+コミットID、親子関係、保存ファイル、添付、ブランチ、タグを変更せず、指定したコミットのメッセージだけを置き換えます。コミットIDのほか、コミットIDの一意な接頭辞、ブランチ、タグも指定できます。空のメッセージは登録できません。
+
 ## コミットのメモとラベルを管理する
 
-コミットメッセージやタグを変更せず、後から編集できるメモを1件、ラベルを複数付けられます。
+コミットのスナップショットやタグを変更せず、後から編集できるメモを1件、ラベルを複数付けられます。
 
 ```powershell
 # メモの設定・確認・削除
@@ -404,6 +412,7 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 | `move OLD NEW` | 追跡済みファイルを移動する |
 | `status [--json]` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE [--thumbnail IMAGE] [--json]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
+| `message COMMIT TEXT [--json]` | コミットIDや保存内容を変えずにコミットメッセージを変更する |
 | `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
 | `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
@@ -433,7 +442,7 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -446,13 +455,14 @@ sprout commit -m "first" --json
 sprout switch ideas --json
 ```
 
-更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`name`と`previous_name`、削除は`name`と`deleted`、コメント更新は`name`と`comment`を返します。
+更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`name`と`previous_name`、削除は`name`と`deleted`、コメント更新は`name`と`comment`を返します。
 
 ```text
 init:       {"root": string}
 track:      {"paths": [string]}
 untrack:    {"paths": [string]}
 commit:     {"id": string, "branch": string, "message": string, "removed_paths": [string]}
+message:    {"commit_id": string, "message": string}
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
 switch:     {"branch": string, "commit_id": string | null}
 restore:    {"commit_id": string, "paths": [string] | null}
