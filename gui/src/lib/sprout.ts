@@ -33,15 +33,19 @@ export interface CommitLogEntry {
   labels: string[];
 }
 
-export interface CommitThumbnail {
+export interface CommitAttachment {
   commit_id: string;
-  role: "thumbnail";
+  role: string;
   original_name: string;
   media_type: string;
   object_hash: string;
   size: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CommitThumbnail extends CommitAttachment {
+  role: "thumbnail";
 }
 
 export interface CommitFile {
@@ -62,6 +66,24 @@ export interface BranchInfo {
   commit_id: string | null;
   comment: string;
   current: boolean;
+}
+
+export interface GraphCommit extends CommitLogEntry {
+  branch_name: string;
+  attachments: CommitAttachment[];
+}
+
+export interface GraphTag {
+  name: string;
+  commit_id: string;
+  comment: string;
+  created_at: string;
+}
+
+export interface CommitGraph {
+  commits: GraphCommit[];
+  branches: BranchInfo[];
+  tags: GraphTag[];
 }
 
 export interface SproutCliError {

@@ -1,9 +1,14 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Serialize)]
 struct SproutCliError {
@@ -137,12 +142,72 @@ fn run_sprout(
     })
 }
 
+fn thumbnail_data_url(media_type: &str, bytes: &[u8]) -> Result<String, SproutCliError> {
+    if !matches!(media_type, "image/png" | "image/jpeg" | "image/webp") {
+        return Err(SproutCliError::new(
+            "unsupported_thumbnail_type",
+            "ツリーで表示できないサムネイル形式です",
+            json!({ "media_type": media_type }),
+        ));
+    }
+    if bytes.len() > THUMBNAIL_MAX_BYTES {
+        return Err(SproutCliError::new(
+            "thumbnail_too_large",
+            "サムネイルが表示上限を超えています",
+            json!({ "size": bytes.len(), "limit": THUMBNAIL_MAX_BYTES }),
+        ));
+    }
+    Ok(format!("data:{media_type};base64,{}", BASE64.encode(bytes)))
+}
+
+#[tauri::command]
+fn read_sprout_thumbnail(
+    project_dir: String,
+    commit_id: String,
+    media_type: String,
+    sprout_program: Option<String>,
+) -> Result<String, SproutCliError> {
+    if commit_id.trim().is_empty() {
+        return Err(SproutCliError::new(
+            "invalid_request",
+            "コミットIDが指定されていません",
+            json!({}),
+        ));
+    }
+    thumbnail_data_url(&media_type, &[])?;
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let output = std::env::temp_dir().join(format!(
+        "sprout-gui-thumbnail-{}-{sequence}.bin",
+        std::process::id()
+    ));
+    let args = vec![
+        "thumbnail".to_owned(),
+        commit_id.clone(),
+        "--output".to_owned(),
+        output.to_string_lossy().into_owned(),
+    ];
+    let export_result = run_sprout(project_dir, args, sprout_program);
+    if let Err(error) = export_result {
+        let _ = fs::remove_file(&output);
+        return Err(error);
+    }
+    let bytes = fs::read(&output).map_err(|error| {
+        SproutCliError::new(
+            "thumbnail_read_failed",
+            "エクスポートしたサムネイルを読み込めませんでした",
+            json!({ "commit_id": commit_id, "reason": error.to_string() }),
+        )
+    });
+    let _ = fs::remove_file(&output);
+    thumbnail_data_url(&media_type, &bytes?)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![run_sprout])
+        .invoke_handler(tauri::generate_handler![run_sprout, read_sprout_thumbnail])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
 }
@@ -181,5 +246,15 @@ mod tests {
         assert_eq!(error.code, "sprout_cli_failed");
         assert_eq!(error.message, "unexpected failure");
         assert_eq!(error.details["exit_code"], 7);
+    }
+
+    #[test]
+    fn encodes_supported_thumbnail_data_urls() {
+        assert_eq!(
+            thumbnail_data_url("image/png", &[1, 2, 3]).unwrap(),
+            "data:image/png;base64,AQID"
+        );
+        let error = thumbnail_data_url("video/mp4", &[1]).unwrap_err();
+        assert_eq!(error.code, "unsupported_thumbnail_type");
     }
 }
