@@ -752,6 +752,30 @@ def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:
     assert asset.read_bytes() == b"data"
 
 
+def test_main_propagates_doctor_exit_code(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"data")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
+    monkeypatch.setattr(sys, "argv", ["sprout", "doctor"])
+
+    assert cli.main() == 0
+    assert "OK (1 objects checked)" in capsys.readouterr().out
+
+    repo = Repository.discover(project)
+    object_hash = repo.manifest(repo.head_commit())["asset.bin"].object_hash
+    (repo.objects / object_hash[:2] / object_hash).unlink()
+
+    assert cli.main() == 1
+    output = capsys.readouterr().out
+    assert f"missing_object     {object_hash}" in output
+    assert "Found 1 issue(s) (1 objects checked)" in output
+
+
 def test_stats_cli_shows_counts_and_dedup(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

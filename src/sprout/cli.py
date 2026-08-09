@@ -1342,7 +1342,9 @@ def main() -> int:
     _clear_stale_completion_environment(sys.argv)
     json_output = _json_requested(sys.argv)
     try:
-        app(standalone_mode=False)
+        exit_code = app(standalone_mode=False)
+        if isinstance(exit_code, int):
+            return exit_code
     except typer.Exit as exc:
         return exc.exit_code
     except SystemExit as exc:
