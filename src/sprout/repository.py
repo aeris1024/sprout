@@ -1469,6 +1469,19 @@ class Repository:
         return normalized
 
     @locked
+    def set_message(self, value: str, message: str) -> tuple[str, str]:
+        commit_id = self.resolve_commit(value)
+        normalized = message.strip()
+        if not normalized:
+            raise SproutError("commit message cannot be empty")
+        with self.connect() as db:
+            db.execute(
+                "UPDATE commits SET message=? WHERE id=?",
+                (normalized, commit_id),
+            )
+        return commit_id, normalized
+
+    @locked
     def set_note(self, value: str, note: str) -> CommitAnnotations:
         commit_id = self.resolve_commit(value)
         normalized = note.strip()

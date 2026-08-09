@@ -17,7 +17,7 @@ import {
   type SproutCliError,
   type SproutStatus,
 } from "./lib/sprout";
-import { loadSettings, nextRecentProjects, saveSettings } from "./lib/settings";
+import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } from "./lib/settings";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 type WorkspaceTab = "status" | "tree" | "commit" | "history" | "branches";
@@ -123,6 +123,14 @@ function App() {
     } catch (error) {
       setNotice({ ...normalizeCliError(error), kind: "error" });
     }
+  }
+
+  function forgetRecentProject(path: string) {
+    void execute(async () => {
+      const updated = removeRecentProject(recentProjects, path);
+      await saveSettings({ recentProjects: updated, sproutProgram });
+      setRecentProjects(updated);
+    });
   }
 
   function openProject(path: string) {
@@ -318,6 +326,21 @@ function App() {
     });
   }
 
+  function updateCommitMessage(commitId: string, message: string) {
+    if (!projectDir) return;
+    const normalized = message.trim();
+    if (!normalized) {
+      setNotice({ code: "message_required", message: "コミットメッセージを入力してください", details: {}, kind: "warning" });
+      return;
+    }
+    void execute(async () => {
+      await runSprout(projectDir, ["message", commitId, normalized], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setNotice({ code: "message_updated", message: `${shortId(commitId)} のコミットメッセージを変更しました`, details: { commit_id: commitId }, kind: "success" });
+    });
+  }
+
   async function runWithDiscard<T>(args: string[], action: string): Promise<T | null> {
     try {
       return await runSprout<T>(projectDir, args, sproutProgram);
@@ -394,7 +417,7 @@ function App() {
       <main className="workspace">
         <aside className="sidebar">
           <div className="sidebar-heading"><h2>最近使ったプロジェクト</h2><span>{recentProjects.length}</span></div>
-          {recentProjects.length === 0 ? <p className="muted">開いたプロジェクトがここに表示されます。</p> : <nav className="recent-list" aria-label="最近使ったプロジェクト">{recentProjects.map((path) => <button className={path === projectDir ? "active" : ""} key={path} onClick={() => openProject(path)} disabled={busy} title={path}><span>{projectName(path)}</span><small>{path}</small></button>)}</nav>}
+          {recentProjects.length === 0 ? <p className="muted">開いたプロジェクトがここに表示されます。</p> : <nav className="recent-list" aria-label="最近使ったプロジェクト">{recentProjects.map((path) => <div className={`recent-item${path === projectDir ? " active" : ""}`} key={path}><button className="recent-project" onClick={() => openProject(path)} disabled={busy} title={path}><span>{projectName(path)}</span><small>{path}</small></button><button className="recent-remove" onClick={() => forgetRecentProject(path)} disabled={busy} aria-label={`${projectName(path)}を最近使った一覧から削除`} title="一覧から削除">×</button></div>)}</nav>}
         </aside>
 
         <section className="content">
@@ -413,7 +436,7 @@ function App() {
               <section className="operation-card drop-zone"><div className="card-heading"><div><p className="eyebrow">TRACKING</p><h3>追跡ファイル</h3></div><span>{tracked.length}件</span></div><p className="card-copy">ファイルまたはフォルダをこのウィンドウへドロップして追加できます。</p><div className="action-row padded"><button className="button secondary" onClick={() => chooseTrackFiles(false)} disabled={busy}>ファイルを追加</button><button className="button secondary" onClick={() => chooseTrackFiles(true)} disabled={busy}>フォルダを追加</button></div><div className="file-list">{tracked.length === 0 ? <p className="muted">追跡中のファイルはありません。</p> : tracked.map((path) => <div className="file-row" key={path}><span title={path}>{path}</span><button onClick={() => untrackPath(path)} disabled={busy}>追跡解除</button></div>)}</div>{untracked.length > 0 && <details className="untracked-list"><summary>未追跡ファイル（{untracked.length}件）</summary>{untracked.map((path) => <button key={path} onClick={() => trackPaths([path])} disabled={busy}><span>{path}</span><small>追跡する</small></button>)}</details>}</section>
             </div>}
 
-            {activeTab === "tree" && <CommitTree graph={graph} selectedId={commitDetail?.id ?? null} detail={commitDetail} projectDir={projectDir} sproutProgram={sproutProgram} busy={busy} onSelect={(commitId) => selectCommit(commitId, "tree")} onRestore={restoreCommit} onSwitch={switchBranch} onSetThumbnail={setCommitThumbnail} />}
+            {activeTab === "tree" && <CommitTree graph={graph} selectedId={commitDetail?.id ?? null} detail={commitDetail} projectDir={projectDir} sproutProgram={sproutProgram} busy={busy} onSelect={(commitId) => selectCommit(commitId, "tree")} onRestore={restoreCommit} onSwitch={switchBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} />}
 
             {activeTab === "commit" && <section className="operation-card form-card"><p className="eyebrow">CREATE SNAPSHOT</p><h3>変更をコミット</h3><label>コミットメッセージ<textarea value={commitMessage} onChange={(event) => setCommitMessage(event.currentTarget.value)} placeholder="このスナップショットで行ったこと" disabled={busy} /></label><label>サムネイル（任意）<div className="path-picker"><input value={thumbnailPath} readOnly placeholder="PNG・JPEG・WebP（2 MiB以下）" /><button className="button secondary" onClick={chooseThumbnail} disabled={busy}>選択</button>{thumbnailPath && <button className="text-button" onClick={() => setThumbnailPath("")} disabled={busy}>解除</button>}</div></label><button className="button primary commit-button" onClick={commitChanges} disabled={busy || !commitMessage.trim()}>コミットを作成</button></section>}
 

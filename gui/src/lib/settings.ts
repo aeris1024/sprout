@@ -36,6 +36,10 @@ export function nextRecentProjects(current: string[], project: string): string[]
   );
 }
 
+export function removeRecentProject(current: string[], project: string): string[] {
+  return current.filter((item) => item !== project);
+}
+
 export async function loadSettings(): Promise<AppSettings> {
   if (!isTauri()) {
     const saved = window.localStorage.getItem(BROWSER_SETTINGS_KEY);

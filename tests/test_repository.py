@@ -1969,6 +1969,47 @@ def test_log_path_includes_deletion_commits(
     assert [row["id"] for row in rows] == [deleted, added]
 
 
+def test_commit_message_can_change_without_rewriting_snapshot_or_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    preview = write_image(repo.root / "preview.png")
+    repo.track([asset])
+    first = repo.commit("first", thumbnail=preview).commit_id
+    repo.set_note(first, "review")
+    repo.add_label(first, "Keep")
+    repo.create_tag("baseline", first)
+    repo.create_branch("archive", start_point=first)
+    manifest = repo.manifest(first)
+    thumbnail = repo.thumbnail(first)
+
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    commit_id, message = repo.set_message(first, "  renamed snapshot  ")
+
+    assert (commit_id, message) == (first, "renamed snapshot")
+    row, _ = repo.commit_info(first)
+    assert row["message"] == "renamed snapshot"
+    assert [item["id"] for item in repo.log()] == [second, first]
+    assert repo.commit_info(second)[0]["parent_id"] == first
+    assert repo.manifest(first) == manifest
+    assert repo.thumbnail(first) == thumbnail
+    assert repo.annotations(first).note == "review"
+    assert repo.annotations(first).labels == ("Keep",)
+    assert dict((name, target) for name, target, _ in repo.branches())[
+        "archive"
+    ] == first
+    assert dict((name, target) for name, target, _, _ in repo.tags())[
+        "baseline"
+    ] == first
+
+    with pytest.raises(SproutError, match="commit message cannot be empty"):
+        repo.set_message(first, " \n\t ")
+    assert repo.commit_info(first)[0]["message"] == "renamed snapshot"
+
+
 def test_commit_notes_can_be_set_replaced_and_deleted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2065,7 +2106,7 @@ def test_annotations_many_and_log_label_filter_support_graph_consumers(
     ] == [first]
 
 
-def test_note_and_label_mutations_are_rejected_while_repository_is_locked(
+def test_commit_metadata_mutations_are_rejected_while_repository_is_locked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = create_repo(tmp_path)
@@ -2075,6 +2116,8 @@ def test_note_and_label_mutations_are_rejected_while_repository_is_locked(
     commit_id = repo.commit("initial").commit_id
 
     with repo.lock():
+        with pytest.raises(SproutError, match="already running"):
+            repo.set_message(commit_id, "blocked")
         with pytest.raises(SproutError, match="already running"):
             repo.set_note(commit_id, "blocked")
         with pytest.raises(SproutError, match="already running"):

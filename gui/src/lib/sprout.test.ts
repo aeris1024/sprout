@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canDiscardChanges, isUninitializedProject, normalizeCliError } from "./sprout";
-import { nextRecentProjects } from "./settings";
+import { nextRecentProjects, removeRecentProject } from "./settings";
 
 describe("normalizeCliError", () => {
   it("preserves structured CLI errors", () => {
@@ -40,6 +40,10 @@ describe("project helpers", () => {
     const recent = Array.from({ length: 8 }, (_, index) => `C:/work/${index}`);
     expect(nextRecentProjects(recent, "C:/work/3")[0]).toBe("C:/work/3");
     expect(nextRecentProjects(recent, "C:/work/new")).toHaveLength(8);
+  });
+
+  it("removes only the selected recent project", () => {
+    expect(removeRecentProject(["C:/work/one", "C:/work/two"], "C:/work/one")).toEqual(["C:/work/two"]);
   });
 
   it("only permits discard for the structured uncommitted changes error", () => {

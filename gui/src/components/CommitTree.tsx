@@ -71,6 +71,7 @@ interface CommitTreeProps {
   onRestore: (commitId: string) => void;
   onSwitch: (branchName: string) => void;
   onSetThumbnail: (commitId: string) => void;
+  onUpdateMessage: (commitId: string, message: string) => void;
 }
 
 export default function CommitTree({
@@ -84,9 +85,12 @@ export default function CommitTree({
   onRestore,
   onSwitch,
   onSetThumbnail,
+  onUpdateMessage,
 }: CommitTreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [nodeLimit, setNodeLimit] = useState(INITIAL_NODE_LIMIT);
+  const [editingMessage, setEditingMessage] = useState(false);
+  const [messageDraft, setMessageDraft] = useState("");
   const flattened = useMemo(
     () => flattenCommitGraph(graph, collapsed, nodeLimit),
     [graph, collapsed, nodeLimit],
@@ -98,6 +102,11 @@ export default function CommitTree({
   const selectedTips = detail
     ? graph.branches.filter((branch) => branch.commit_id === detail.id)
     : [];
+
+  useEffect(() => {
+    setEditingMessage(false);
+    setMessageDraft(detail?.message ?? "");
+  }, [detail?.id, detail?.message]);
 
   function toggle(commitId: string) {
     setCollapsed((current) => {
@@ -152,7 +161,7 @@ export default function CommitTree({
                         {row.currentTip && <b className="tip-badge current">現在の先端</b>}
                         {row.branchTips.filter((branch) => !branch.current).map((branch) => <b className="tip-badge" key={branch.name}>{branch.name}</b>)}
                         {row.tags.map((tag) => <b className="tag-badge" key={tag.name}>#{tag.name}</b>)}
-                        {deletedOrigin && <b className="origin-badge">削除済み: {row.commit.branch_name}</b>}
+                        {deletedOrigin && <b className="origin-badge">削除済みブランチ由来: {row.commit.branch_name}</b>}
                       </span>
                       <strong>{row.commit.message}</strong>
                       <small>{row.commit.id.slice(0, 12)} · {new Date(row.commit.created_at).toLocaleString("ja-JP")}</small>
@@ -174,7 +183,14 @@ export default function CommitTree({
         {detail && selectedId === detail.id ? (
           <>
             <p className="eyebrow">SELECTED COMMIT</p>
-            <h3>{detail.message}</h3>
+            {editingMessage ? (
+              <form className="message-editor" onSubmit={(event) => { event.preventDefault(); if (!messageDraft.trim()) return; onUpdateMessage(detail.id, messageDraft); }}>
+                <label>コミットメッセージ<textarea aria-label="コミットメッセージを編集" value={messageDraft} onChange={(event) => setMessageDraft(event.currentTarget.value)} disabled={busy} /></label>
+                <div className="action-row"><button className="button primary" type="submit" disabled={busy || !messageDraft.trim()}>保存</button><button className="button secondary" type="button" onClick={() => { setMessageDraft(detail.message); setEditingMessage(false); }} disabled={busy}>キャンセル</button></div>
+              </form>
+            ) : (
+              <div className="message-heading"><h3>{detail.message}</h3><button className="text-button" onClick={() => setEditingMessage(true)} disabled={busy}>メッセージを編集</button></div>
+            )}
             <dl>
               <div><dt>ID</dt><dd>{detail.id}</dd></div>
               <div><dt>作成ブランチ</dt><dd>{detail.branch_name}</dd></div>

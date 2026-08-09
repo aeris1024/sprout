@@ -50,8 +50,11 @@ button:disabled { cursor: wait; opacity: .55; }
 .sidebar-heading span { min-width: 24px; padding: 2px 7px; text-align: center; font-size: 11px; border-radius: 20px; background: #dfe4d9; }
 .muted { margin: 0 8px; color: #7c887f; font-size: 12px; line-height: 1.7; }
 .recent-list { display: grid; gap: 5px; }
-.recent-list button { width: 100%; padding: 10px 11px; text-align: left; color: #45554b; background: transparent; border: 1px solid transparent; border-radius: 10px; overflow: hidden; }
-.recent-list button:hover, .recent-list button.active { background: #fff; border-color: #d5dad2; }
+.recent-item { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; border: 1px solid transparent; border-radius: 10px; overflow: hidden; }
+.recent-item:hover, .recent-item.active { background: #fff; border-color: #d5dad2; }
+.recent-project { min-width: 0; padding: 10px 11px; text-align: left; color: #45554b; background: transparent; border: 0; overflow: hidden; }
+.recent-remove { width: 26px; height: 26px; margin-right: 4px; padding: 0; color: #8a625d; background: transparent; border: 0; border-radius: 8px; font-weight: 700; }
+.recent-remove:hover:not(:disabled) { color: #733d38; background: #f7e8e5; }
 .recent-list span, .recent-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-list span { font-size: 13px; font-weight: 700; }
 .recent-list small { margin-top: 2px; color: #88918b; font-size: 10px; }
@@ -185,6 +188,13 @@ button:disabled { cursor: wait; opacity: .55; }
 .tree-more { width: 100%; padding: 12px; color: #496653; background: #f7f9f4; border: 0; border-top: 1px solid #dfe3dc; font-size: 11px; font-weight: 700; }
 .tree-detail { position: sticky; top: 20px; min-height: 320px; padding: 26px; }
 .tree-detail h3 { margin: 0 0 20px; font-size: 21px; }
+.message-heading { margin-bottom: 20px; display: grid; gap: 7px; }
+.message-heading h3 { margin: 0; }
+.message-heading .text-button { justify-self: start; }
+.message-editor { margin-bottom: 20px; display: grid; gap: 10px; }
+.message-editor label { display: grid; gap: 7px; color: #53645a; font-size: 11px; font-weight: 700; }
+.message-editor textarea { min-height: 86px; padding: 10px 11px; resize: vertical; color: #2f4136; background: #fff; border: 1px solid #ccd3cc; border-radius: 9px; outline: none; }
+.message-editor textarea:focus { border-color: #5b836b; box-shadow: 0 0 0 3px rgba(91,131,107,.12); }
 .tree-detail dl { margin: 0 0 20px; display: grid; gap: 8px; }
 .tree-detail dl div { min-width: 0; display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; font-size: 11px; }
 .tree-detail dt { color: #7d8981; }
