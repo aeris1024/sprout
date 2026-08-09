@@ -12,6 +12,58 @@ export interface SproutStatus {
   untracked?: string[];
 }
 
+export interface PathOperationResult {
+  paths: string[];
+}
+
+export interface CommitResult {
+  id: string;
+  branch: string;
+  message: string;
+  removed_paths: string[];
+}
+
+export interface CommitLogEntry {
+  id: string;
+  parent_id: string | null;
+  created_at: string;
+  message: string;
+  note: string | null;
+  note_updated_at: string | null;
+  labels: string[];
+}
+
+export interface CommitThumbnail {
+  commit_id: string;
+  role: "thumbnail";
+  original_name: string;
+  media_type: string;
+  object_hash: string;
+  size: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommitFile {
+  path: string;
+  object_hash: string;
+  size: number;
+  mtime_ns: number;
+}
+
+export interface CommitDetail extends CommitLogEntry {
+  branch_name: string;
+  thumbnail: CommitThumbnail | null;
+  files: CommitFile[];
+}
+
+export interface BranchInfo {
+  name: string;
+  commit_id: string | null;
+  comment: string;
+  current: boolean;
+}
+
 export interface SproutCliError {
   code: string;
   message: string;
@@ -54,6 +106,10 @@ export function normalizeCliError(error: unknown): SproutCliError {
 
 export function isUninitializedProject(error: SproutCliError): boolean {
   return error.message.includes("not inside a Sprout project");
+}
+
+export function canDiscardChanges(error: SproutCliError): boolean {
+  return error.code === "uncommitted_changes" && error.details.can_discard === true;
 }
 
 export async function runSprout<T>(
