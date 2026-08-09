@@ -148,16 +148,21 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["track", "C:\\work\\sprout-project\\dropped.png"], "");
   });
 
-  it("refreshes workspace state when the window regains focus", async () => {
+  it("refreshes workspace state only from the update button", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
+    const initialCalls = mocks.runSprout.mock.calls.length;
     mockWorkspace({ ...cleanStatus, changes: [
       { state: "modified", path: "design/main.psd" },
       { state: "added", path: "notes.txt" },
     ] });
 
     window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+    expect(mocks.runSprout).toHaveBeenCalledTimes(initialCalls);
+
+    await user.click(screen.getByRole("button", { name: "更新" }));
 
     await waitFor(() => expect(screen.getByText("2", { selector: ".summary-grid strong" })).toBeTruthy());
   });
@@ -285,6 +290,66 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "サムネイルを変更" }));
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", tipId, image], "");
+  });
+
+  it("registers a past commit thumbnail after a dialog focus event", async () => {
+    const user = userEvent.setup();
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const rootEntry = { ...commitEntry, id: rootId, parent_id: null, message: "Past commit" };
+    const tipEntry = { ...commitEntry, id: tipId, parent_id: rootId, message: "Current tip" };
+    const graph: CommitGraph = {
+      commits: [
+        { ...tipEntry, branch_name: "main", attachments: [] },
+        { ...rootEntry, branch_name: "main", attachments: [] },
+      ],
+      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      tags: [],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [tipEntry, rootEntry], graph.branches, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    await user.click(screen.getByRole("button", { name: "ツリー" }));
+
+    const detail = { ...rootEntry, branch_name: "main", thumbnail: null, files: [] };
+    mocks.runSprout.mockResolvedValueOnce(detail);
+    await user.click(screen.getByRole("button", { name: /Past commit/ }));
+    expect(await screen.findByRole("button", { name: "サムネイルを登録" })).toBeTruthy();
+
+    const image = "C:\\work\\past.png";
+    let finishDialog: (value: string) => void = () => undefined;
+    mocks.open.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      finishDialog = resolve;
+    }));
+    await user.click(screen.getByRole("button", { name: "サムネイルを登録" }));
+    const callsBeforeFocus = mocks.runSprout.mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+    expect(mocks.runSprout).toHaveBeenCalledTimes(callsBeforeFocus);
+
+    const thumbnail = {
+      commit_id: rootId,
+      role: "thumbnail" as const,
+      original_name: "past.png",
+      media_type: "image/png",
+      object_hash: "f".repeat(64),
+      size: 3,
+      created_at: "2026-08-09T00:00:00+00:00",
+      updated_at: "2026-08-09T00:00:00+00:00",
+    };
+    const updatedGraph: CommitGraph = {
+      ...graph,
+      commits: [graph.commits[0], { ...graph.commits[1], attachments: [thumbnail] }],
+    };
+    mocks.runSprout.mockResolvedValueOnce(thumbnail);
+    mockWorkspace(cleanStatus, [tipEntry, rootEntry], graph.branches, updatedGraph);
+    mocks.runSprout.mockResolvedValueOnce({ ...detail, thumbnail });
+    await act(async () => finishDialog(image));
+
+    expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", rootId, image], "");
+    expect(await screen.findByRole("img", { name: "Past commitのサムネイル" })).toBeTruthy();
   });
 
   it("creates and switches branches", async () => {
