@@ -8,7 +8,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
-button, input { font: inherit; }
+button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .55; }
 
@@ -32,6 +32,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .notice { margin: 18px 32px 0; padding: 14px 16px; display: flex; justify-content: space-between; gap: 20px; border-radius: 12px; border: 1px solid; box-shadow: 0 8px 24px rgba(45,50,42,.08); }
 .notice.error { color: #6e302d; background: #fff4f1; border-color: #e8c7c0; }
 .notice.success { color: #28533b; background: #eef8f0; border-color: #c7decf; }
+.notice.warning { color: #71591f; background: #fff9e9; border-color: #e7d79c; }
 .notice strong { font-size: 13px; }
 .notice p { margin: 2px 0 0; font-size: 13px; }
 .notice button { border: 0; background: transparent; color: inherit; font-weight: 700; }
@@ -95,9 +96,64 @@ button:disabled { cursor: wait; opacity: .55; }
 .state-badge.modified { color: #806129; background: #f6ecd3; }
 .state-badge.deleted { color: #88413d; background: #f7e1df; }
 
+.workspace-tabs { margin-bottom: 22px; display: flex; gap: 5px; border-bottom: 1px solid #d7d9d1; }
+.workspace-tabs button { padding: 10px 14px 12px; color: #718077; background: transparent; border: 0; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 700; }
+.workspace-tabs button.active { color: #315f45; border-bottom-color: #315f45; }
+.panel-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr); gap: 18px; align-items: start; }
+.operation-card { border-radius: 16px; border: 1px solid #d8dad2; background: rgba(255,255,255,.8); overflow: hidden; box-shadow: 0 12px 34px rgba(46,54,47,.06); }
+.operation-card h3 { margin: 0; color: #2f4938; font-size: 18px; }
+.card-copy { margin: 18px 22px 4px; color: #69776e; font-size: 12px; line-height: 1.7; }
+.padded { margin: 0; padding: 18px 22px; }
+.drop-zone { outline: 1px dashed transparent; outline-offset: -7px; }
+.file-list { max-height: 310px; overflow: auto; border-top: 1px solid #ecece7; }
+.file-row { min-width: 0; padding: 11px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #ecece7; font: 11px Consolas, monospace; }
+.file-row:last-child { border-bottom: 0; }
+.file-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row button, .text-button { flex: 0 0 auto; padding: 3px 7px; color: #75524d; background: transparent; border: 0; font-size: 11px; font-weight: 700; }
+.untracked-list { border-top: 1px solid #dfe1da; }
+.untracked-list summary { padding: 13px 18px; color: #5f7065; cursor: pointer; font-size: 12px; font-weight: 700; }
+.untracked-list > button { width: 100%; padding: 9px 18px; display: flex; justify-content: space-between; gap: 12px; color: #56655b; background: #fafbf8; border: 0; border-top: 1px solid #eff0ec; text-align: left; font: 11px Consolas, monospace; }
+.untracked-list > button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.untracked-list > button small { color: #39704f; font: 700 11px "Yu Gothic UI", sans-serif; }
+
+.form-card { padding: 28px; display: grid; gap: 18px; }
+.form-card > h3 { margin-top: -12px; }
+.form-card label { display: grid; gap: 7px; color: #53645a; font-size: 12px; font-weight: 700; }
+.form-card input, .form-card textarea, .path-picker input { width: 100%; padding: 11px 12px; color: #2f4136; background: #fff; border: 1px solid #ccd3cc; border-radius: 9px; outline: none; }
+.form-card input:focus, .form-card textarea:focus { border-color: #5b836b; box-shadow: 0 0 0 3px rgba(91,131,107,.12); }
+.form-card textarea { min-height: 120px; resize: vertical; }
+.path-picker { display: flex; align-items: center; gap: 8px; }
+.path-picker input { min-width: 0; color: #67756c; font: 11px Consolas, monospace; }
+.commit-button { justify-self: start; min-width: 140px; }
+
+.history-layout { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 18px; align-items: start; }
+.history-list > button { width: 100%; padding: 13px 18px; display: grid; gap: 5px; color: #46564c; background: transparent; border: 0; border-bottom: 1px solid #ecece7; text-align: left; }
+.history-list > button:hover, .history-list > button.active { background: #f0f4ed; }
+.history-list > button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.history-list > button span { color: #849087; font: 10px Consolas, monospace; }
+.commit-detail { min-height: 310px; padding: 26px; }
+.commit-detail h3 { margin: 0 0 20px; font-size: 22px; }
+.commit-detail dl { margin: 0 0 18px; display: grid; gap: 8px; }
+.commit-detail dl div { min-width: 0; display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; font-size: 12px; }
+.commit-detail dt { color: #7a877e; }
+.commit-detail dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, monospace; }
+.detail-files { margin: 0 -26px 20px; max-height: 260px; border-bottom: 1px solid #ecece7; }
+.detail-empty { min-height: 255px; display: grid; place-items: center; color: #79867d; font-size: 13px; text-align: center; }
+.button.danger { color: #7d3934; background: #fff5f2; border-color: #e4c3bd; }
+
+.branch-list { display: grid; }
+.branch-row { padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #ecece7; }
+.branch-row:last-child { border-bottom: 0; }
+.branch-row.current { background: #f1f5ee; }
+.branch-row > div { min-width: 0; display: grid; gap: 5px; }
+.branch-row strong { color: #384e40; font-size: 13px; }
+.branch-row strong span { margin-left: 8px; padding: 2px 6px; color: #37604a; background: #dcebdd; border-radius: 9px; font-size: 9px; }
+.branch-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7b887f; font: 10px Consolas, monospace; }
+
 @media (max-width: 850px) {
   .workspace { grid-template-columns: 210px minmax(0, 1fr); }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .settings-panel { grid-template-columns: 1fr auto; }
   .settings-panel > div { grid-column: 1 / -1; }
+  .panel-grid, .history-layout { grid-template-columns: 1fr; }
 }
