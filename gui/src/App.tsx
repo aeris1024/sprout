@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import CommitTree from "./components/CommitTree";
 import "./App.css";
 import {
   canDiscardChanges,
@@ -9,6 +10,7 @@ import {
   runSprout,
   type BranchInfo,
   type CommitDetail,
+  type CommitGraph,
   type CommitLogEntry,
   type CommitResult,
   type PathOperationResult,
@@ -18,7 +20,7 @@ import {
 import { loadSettings, nextRecentProjects, saveSettings } from "./lib/settings";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
-type WorkspaceTab = "status" | "commit" | "history" | "branches";
+type WorkspaceTab = "status" | "tree" | "commit" | "history" | "branches";
 
 const stateLabels: Record<string, string> = {
   added: "追加",
@@ -28,6 +30,7 @@ const stateLabels: Record<string, string> = {
 
 const tabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "status", label: "ステータス" },
+  { id: "tree", label: "ツリー" },
   { id: "commit", label: "コミット" },
   { id: "history", label: "履歴" },
   { id: "branches", label: "ブランチ" },
@@ -52,6 +55,7 @@ function App() {
   const [status, setStatus] = useState<SproutStatus | null>(null);
   const [history, setHistory] = useState<CommitLogEntry[]>([]);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [graph, setGraph] = useState<CommitGraph>({ commits: [], branches: [], tags: [] });
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
@@ -96,14 +100,16 @@ function App() {
       ["status", "--tracked", "--untracked"],
       sproutProgram,
     );
-    const [nextHistory, nextBranches] = await Promise.all([
+    const [nextHistory, nextBranches, nextGraph] = await Promise.all([
       runSprout<CommitLogEntry[]>(path, ["log"], sproutProgram),
       runSprout<BranchInfo[]>(path, ["branch"], sproutProgram),
+      runSprout<CommitGraph>(path, ["tree"], sproutProgram),
     ]);
     setProjectDir(path);
     setStatus(nextStatus);
     setHistory(nextHistory);
     setBranches(nextBranches);
+    setGraph(nextGraph);
     if (commitDetail && !nextHistory.some((entry) => entry.id === commitDetail.id)) {
       setCommitDetail(null);
     }
@@ -295,11 +301,28 @@ function App() {
     });
   }
 
-  function selectCommit(commitId: string) {
+  function selectCommit(commitId: string, destination: "history" | "tree" = "history") {
     if (!projectDir) return;
-    setActiveTab("history");
+    setActiveTab(destination);
     void execute(async () => {
       setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+    });
+  }
+
+  function setCommitThumbnail(commitId: string) {
+    if (!projectDir || operationActive.current) return;
+    void open({
+      multiple: false,
+      title: "コミットのサムネイルを選択",
+      filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    }).then((selected) => {
+      if (typeof selected !== "string") return;
+      void execute(async () => {
+        await runSprout(projectDir, ["thumbnail", commitId, selected], sproutProgram);
+        await fetchWorkspace(projectDir);
+        setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+        setNotice({ code: "thumbnail_saved", message: `${shortId(commitId)} のサムネイルを保存しました`, details: { commit_id: commitId }, kind: "success" });
+      });
     });
   }
 
@@ -397,6 +420,8 @@ function App() {
               <section className="changes-card"><div className="card-heading"><div><p className="eyebrow">WORKING TREE</p><h3>現在の変更</h3></div><span>{status.changes.length}件</span></div>{status.changes.length === 0 ? <div className="clean-state"><span>✓</span>作業ツリーはクリーンです</div> : <div className="change-list">{status.changes.map((change) => <div className="change-row" key={`${change.state}:${change.path}`}><span className={`state-badge ${change.state}`}>{stateLabels[change.state] ?? change.state}</span><span>{change.path}</span></div>)}</div>}</section>
               <section className="operation-card drop-zone"><div className="card-heading"><div><p className="eyebrow">TRACKING</p><h3>追跡ファイル</h3></div><span>{tracked.length}件</span></div><p className="card-copy">ファイルまたはフォルダをこのウィンドウへドロップして追加できます。</p><div className="action-row padded"><button className="button secondary" onClick={() => chooseTrackFiles(false)} disabled={busy}>ファイルを追加</button><button className="button secondary" onClick={() => chooseTrackFiles(true)} disabled={busy}>フォルダを追加</button></div><div className="file-list">{tracked.length === 0 ? <p className="muted">追跡中のファイルはありません。</p> : tracked.map((path) => <div className="file-row" key={path}><span title={path}>{path}</span><button onClick={() => untrackPath(path)} disabled={busy}>追跡解除</button></div>)}</div>{untracked.length > 0 && <details className="untracked-list"><summary>未追跡ファイル（{untracked.length}件）</summary>{untracked.map((path) => <button key={path} onClick={() => trackPaths([path])} disabled={busy}><span>{path}</span><small>追跡する</small></button>)}</details>}</section>
             </div>}
+
+            {activeTab === "tree" && <CommitTree graph={graph} selectedId={commitDetail?.id ?? null} detail={commitDetail} projectDir={projectDir} sproutProgram={sproutProgram} busy={busy} onSelect={(commitId) => selectCommit(commitId, "tree")} onRestore={restoreCommit} onSwitch={switchBranch} onSetThumbnail={setCommitThumbnail} />}
 
             {activeTab === "commit" && <section className="operation-card form-card"><p className="eyebrow">CREATE SNAPSHOT</p><h3>変更をコミット</h3><label>コミットメッセージ<textarea value={commitMessage} onChange={(event) => setCommitMessage(event.currentTarget.value)} placeholder="このスナップショットで行ったこと" disabled={busy} /></label><label>サムネイル（任意）<div className="path-picker"><input value={thumbnailPath} readOnly placeholder="PNG・JPEG・WebP（2 MiB以下）" /><button className="button secondary" onClick={chooseThumbnail} disabled={busy}>選択</button>{thumbnailPath && <button className="text-button" onClick={() => setThumbnailPath("")} disabled={busy}>解除</button>}</div></label><button className="button primary commit-button" onClick={commitChanges} disabled={busy || !commitMessage.trim()}>コミットを作成</button></section>}
 
