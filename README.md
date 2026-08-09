@@ -215,6 +215,27 @@ sprout tree
 
 削除したブランチ名は現在の`branch`参照から消えますが、そのブランチで作成したコミットと`created`の値は保持されます。GUIや外部ツールから利用する場合は`tree --json`で平坦なコミット配列と現在の参照を取得できます。人間向けツリーは古い順、JSONの`commits`配列は新しい順です。
 
+## 履歴を間引く
+
+制作途中のタグなしコミットを削除する場合は`prune`を使います。2つのタグを古い順に指定するタグ間モードでは、その祖先経路内にあるタグなし中間コミットだけが対象です。すべてのタグ付きコミットと、現在存在する各ブランチの先端は常に保護されます。
+
+```powershell
+# 変更せずに削除対象と、gcで回収可能になる容量を確認
+sprout prune first-draft submitted --dry-run
+
+# 確認したタグ間を実際に間引く
+sprout prune first-draft submitted --yes
+```
+
+全履歴モードは、タグ付きコミットと現存ブランチ先端以外をすべて削除します。削除済みブランチ由来で、タグも現存ブランチ参照もないコミットも対象になります。
+
+```powershell
+sprout prune --all --dry-run
+sprout prune --all --yes
+```
+
+`prune`は取り消せません。実行には`--yes`が必要で、削除後は残したコミットの親が元の履歴上で最も近い残存祖先へ接続されます。作業ツリーが削除対象の過去コミットへ復元されている場合は、そのコミットへタグを付けるかブランチを作成するまで実行を拒否します。コミット削除だけではobjectsのファイルやSQLiteデータベース自体のサイズは縮まらないため、表示された容量を実際に回収するには続けて`sprout gc`を実行してください。SQLiteの`VACUUM`は行いません。
+
 ## 過去の状態へ戻る
 
 ブランチを切り替える場合は`switch`、特定のコミットを作業フォルダへ復元する場合は`restore`を使います。
@@ -396,6 +417,8 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
+| `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
+| `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
 | `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
 | `doctor` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
 | `stats` | リポジトリの件数・容量と重複排除による節約量を表示する |
@@ -410,12 +433,13 @@ Schema Version 2のリポジトリは、現在のSproutで最初に開いたと�
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
 sprout log -n 5 --json
 sprout tree --json
+sprout prune first-draft submitted --dry-run --json
 sprout show <commit-id> --json
 sprout branch --json
 sprout commit -m "first" --json
@@ -432,6 +456,17 @@ commit:     {"id": string, "branch": string, "message": string, "removed_paths":
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
 switch:     {"branch": string, "commit_id": string | null}
 restore:    {"commit_id": string, "paths": [string] | null}
+
+prune:
+{
+  "mode": "between" | "all",
+  "dry_run": boolean,
+  "start_tag": string | null,
+  "end_tag": string | null,
+  "removed_commits": [{"id": string, "created_at": string, "message": string}],
+  "reclaimable_objects": [string],
+  "reclaimable_bytes": number
+}
 ```
 
 読み取り系コマンドのスキーマは次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。

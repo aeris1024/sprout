@@ -21,6 +21,7 @@ from .repository import (
     CommitGraph,
     FileState,
     GraphCommit,
+    PruneResult,
     Repository,
 )
 
@@ -312,6 +313,25 @@ def _graph_json(graph: CommitGraph) -> dict[str, Any]:
             }
             for tag in graph.tags
         ],
+    }
+
+
+def _prune_json(result: PruneResult) -> dict[str, Any]:
+    return {
+        "mode": result.mode,
+        "dry_run": result.dry_run,
+        "start_tag": result.start_tag,
+        "end_tag": result.end_tag,
+        "removed_commits": [
+            {
+                "id": commit.id,
+                "created_at": commit.created_at,
+                "message": commit.message,
+            }
+            for commit in result.commits
+        ],
+        "reclaimable_objects": list(result.reclaimable_objects),
+        "reclaimable_bytes": result.reclaimable_bytes,
     }
 
 
@@ -1168,6 +1188,69 @@ def cat_command(
     repository = repo()
     with _show_progress(repository):
         repository.cat(commit, path, sys.stdout.buffer)
+
+
+@app.command()
+def prune(
+    start_tag: Annotated[
+        str | None,
+        typer.Argument(help="Older boundary tag; omit when using --all"),
+    ] = None,
+    end_tag: Annotated[
+        str | None,
+        typer.Argument(help="Newer boundary tag; omit when using --all"),
+    ] = None,
+    all_history: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Keep only tagged commits and existing branch tips across all history",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Show commits and reclaimable objects without changing history",
+        ),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Confirm the irreversible history change"),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """Delete unprotected intermediate commits and reconnect retained history."""
+    if all_history and (start_tag is not None or end_tag is not None):
+        raise SproutError("--all cannot be combined with tag arguments")
+    if not all_history and (start_tag is None or end_tag is None):
+        raise SproutError("specify START_TAG END_TAG or --all")
+    if not dry_run and not yes:
+        raise SproutError(
+            "prune is irreversible; review --dry-run, then rerun with --yes"
+        )
+
+    result = repo().prune(
+        start_tag,
+        end_tag,
+        all_history=all_history,
+        dry_run=dry_run,
+    )
+    if json_output:
+        _echo_json(_prune_json(result))
+        return
+    for commit in result.commits:
+        typer.echo(f"commit  {commit.id[:12]} {commit.message}")
+    action = "Would remove" if dry_run else "Removed"
+    typer.echo(
+        f"{action} {len(result.commits)} commits; "
+        f"{len(result.reclaimable_objects)} objects "
+        f"({result.reclaimable_bytes} bytes) become reclaimable"
+    )
+    if not dry_run and result.reclaimable_objects:
+        typer.echo("Run 'sprout gc' to reclaim object storage")
 
 
 @app.command()

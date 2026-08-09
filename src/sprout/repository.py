@@ -298,6 +298,24 @@ class GcResult:
 
 
 @dataclass(frozen=True)
+class PruneCommit:
+    id: str
+    created_at: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PruneResult:
+    mode: str
+    dry_run: bool
+    start_tag: str | None
+    end_tag: str | None
+    commits: tuple[PruneCommit, ...]
+    reclaimable_objects: tuple[str, ...]
+    reclaimable_bytes: int
+
+
+@dataclass(frozen=True)
 class DoctorIssue:
     kind: str
     detail: str
@@ -1793,6 +1811,235 @@ class Repository:
             objects=tuple(path.name for path, _ in object_targets),
             temps=tuple(path.name for path, _ in temp_targets),
         )
+
+    @staticmethod
+    def _commit_signatures_from_db(
+        db: sqlite3.Connection, commit_ids: set[str]
+    ) -> dict[str, dict[str, tuple[str, int]]]:
+        signatures: dict[str, dict[str, tuple[str, int]]] = {
+            commit_id: {} for commit_id in commit_ids
+        }
+        ordered = sorted(commit_ids)
+        for offset in range(0, len(ordered), 900):
+            chunk = ordered[offset : offset + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            for row in db.execute(
+                "SELECT commit_id, path, object_hash, size FROM commit_files "
+                f"WHERE commit_id IN ({placeholders})",
+                chunk,
+            ):
+                signatures[row["commit_id"]][row["path"]] = (
+                    row["object_hash"],
+                    row["size"],
+                )
+        return signatures
+
+    @staticmethod
+    def _prune_interval(
+        parents: dict[str, str | None], start_id: str, end_id: str
+    ) -> set[str]:
+        interval: set[str] = set()
+        current: str | None = end_id
+        while current is not None:
+            if current in interval:
+                raise SproutError("cannot prune cyclic commit history")
+            interval.add(current)
+            if current == start_id:
+                return interval
+            if current not in parents:
+                raise SproutError(f"broken history at commit: {current}")
+            current = parents[current]
+        raise SproutError(
+            "start tag must be an ancestor of end tag; specify tags from older to newer"
+        )
+
+    @staticmethod
+    def _nearest_retained_parent(
+        parent_id: str | None,
+        parents: dict[str, str | None],
+        removed: set[str],
+    ) -> str | None:
+        visited: set[str] = set()
+        current = parent_id
+        while current in removed:
+            if current in visited:
+                raise SproutError("cannot prune cyclic commit history")
+            visited.add(current)
+            if current not in parents:
+                raise SproutError(f"broken history at commit: {current}")
+            current = parents[current]
+        return current
+
+    @locked
+    def prune(
+        self,
+        start_tag: str | None = None,
+        end_tag: str | None = None,
+        *,
+        all_history: bool = False,
+        dry_run: bool = False,
+    ) -> PruneResult:
+        """Remove unprotected commits while preserving references and ancestry."""
+        if all_history:
+            if start_tag is not None or end_tag is not None:
+                raise SproutError("--all cannot be combined with tag arguments")
+        elif start_tag is None or end_tag is None:
+            raise SproutError("specify START_TAG END_TAG or --all")
+
+        try:
+            with self.connect() as db:
+                db.execute("BEGIN" if dry_run else "BEGIN IMMEDIATE")
+                commit_rows = list(
+                    db.execute(
+                        "SELECT id, parent_id, created_at, message FROM commits "
+                        "ORDER BY created_at, rowid"
+                    )
+                )
+                parents = {row["id"]: row["parent_id"] for row in commit_rows}
+                tag_rows = list(db.execute("SELECT name, commit_id FROM tags"))
+                tags = {row["name"]: row["commit_id"] for row in tag_rows}
+                branch_tips = {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT commit_id FROM branches WHERE commit_id IS NOT NULL"
+                    )
+                }
+                protected = set(tags.values()) | branch_tips
+
+                if all_history:
+                    candidates = set(parents) - protected
+                    mode = "all"
+                else:
+                    assert start_tag is not None and end_tag is not None
+                    if start_tag not in tags:
+                        raise SproutError(f"unknown tag: {start_tag}")
+                    if end_tag not in tags:
+                        raise SproutError(f"unknown tag: {end_tag}")
+                    interval = self._prune_interval(
+                        parents, tags[start_tag], tags[end_tag]
+                    )
+                    candidates = interval - protected
+                    mode = "between"
+
+                retained = set(parents) - candidates
+                parent_updates = [
+                    (
+                        self._nearest_retained_parent(
+                            parents[commit_id], parents, candidates
+                        ),
+                        commit_id,
+                    )
+                    for commit_id in sorted(retained)
+                    if parents[commit_id] in candidates
+                ]
+
+                removed_references: set[str] = set()
+                retained_references: set[str] = set()
+                for row in db.execute(
+                    "SELECT commit_id, object_hash FROM commit_files "
+                    "UNION ALL "
+                    "SELECT commit_id, object_hash FROM commit_attachments"
+                ):
+                    target = (
+                        removed_references
+                        if row["commit_id"] in candidates
+                        else retained_references
+                    )
+                    target.add(row["object_hash"])
+                reclaimable = tuple(
+                    sorted(
+                        object_hash
+                        for object_hash in removed_references - retained_references
+                        if (self.objects / object_hash[:2] / object_hash).is_file()
+                    )
+                )
+                reclaimable_bytes = sum(
+                    (self.objects / object_hash[:2] / object_hash).stat().st_size
+                    for object_hash in reclaimable
+                )
+                removed_commits = tuple(
+                    PruneCommit(row["id"], row["created_at"], row["message"])
+                    for row in commit_rows
+                    if row["id"] in candidates
+                )
+
+                if not dry_run and candidates:
+                    tracked = {
+                        row[0] for row in db.execute("SELECT path FROM tracked_paths")
+                    }
+                    working_signature: dict[str, tuple[str, int]] | None = {}
+                    for relative in sorted(tracked):
+                        path = self.root / Path(relative)
+                        if not path.is_file():
+                            working_signature = None
+                            break
+                        working_signature[relative] = self.hash_file(
+                            path, self.progress, relative
+                        )
+                    if working_signature is not None:
+                        current_tip = db.execute(
+                            "SELECT b.commit_id FROM branches b "
+                            "JOIN meta m ON m.value=b.name "
+                            "WHERE m.key='head_branch'"
+                        ).fetchone()
+                        head_id = current_tip[0] if current_tip is not None else None
+                        compared = set(candidates)
+                        if head_id is not None:
+                            compared.add(head_id)
+                        signatures = self._commit_signatures_from_db(db, compared)
+                        head_signature = signatures.get(head_id, {})
+                        if working_signature != head_signature:
+                            matched = next(
+                                (
+                                    commit_id
+                                    for commit_id in sorted(candidates)
+                                    if signatures[commit_id] == working_signature
+                                ),
+                                None,
+                            )
+                            if matched is not None:
+                                raise SproutError(
+                                    "working tree matches commit "
+                                    f"{matched[:12]}, which would be pruned; "
+                                    "tag that commit or create a branch from it first",
+                                    code="working_snapshot_would_be_pruned",
+                                    details={"commit_id": matched},
+                                )
+
+                    db.executemany(
+                        "UPDATE commits SET parent_id=? WHERE id=?", parent_updates
+                    )
+                    ordered = sorted(candidates)
+                    for offset in range(0, len(ordered), 900):
+                        chunk = ordered[offset : offset + 900]
+                        placeholders = ",".join("?" for _ in chunk)
+                        db.execute(
+                            f"UPDATE commits SET parent_id=NULL "
+                            f"WHERE id IN ({placeholders})",
+                            chunk,
+                        )
+                    for offset in range(0, len(ordered), 900):
+                        chunk = ordered[offset : offset + 900]
+                        placeholders = ",".join("?" for _ in chunk)
+                        db.execute(
+                            f"DELETE FROM commits WHERE id IN ({placeholders})",
+                            chunk,
+                        )
+
+            return PruneResult(
+                mode=mode,
+                dry_run=dry_run,
+                start_tag=start_tag,
+                end_tag=end_tag,
+                commits=removed_commits,
+                reclaimable_objects=reclaimable,
+                reclaimable_bytes=reclaimable_bytes,
+            )
+        except sqlite3.Error as exc:
+            raise SproutError(
+                f"prune failed; repository unchanged: {exc}",
+                code="prune_failed",
+            ) from exc
 
     def branches(self) -> list[tuple[str, str | None, str]]:
         with self.connect() as db:
