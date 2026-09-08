@@ -277,6 +277,12 @@ sprout switch main --discard
 未追跡ファイルを削除したり上書きしたりすることはなく、復元先のパスと未追跡ファイルが衝突する場合は処理を中止します。
 作業フォルダが保存済みコミットの内容そのものなら、別のコミットやブランチへ戻るときに`--discard`は不要です。
 
+復元対象やその親ディレクトリにシンボリックリンク（リンク切れを含む）やWindowsのジャンクションがある場合は、リンク先がプロジェクト内でも復元を拒否します。`--discard`でもこの検査は省略されません。`switch`と`branch --switch`にも同じ保護が適用されます。
+
+全体復元では、たとえば`asset`というファイルと`asset/data.bin`というフォルダ構成の間を行き来できます。構成変更に必要な追跡ファイルを退避し、空になったディレクトリだけを除去してから配置します。衝突箇所に未追跡ファイルや未追跡の空ディレクトリがある場合は中止します。部分復元で選択外の追跡ファイルの移動・削除が必要になる場合も中止するため、その場合は全体復元を使ってください。
+
+復元途中で中断された場合は、次の起動時に記録済みの操作を巻き戻します。復旧途中の再中断にも対応し、復旧が完了するまで退避ファイルを保持します。復旧先にリンクや新たなファイルの衝突が見つかった場合は、自動復旧を止め、原因のパスを表示します。必要な作業ファイルを別の場所へ保存し、衝突やリンクへの置き換えを解消してからSproutを再実行してください。復旧完了前に`.sprout/tmp`を削除しないでください。復元・復旧の実行中は、他のアプリでファイルやディレクトリ構成を変更しないでください。
+
 古いコミットを確認したあと現在のブランチの最新状態に戻るには、ブランチ名を指定して復元します。
 
 ```powershell
@@ -587,6 +593,8 @@ JSONモードで期待されるエラーが起きた場合は、非0で終了し
 ```json
 {"code":"uncommitted_changes","message":"working tree has uncommitted changes (use --discard to replace them)","details":{"can_discard":true}}
 ```
+
+復元パスの安全性エラーは`unsafe_restore_path`、部分復元の選択範囲との衝突は`restore_scope_conflict`、復旧中に検出したファイルの衝突は`restore_recovery_conflict`を返します。これらの`details`には`path`と`reason`を含めます。
 
 エラーは常に`code`、`message`、`details`を持ちます。代表的な`code`は、一般的な操作エラーの`sprout_error`、他の操作がロック中の`repository_locked`、未コミット変更がある`uncommitted_changes`、OSまたはSQLite操作の`repository_error`、引数指定の`usage_error`です。`repository_locked`の`details.retryable`と`uncommitted_changes`の`details.can_discard`をGUIの再試行・確認フローに利用できます。
 

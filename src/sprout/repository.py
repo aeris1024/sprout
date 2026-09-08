@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import tempfile
 import unicodedata
 import uuid
@@ -403,6 +404,7 @@ class Repository:
         for candidate in (current, *current.parents):
             if (candidate / CONTROL_DIR / DB_NAME).is_file():
                 repo = cls(candidate, progress)
+                repo._restore_internal(repo.db_path)
                 repo.ensure_schema()
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
@@ -692,7 +694,7 @@ class Repository:
     @contextmanager
     def lock(self) -> Iterator[None]:
         """Acquire the single-writer repository lock without waiting."""
-        lock_path = self.control / "lock"
+        lock_path = self._restore_internal(self.control / "lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_path.open("a+b")
         try:
@@ -2150,6 +2152,8 @@ class Repository:
         switch: bool = False,
     ) -> str:
         self._validate_reference_name(name, "branch")
+        if switch:
+            self._validate_restore_inputs({})
         if start_point is not None:
             commit_id = self.resolve_commit(start_point)
         else:
@@ -2158,6 +2162,8 @@ class Repository:
                 raise SproutError("cannot create branch before first commit")
             self._reject_omitted_start_point_on_restored_snapshot(head)
             commit_id = head
+        if switch:
+            self._validate_restore_inputs(self.manifest(commit_id))
         if switch and self._has_unsaved_changes():
             raise SproutError(
                 "working tree has uncommitted changes; commit them first, or discard "
@@ -2180,7 +2186,11 @@ class Repository:
                 self._materialize(self.manifest(commit_id), head_branch=name)
             except Exception:
                 with self.connect() as db:
-                    db.execute("DELETE FROM branches WHERE name=?", (name,))
+                    db.execute(
+                        "DELETE FROM branches WHERE name=? "
+                        "AND name != (SELECT value FROM meta WHERE key='head_branch')",
+                        (name,),
+                    )
                 raise
         return commit_id
 
@@ -2262,30 +2272,292 @@ class Repository:
         for item in target.values():
             self._copy_verified_object(item)
 
+    def _safe_restore_path(self, relative: str, *, internal: bool = False) -> Path:
+        """Inspect every component without following links, including dangling links."""
+        path = Path(relative)
+        def reject(reason: str) -> None:
+            raise SproutError(
+                f"unsafe restore path: {relative} ({reason})",
+                code="unsafe_restore_path",
+                details={"path": relative, "reason": reason},
+            )
+        if (not relative or "\x00" in relative or path.anchor or ".." in path.parts
+                or not path.parts or any(":" in part for part in path.parts)):
+            reject("path must be relative and inside the repository")
+        if os.name == "nt" and any(part.rstrip(" .") != part for part in path.parts):
+            reject("ambiguous Windows path component")
+        metadata = self._path_key(path.parts[0]) == self._path_key(CONTROL_DIR)
+        if metadata != internal:
+            reject("invalid metadata boundary")
+        current = self.root
+        for part in path.parts:
+            current = current / part
+            try:
+                info = current.lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                continue  # A tracked file may be replaced by a directory later.
+            if stat.S_ISLNK(info.st_mode) or (
+                getattr(info, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            ):
+                reject("symbolic links and reparse points are not supported")
+            if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                reject("not a regular file or directory")
+        return self.root / path
+
+    def _restore_internal(self, path: Path) -> Path:
+        return self._safe_restore_path(path.relative_to(self.root).as_posix(), internal=True)
+
+    def _restore_tree_files(self, directory: Path) -> list[Path]:
+        """Validate a private operation tree before reading or removing it."""
+        self._restore_internal(directory)
+        files: list[Path] = []
+        if directory.exists():
+            for base, dirs, names in os.walk(directory, followlinks=False):
+                for name in dirs + names:
+                    child = self._restore_internal(Path(base) / name)
+                    if child.is_file():
+                        files.append(child)
+        return files
+
+    def _validate_restore_inputs(self, target: dict[str, FileState], *, partial: bool = False) -> None:
+        paths = set(target) if partial else set(target) | self.tracked() | set(self.manifest(self.head_commit()))
+        for relative in paths:
+            self._safe_restore_path(relative)
+        self._restore_internal(self.tmp)
+
+    def _restore_plan(self, target: dict[str, FileState], *, partial: bool) -> dict[str, Any]:
+        self._validate_restore_inputs(target, partial=partial)
+        tracked = self.tracked()
+        tracked_by_key = {self._path_key(p): p for p in tracked}
+        selected = {self._path_key(p) for p in target}
+        changed = selected if partial else set(tracked_by_key) | selected
+        originals: dict[str, Path] = {}
+        remove_dirs: set[str] = set()
+        create_dirs: set[str] = set()
+
+        def conflict(relative: str) -> None:
+            if partial and self._path_key(relative) in tracked_by_key:
+                raise SproutError(
+                    f"partial restore would change unselected path: {relative}; use a full restore",
+                    code="restore_scope_conflict",
+                    details={"path": relative, "reason": "unselected tracked path blocks restoration"},
+                )
+            raise SproutError(f"untracked path would be overwritten: {relative}")
+
+        def removable_directory(relative: str) -> None:
+            directory = self._safe_restore_path(relative)
+            children = list(directory.iterdir())
+            if not children:
+                conflict(relative)
+            for child in children:
+                name = child.relative_to(self.root).as_posix()
+                self._safe_restore_path(name)
+                if child.is_dir():
+                    removable_directory(name)
+                elif self._path_key(name) not in changed or self._path_key(name) not in tracked_by_key:
+                    conflict(name)
+            remove_dirs.add(relative)
+
+        for relative in sorted(tracked):
+            if self._path_key(relative) in changed:
+                path = self._safe_restore_path(relative)
+                if path.is_file():
+                    originals[relative] = path
+        for relative in target:
+            path = self._safe_restore_path(relative)
+            if path.is_dir():
+                removable_directory(relative)
+            elif path.exists() and self._path_key(relative) not in tracked_by_key:
+                conflict(relative)
+            for parent in Path(relative).parents:
+                if parent == Path("."):
+                    continue
+                name = parent.as_posix()
+                directory = self._safe_restore_path(name)
+                if directory.is_file():
+                    if self._path_key(name) not in tracked_by_key or self._path_key(name) not in changed:
+                        conflict(name)
+                    create_dirs.add(name)
+                elif not directory.exists():
+                    create_dirs.add(name)
+        # A valid snapshot cannot contain both a file and its descendant.
+        for relative in target:
+            if any(self._path_key(p.as_posix()) in selected for p in Path(relative).parents):
+                raise SproutError(f"conflicting paths in snapshot: {relative}")
+        actions: list[dict[str, Any]] = []
+        for relative, path in sorted(originals.items()):
+            digest, size = self.hash_file(path)
+            actions.append({"kind": "backup", "path": relative, "hash": digest,
+                            "size": size, "mtime_ns": path.stat().st_mtime_ns})
+        actions.extend({"kind": "rmdir", "path": p} for p in sorted(remove_dirs, key=lambda p: (-len(Path(p).parts), p)))
+        actions.extend({"kind": "mkdir", "path": p} for p in sorted(create_dirs, key=lambda p: (len(Path(p).parts), p)))
+        actions.extend({"kind": "install", "path": p, "hash": item.object_hash,
+                        "size": item.size, "mtime_ns": item.mtime_ns} for p, item in sorted(target.items()))
+        return {"version": 2, "actions": actions, "attempted": 0, "rollback": None}
+
     def _set_active_operation(self, operation_id: str) -> None:
         with self.connect() as db:
             db.execute("UPDATE meta SET value=? WHERE key='active_operation'", (operation_id,))
 
     def _rollback_materialization(self, operation_dir: Path, plan: dict[str, Any]) -> None:
-        staged = operation_dir / "staged"
+        self._restore_tree_files(operation_dir)
+        if "version" not in plan:
+            plan = self._upgrade_restore_plan(operation_dir, plan)
+        self._validate_restore_plan(plan)
+        if plan["rollback"] is None:
+            plan["rollback"] = plan["attempted"] - 1
+            self._write_restore_progress(operation_dir, plan)
+        while plan["rollback"] >= 0:
+            action = plan["actions"][plan["rollback"]]
+            self._undo_restore_action(operation_dir, action)
+            plan["rollback"] -= 1
+            self._write_restore_progress(operation_dir, plan)
+
+    def _validate_restore_plan(self, plan: dict[str, Any]) -> None:
+        if plan.get("version") != 2 or not isinstance(plan.get("actions"), list):
+            raise SproutError("invalid restore recovery plan")
+        count = len(plan["actions"])
+        if (type(plan.get("attempted")) is not int or not 0 <= plan["attempted"] <= count
+                or (plan.get("rollback") is not None and (
+                    type(plan["rollback"]) is not int or not -1 <= plan["rollback"] < plan["attempted"]))):
+            raise SproutError("invalid restore recovery progress")
+        for action in plan["actions"]:
+            if not isinstance(action, dict) or action.get("kind") not in {"backup", "install", "mkdir", "rmdir"}:
+                raise SproutError("invalid restore recovery action")
+            if not isinstance(action.get("path"), str):
+                raise SproutError("invalid restore recovery path")
+            self._safe_restore_path(action["path"])
+            if action["kind"] in {"backup", "install"} and (
+                not isinstance(action.get("hash"), str) or not re.fullmatch(r"[0-9a-f]{64}", action["hash"])
+                or type(action.get("size")) is not int or action["size"] < 0
+                or type(action.get("mtime_ns")) is not int
+            ):
+                raise SproutError("invalid restore recovery file metadata")
+
+    def _upgrade_restore_plan(self, operation_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
+        """Checkpoint legacy recovery before undoing anything; backups remain intact."""
+        if not isinstance(plan.get("new_paths"), list):
+            raise SproutError("invalid legacy restore recovery plan")
+        new_paths = plan["new_paths"]
+        for relative in new_paths:
+            if not isinstance(relative, str):
+                raise SproutError("invalid legacy restore recovery path")
+            self._safe_restore_path(relative)
         backup = operation_dir / "backup"
-        # A new target whose staged copy disappeared was installed and must be removed.
-        for relative in plan["new_paths"]:
-            if not (staged / Path(relative)).exists():
-                destination = self.root / Path(relative)
-                if destination.is_file():
-                    destination.unlink()
-        # Backup presence is the durable record that an original file was moved.
-        if backup.exists():
-            for saved in sorted((path for path in backup.rglob("*") if path.is_file()), reverse=True):
-                relative = saved.relative_to(backup)
-                destination = self.root / relative
-                if destination.is_file():
-                    destination.unlink()
-                elif destination.exists():
-                    raise SproutError(f"cannot roll back non-file path: {relative.as_posix()}")
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(saved, destination)
+        actions = []
+        originals = set()
+        original_signatures = {}
+        for saved in self._restore_tree_files(backup):
+            relative = saved.relative_to(backup).as_posix()
+            self._safe_restore_path(relative)
+            originals.add(relative)
+            digest, size = self.hash_file(saved)
+            original_signatures[relative] = (digest, size)
+            actions.append({"kind": "backup", "path": relative, "hash": digest,
+                            "size": size, "mtime_ns": saved.stat().st_mtime_ns})
+        for relative in sorted(originals | set(new_paths)):
+            destination = self._safe_restore_path(relative)
+            staged = self._restore_internal(operation_dir / "staged" / relative)
+            if destination.exists():
+                if not destination.is_file() or staged.exists():
+                    self._restore_conflict(relative)
+                digest, size = self.hash_file(destination)
+                if original_signatures.get(relative) == (digest, size):
+                    continue  # A previous legacy rollback already restored it.
+                # Old plans did not identify installed contents. Only remove a
+                # file when its bytes are still available in a saved snapshot.
+                with self.connect() as db:
+                    known = db.execute(
+                        "SELECT 1 FROM commit_files WHERE path=? AND object_hash=? AND size=? LIMIT 1",
+                        (relative, digest, size),
+                    ).fetchone()
+                if known is None:
+                    self._restore_conflict(relative)
+                self._copy_verified_object(FileState(
+                    relative, digest, size, destination.stat().st_mtime_ns,
+                ))
+                actions.append({"kind": "install", "path": relative, "hash": digest,
+                                "size": size, "mtime_ns": destination.stat().st_mtime_ns})
+        upgraded = {"version": 2, "actions": actions, "attempted": len(actions), "rollback": None}
+        self._write_operation_plan(operation_dir / "plan.json", upgraded)
+        return upgraded
+
+    @staticmethod
+    def _restore_conflict(relative: str) -> None:
+        raise SproutError(
+            f"restore recovery conflict: {relative}; backups retained; resolve the conflict and rerun Sprout",
+            code="restore_recovery_conflict",
+            details={"path": relative, "reason": "path changed during restoration or recovery"},
+        )
+
+    def _matches_restore_file(self, path: Path, action: dict[str, Any]) -> bool:
+        return path.is_file() and self.hash_file(path) == (action["hash"], action["size"])
+
+    def _undo_restore_action(self, operation_dir: Path, action: dict[str, Any]) -> None:
+        relative = action["path"]
+        destination = self._safe_restore_path(relative)
+        kind = action["kind"]
+        if kind == "install":
+            staged = self._restore_internal(operation_dir / "staged" / relative)
+            if not staged.exists():
+                if not self._matches_restore_file(destination, action):
+                    self._restore_conflict(relative)
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(destination, staged)
+        elif kind == "mkdir":
+            if destination.exists():
+                if not destination.is_dir() or any(destination.iterdir()):
+                    self._restore_conflict(relative)
+                destination.rmdir()
+        elif kind == "rmdir":
+            if destination.exists() and not destination.is_dir():
+                self._restore_conflict(relative)
+            destination.mkdir(exist_ok=True)
+        else:
+            saved = self._restore_internal(operation_dir / "backup" / relative)
+            if not saved.exists():  # The forward move was never performed.
+                if not self._matches_restore_file(destination, action):
+                    self._restore_conflict(relative)
+                return
+            if not self._matches_restore_file(saved, action):
+                self._restore_conflict(relative)
+            if destination.exists():
+                if not self._matches_restore_file(destination, action):
+                    self._restore_conflict(relative)
+                if destination.stat().st_mtime_ns != action["mtime_ns"]:
+                    os.utime(destination, ns=(action["mtime_ns"], action["mtime_ns"]))
+                return  # Atomic replacement completed before the last checkpoint.
+            temporary = self._restore_internal(operation_dir / "rollback-copy")
+            with saved.open("rb") as source, temporary.open("wb") as output:
+                shutil.copyfileobj(source, output, IO_CHUNK_SIZE)
+                output.flush()
+                os.fsync(output.fileno())
+            os.utime(temporary, ns=(action["mtime_ns"], action["mtime_ns"]))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            self._safe_restore_path(relative)
+            os.replace(temporary, destination)
+
+    def _apply_restore_action(self, operation_dir: Path, action: dict[str, Any]) -> None:
+        relative = action["path"]
+        destination = self._safe_restore_path(relative)
+        kind = action["kind"]
+        if kind == "backup":
+            if not self._matches_restore_file(destination, action):
+                self._restore_conflict(relative)
+            saved = self._restore_internal(operation_dir / "backup" / relative)
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(destination, saved)
+        elif kind == "rmdir":
+            destination.rmdir()
+        elif kind == "mkdir":
+            destination.mkdir()
+        else:
+            if destination.exists():
+                self._restore_conflict(relative)
+            source = self._restore_internal(operation_dir / "staged" / relative)
+            os.replace(source, destination)
+            os.utime(destination, ns=(action["mtime_ns"], action["mtime_ns"]))
 
     def _recover_pending_materialization(self) -> None:
         with self.connect() as db:
@@ -2293,26 +2565,54 @@ class Repository:
         if row is None:
             raise SproutError("repository is missing operation metadata")
         active = row[0]
-        operation_dirs = [path for path in self.tmp.glob("restore-*") if path.is_dir()]
+        self._restore_internal(self.tmp)
+        operation_dirs = list(self.tmp.glob("restore-*"))
         if active:
+            if not active.startswith("restore-") or Path(active).name != active:
+                raise SproutError("invalid active restore operation")
             operation_dir = self.tmp / active
-            plan_path = operation_dir / "plan.json"
+            plan_path = self._restore_internal(operation_dir / "plan.json")
             if not plan_path.is_file():
                 raise SproutError(f"cannot recover interrupted operation: {active}")
             try:
-                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                plan = self._read_restore_plan(operation_dir)
+                if not isinstance(plan, dict):
+                    raise ValueError("plan must be an object")
                 self._rollback_materialization(operation_dir, plan)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise SproutError(f"cannot recover interrupted operation: {active}") from exc
             self._set_active_operation("")
         for operation_dir in operation_dirs:
+            self._restore_tree_files(operation_dir)
             shutil.rmtree(operation_dir, ignore_errors=True)
 
     def _write_operation_plan(self, path: Path, plan: dict[str, Any]) -> None:
-        with path.open("w", encoding="utf-8") as file:
+        self._restore_internal(path)
+        temporary = self._restore_internal(path.with_suffix(".pending"))
+        with temporary.open("w", encoding="utf-8") as file:
             json.dump(plan, file, ensure_ascii=False, sort_keys=True)
             file.flush()
             os.fsync(file.fileno())
+        os.replace(temporary, path)
+
+    def _write_restore_progress(self, operation_dir: Path, plan: dict[str, Any]) -> None:
+        # Keep checkpoints constant-sized even for snapshots with many files.
+        self._write_operation_plan(operation_dir / "progress.json", {
+            "attempted": plan["attempted"], "rollback": plan["rollback"],
+        })
+
+    def _read_restore_plan(self, operation_dir: Path) -> dict[str, Any]:
+        path = self._restore_internal(operation_dir / "plan.json")
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(plan, dict):
+            raise SproutError("invalid restore recovery plan")
+        progress_path = self._restore_internal(operation_dir / "progress.json")
+        if progress_path.exists():
+            progress = json.loads(progress_path.read_text(encoding="utf-8"))
+            if not isinstance(progress, dict) or set(progress) != {"attempted", "rollback"}:
+                raise SproutError("invalid restore recovery progress")
+            plan.update(progress)
+        return plan
 
     def _finalize_materialization(
         self, target: dict[str, FileState], head_branch: str | None, *, partial: bool = False
@@ -2342,8 +2642,9 @@ class Repository:
                 directory = directory.parent
         for directory in sorted(candidates, key=lambda path: len(path.parts), reverse=True):
             try:
+                self._safe_restore_path(directory.relative_to(self.root).as_posix())
                 directory.rmdir()
-            except OSError:
+            except (OSError, SproutError):
                 pass
 
     def _materialize(
@@ -2354,55 +2655,54 @@ class Repository:
         partial: bool = False,
     ) -> None:
         current = self.tracked()
+        plan = self._restore_plan(target, partial=partial)
         self._verify_manifest(target)
-        for relative in set(target) - current:
-            destination = self.root / Path(relative)
-            if destination.exists():
-                raise SproutError(f"untracked path would be overwritten: {relative}")
 
         operation_id = "restore-" + uuid.uuid4().hex
-        operation_dir = self.tmp / operation_id
+        operation_dir = self._restore_internal(self.tmp / operation_id)
         operation_dir.mkdir()
         staged = operation_dir / "staged"
-        backup = operation_dir / "backup"
-        changed = set(target) if partial else current | set(target)
-        plan = {"new_paths": sorted(set(target) - current)}
         active_registered = False
         operation_complete = False
         try:
             for relative, item in target.items():
-                output = staged / Path(relative)
+                output = self._restore_internal(staged / Path(relative))
                 output.parent.mkdir(parents=True, exist_ok=True)
                 with output.open("wb") as target_file:
                     self._copy_verified_object(item, target_file)
+                    target_file.flush()
+                    os.fsync(target_file.fileno())
             self._write_operation_plan(operation_dir / "plan.json", plan)
-            self._set_active_operation(operation_id)
             active_registered = True
-            for relative in sorted(changed):
-                destination = self.root / Path(relative)
-                if destination.is_file():
-                    saved = backup / Path(relative)
-                    saved.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(destination, saved)
-                elif destination.exists():
-                    raise SproutError(f"cannot replace non-file path: {relative}")
-            for relative in sorted(target):
-                source = staged / Path(relative)
-                destination = self.root / Path(relative)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(source, destination)
-                # Record installation before metadata work so rollback includes it.
-                os.utime(destination, ns=(target[relative].mtime_ns, target[relative].mtime_ns))
+            self._set_active_operation(operation_id)
+            for index, action in enumerate(plan["actions"]):
+                plan["attempted"] = index + 1
+                self._write_restore_progress(operation_dir, plan)
+                self._apply_restore_action(operation_dir, action)
             self._finalize_materialization(target, head_branch, partial=partial)
+            operation_complete = True  # DB commit is the commit point; never undo it.
             if not partial:
                 self._remove_empty_parents(current - set(target))
-            operation_complete = True
         except Exception:
+            if operation_complete:
+                raise
+            if active_registered:
+                with self.connect() as db:
+                    durable_active = db.execute(
+                        "SELECT value FROM meta WHERE key='active_operation'"
+                    ).fetchone()[0]
+                if durable_active == "":
+                    operation_complete = True
+                    raise  # Finalization committed before reporting its error.
             try:
-                self._rollback_materialization(operation_dir, plan)
                 if active_registered:
+                    # Re-read the durable checkpoint, including when a write failed.
+                    saved_plan = self._read_restore_plan(operation_dir)
+                    self._rollback_materialization(operation_dir, saved_plan)
                     self._set_active_operation("")
                     active_registered = False
+            except SproutError:
+                raise  # Keep the structured path/conflict error and all backups.
             except Exception as rollback_exc:
                 raise SproutError(
                     "restore failed and automatic rollback was incomplete; rerun Sprout to recover"
@@ -2410,6 +2710,7 @@ class Repository:
             raise
         finally:
             if operation_complete or not active_registered:
+                self._restore_tree_files(operation_dir)
                 shutil.rmtree(operation_dir, ignore_errors=True)
 
     def _working_content_signature(self) -> dict[str, tuple[str, int]] | None:
@@ -2628,16 +2929,29 @@ class Repository:
         commit_id = self.resolve_commit(value)
         commit_manifest = self.manifest(commit_id)
         if paths:
+            for value_path in paths:
+                absolute = Path(os.path.abspath(value_path))
+                try:
+                    relative = absolute.relative_to(self.root).as_posix()
+                except ValueError as exc:
+                    raise SproutError(
+                        f"unsafe restore path: {value_path}", code="unsafe_restore_path",
+                        details={"path": str(value_path), "reason": "path is outside the repository"},
+                    ) from exc
+                self._safe_restore_path(relative)
             selected = self._resolve_manifest_paths(paths, commit_manifest)
+            target = {path: commit_manifest[path] for path in selected}
+            self._validate_restore_inputs(target, partial=True)
+            self._restore_plan(target, partial=True)
             if self._has_unsaved_changes(selected) and not discard:
                 raise SproutError(
                     "working tree has uncommitted changes (use --discard to replace them)",
                     code="uncommitted_changes",
                     details={"can_discard": True},
                 )
-            target = {path: commit_manifest[path] for path in selected}
             self._materialize(target, partial=True)
         else:
+            self._validate_restore_inputs(commit_manifest)
             if self._has_unsaved_changes() and not discard:
                 raise SproutError(
                     "working tree has uncommitted changes (use --discard to replace them)",
@@ -2653,12 +2967,13 @@ class Repository:
             row = db.execute("SELECT commit_id FROM branches WHERE name=?", (name,)).fetchone()
         if row is None:
             raise SproutError(f"unknown branch: {name}")
+        target = self.manifest(row[0])
+        self._validate_restore_inputs(target)
         if self._has_unsaved_changes() and not discard:
             raise SproutError(
                 "working tree has uncommitted changes (use --discard to replace them)",
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
-        target = self.manifest(row[0])
         self._materialize(target, head_branch=name)
         return row[0]
