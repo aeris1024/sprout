@@ -1826,6 +1826,9 @@ def test_discovers_and_recovers_interrupted_restore(
     asset = write(repo.root, "asset.bin", b"original")
     repo.track([asset])
     repo.commit("initial")
+    asset.write_bytes(b"partial replacement")
+    repo.commit("replacement")
+    asset.write_bytes(b"original")
 
     operation_id = "restore-interrupted"
     operation_dir = repo.tmp / operation_id
@@ -2211,6 +2214,9 @@ def test_discover_recovers_only_when_active_operation_is_set(
     asset = write(repo.root, "asset.bin", b"original")
     repo.track([asset])
     repo.commit("initial")
+    asset.write_bytes(b"partial replacement")
+    repo.commit("replacement")
+    asset.write_bytes(b"original")
     operation_id = "restore-interrupted"
     operation_dir = repo.tmp / operation_id
     backup = operation_dir / "backup"
