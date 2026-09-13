@@ -11,7 +11,7 @@ import stat
 import tempfile
 import unicodedata
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
@@ -26,8 +26,8 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
-SCHEMA_VERSION = "3"
-PREVIOUS_SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "1"
+RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
 IO_CHUNK_SIZE = 1024 * 1024
@@ -37,7 +37,6 @@ THUMBNAIL_MAX_DIMENSION = 4096
 NOTE_MAX_CHARS = 20_000
 LABEL_MAX_CHARS = 64
 LABEL_MAX_COUNT = 32
-BACKUPS_DIR = "backups"
 THUMBNAIL_MEDIA_TYPES = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
@@ -67,55 +66,6 @@ REQUIRED_META_KEYS = {
     "repository_id",
     "repository_created_at",
 }
-V2_REQUIRED_TABLE_COLUMNS = {
-    "meta": {"key", "value"},
-    "commits": {"id", "parent_id", "branch_name", "created_at", "message"},
-    "commit_files": {"commit_id", "path", "object_hash", "size", "mtime_ns"},
-    "branches": {"name", "commit_id", "comment"},
-    "tracked_paths": {"path"},
-}
-V2_TAG_COLUMNS = {"name", "commit_id", "comment", "created_at"}
-V3_ADDITION_TABLES = {"commit_attachments", "commit_notes", "commit_labels"}
-V3_MIGRATION_STATEMENTS = (
-    """
-    CREATE TABLE commit_attachments (
-        commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
-        role TEXT NOT NULL,
-        original_name TEXT NOT NULL,
-        media_type TEXT NOT NULL,
-        object_hash TEXT NOT NULL,
-        size INTEGER NOT NULL CHECK (size >= 0),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (commit_id, role)
-    )
-    """,
-    """
-    CREATE TABLE commit_notes (
-        commit_id TEXT PRIMARY KEY REFERENCES commits(id) ON DELETE CASCADE,
-        note TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE commit_labels (
-        commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
-        label TEXT NOT NULL,
-        PRIMARY KEY (commit_id, label)
-    )
-    """,
-    "CREATE INDEX idx_commit_attachments_object_hash "
-    "ON commit_attachments(object_hash)",
-    "CREATE INDEX idx_commit_labels_label ON commit_labels(label)",
-)
-V2_TAG_MIGRATION_STATEMENT = """
-CREATE TABLE tags (
-    name TEXT PRIMARY KEY,
-    commit_id TEXT NOT NULL REFERENCES commits(id),
-    comment TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
-)
-"""
 
 
 def locked(method: Callable[..., T]) -> Callable[..., T]:
@@ -131,18 +81,18 @@ def locked(method: Callable[..., T]) -> Callable[..., T]:
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS meta (
+CREATE TABLE meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS commits (
+CREATE TABLE commits (
     id TEXT PRIMARY KEY,
     parent_id TEXT REFERENCES commits(id),
     branch_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     message TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS commit_files (
+CREATE TABLE commit_files (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
     object_hash TEXT NOT NULL,
@@ -150,7 +100,7 @@ CREATE TABLE IF NOT EXISTS commit_files (
     mtime_ns INTEGER NOT NULL,
     PRIMARY KEY (commit_id, path)
 );
-CREATE TABLE IF NOT EXISTS commit_attachments (
+CREATE TABLE commit_attachments (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     original_name TEXT NOT NULL,
@@ -161,34 +111,34 @@ CREATE TABLE IF NOT EXISTS commit_attachments (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (commit_id, role)
 );
-CREATE TABLE IF NOT EXISTS commit_notes (
+CREATE TABLE commit_notes (
     commit_id TEXT PRIMARY KEY REFERENCES commits(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS commit_labels (
+CREATE TABLE commit_labels (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
     PRIMARY KEY (commit_id, label)
 );
-CREATE TABLE IF NOT EXISTS branches (
+CREATE TABLE branches (
     name TEXT PRIMARY KEY,
     commit_id TEXT REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS tags (
+CREATE TABLE tags (
     name TEXT PRIMARY KEY,
     commit_id TEXT NOT NULL REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS tracked_paths (
+CREATE TABLE tracked_paths (
     path TEXT PRIMARY KEY
 );
-CREATE INDEX IF NOT EXISTS idx_commits_parent ON commits(parent_id);
-CREATE INDEX IF NOT EXISTS idx_commit_attachments_object_hash
+CREATE INDEX idx_commits_parent ON commits(parent_id);
+CREATE INDEX idx_commit_attachments_object_hash
     ON commit_attachments(object_hash);
-CREATE INDEX IF NOT EXISTS idx_commit_labels_label ON commit_labels(label);
+CREATE INDEX idx_commit_labels_label ON commit_labels(label);
 """
 
 
@@ -405,7 +355,7 @@ class Repository:
             if (candidate / CONTROL_DIR / DB_NAME).is_file():
                 repo = cls(candidate, progress)
                 repo._restore_internal(repo.db_path)
-                repo.ensure_schema()
+                repo.check_schema()
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
                 # operation is recorded; re-check under the lock inside recover.
@@ -449,206 +399,11 @@ class Repository:
         }
         return metadata, tables
 
-    def _validate_v2_schema(
-        self,
-        db: sqlite3.Connection,
-        metadata: dict[str, str],
-        tables: set[str],
-        migration_time: datetime,
-    ) -> str:
-        missing_tables = sorted(V2_REQUIRED_TABLE_COLUMNS.keys() - tables)
-        if missing_tables:
-            raise SproutError(
-                "invalid schema version 2 repository; missing tables: "
-                + ", ".join(missing_tables)
-            )
-        partial_v3 = sorted(V3_ADDITION_TABLES & tables)
-        if partial_v3:
-            raise SproutError(
-                "invalid schema version 2 repository; unexpected version 3 tables: "
-                + ", ".join(partial_v3)
-            )
-        required_metadata = {
-            "schema_version",
-            "object_compression",
-            "head_branch",
-            "active_operation",
-        }
-        missing_metadata = sorted(required_metadata - metadata.keys())
-        if missing_metadata:
-            raise SproutError(
-                "invalid schema version 2 repository; missing metadata: "
-                + ", ".join(missing_metadata)
-            )
-        partial_metadata = sorted(
-            {"repository_id", "repository_created_at"} & metadata.keys()
-        )
-        if partial_metadata:
-            raise SproutError(
-                "invalid schema version 2 repository; unexpected version 3 metadata: "
-                + ", ".join(partial_metadata)
-            )
-        if metadata["object_compression"] != OBJECT_COMPRESSION:
-            raise SproutError(
-                "unsupported object compression: "
-                f"{metadata['object_compression']} (expected {OBJECT_COMPRESSION})"
-            )
-
-        expected_columns = dict(V2_REQUIRED_TABLE_COLUMNS)
-        if "tags" in tables:
-            expected_columns["tags"] = V2_TAG_COLUMNS
-        for table, required_columns in expected_columns.items():
-            columns = {
-                row["name"] for row in db.execute(f"PRAGMA table_info('{table}')")
-            }
-            missing_columns = sorted(required_columns - columns)
-            if missing_columns:
-                raise SproutError(
-                    "invalid schema version 2 repository; "
-                    f"table {table} is missing columns: {', '.join(missing_columns)}"
-                )
-
-        quick_check = [row[0] for row in db.execute("PRAGMA quick_check")]
-        if quick_check != ["ok"]:
-            raise SproutError(
-                "invalid schema version 2 repository; database check failed"
-            )
-        if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise SproutError(
-                "invalid schema version 2 repository; foreign key check failed"
-            )
-
-        earliest = db.execute("SELECT MIN(created_at) FROM commits").fetchone()[0]
-        if earliest is None:
-            return migration_time.isoformat()
-        try:
-            created_at = datetime.fromisoformat(earliest)
-        except ValueError as exc:
-            raise SproutError(
-                "invalid schema version 2 repository; commit timestamp is invalid"
-            ) from exc
-        if (
-            created_at.tzinfo is None
-            or created_at.utcoffset() != timezone.utc.utcoffset(None)
-        ):
-            raise SproutError(
-                "invalid schema version 2 repository; commit timestamp must be UTC"
-            )
-        return earliest
-
-    def _backup_v2_database(
-        self, source: sqlite3.Connection, migration_time: datetime
-    ) -> Path:
-        backup_dir = self.control / BACKUPS_DIR
-        backup_dir.mkdir(exist_ok=True)
-        timestamp = migration_time.strftime("%Y%m%dT%H%M%S%fZ")
-        backup_path = backup_dir / (
-            f"repository-v2-{timestamp}-{uuid.uuid4().hex[:8]}.db"
-        )
-        destination = sqlite3.connect(backup_path)
-        try:
-            source.backup(destination)
-            quick_check = [row[0] for row in destination.execute("PRAGMA quick_check")]
-            version = destination.execute(
-                "SELECT value FROM meta WHERE key='schema_version'"
-            ).fetchone()
-            if (
-                quick_check != ["ok"]
-                or version is None
-                or version[0] != PREVIOUS_SCHEMA_VERSION
-            ):
-                raise sqlite3.DatabaseError("schema version 2 backup verification failed")
-        except Exception:
-            destination.close()
-            backup_path.unlink(missing_ok=True)
-            raise
-        else:
-            destination.close()
-        return backup_path
-
-    @staticmethod
-    def _apply_v2_migration(
-        db: sqlite3.Connection,
-        *,
-        has_tags: bool,
-        repository_id: str,
-        repository_created_at: str,
-    ) -> None:
-        if not has_tags:
-            db.execute(V2_TAG_MIGRATION_STATEMENT)
-        for statement in V3_MIGRATION_STATEMENTS:
-            db.execute(statement)
-        db.execute(
-            "INSERT INTO meta(key, value) VALUES('repository_id', ?)",
-            (repository_id,),
-        )
-        db.execute(
-            "INSERT INTO meta(key, value) VALUES('repository_created_at', ?)",
-            (repository_created_at,),
-        )
-        db.execute(
-            "UPDATE meta SET value=? WHERE key='schema_version'",
-            (SCHEMA_VERSION,),
-        )
-
-    @locked
-    def _migrate_v2_to_v3(self) -> Path | None:
-        migration_time = datetime.now(timezone.utc)
-        with self.connect() as db:
-            try:
-                metadata, tables = self._schema_metadata_and_tables(db)
-            except sqlite3.Error as exc:
-                raise SproutError(f"cannot read repository: {exc}") from exc
-            found_version = metadata.get("schema_version", "missing")
-            if found_version == SCHEMA_VERSION:
-                return None
-            if found_version != PREVIOUS_SCHEMA_VERSION:
-                raise SproutError(
-                    f"unsupported repository schema version: {found_version} "
-                    f"(expected {SCHEMA_VERSION})"
-                )
-            repository_created_at = self._validate_v2_schema(
-                db, metadata, tables, migration_time
-            )
-            try:
-                backup_path = self._backup_v2_database(db, migration_time)
-            except Exception as exc:
-                raise SproutError(
-                    f"cannot back up schema version 2 repository: {exc}"
-                ) from exc
-
-            try:
-                db.execute("BEGIN IMMEDIATE")
-                self._apply_v2_migration(
-                    db,
-                    has_tags="tags" in tables,
-                    repository_id=str(uuid.uuid4()),
-                    repository_created_at=repository_created_at,
-                )
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                raise SproutError(
-                    f"failed to migrate repository from schema version 2 to 3: {exc}"
-                ) from exc
-        return backup_path
-
-    def ensure_schema(self) -> None:
-        try:
-            with self.connect() as db:
-                row = db.execute(
-                    "SELECT value FROM meta WHERE key='schema_version'"
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise SproutError(f"cannot read repository: {exc}") from exc
-        found_version = row[0] if row is not None else "missing"
-        if found_version == PREVIOUS_SCHEMA_VERSION:
-            self._migrate_v2_to_v3()
-        self.check_schema()
-
     def check_schema(self) -> None:
         try:
-            with self.connect() as db:
+            # Inspect unsupported repositories without changing their journal mode.
+            with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as db:
+                db.row_factory = sqlite3.Row
                 metadata, tables = self._schema_metadata_and_tables(db)
         except sqlite3.Error as exc:
             raise SproutError(f"cannot read repository: {exc}") from exc
@@ -664,12 +419,14 @@ class Repository:
             raise SproutError(
                 "repository schema is incomplete; missing tables: "
                 + ", ".join(missing_tables)
+                + "; reinitialize the repository with this Sprout version"
             )
         missing_metadata = sorted(REQUIRED_META_KEYS - metadata.keys())
         if missing_metadata:
             raise SproutError(
                 "repository metadata is incomplete; missing keys: "
                 + ", ".join(missing_metadata)
+                + "; reinitialize the repository with this Sprout version"
             )
         found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
@@ -2394,7 +2151,7 @@ class Repository:
         actions.extend({"kind": "mkdir", "path": p} for p in sorted(create_dirs, key=lambda p: (len(Path(p).parts), p)))
         actions.extend({"kind": "install", "path": p, "hash": item.object_hash,
                         "size": item.size, "mtime_ns": item.mtime_ns} for p, item in sorted(target.items()))
-        return {"version": 2, "actions": actions, "attempted": 0, "rollback": None}
+        return {"version": RESTORE_PLAN_VERSION, "actions": actions, "attempted": 0, "rollback": None}
 
     def _set_active_operation(self, operation_id: str) -> None:
         with self.connect() as db:
@@ -2402,8 +2159,6 @@ class Repository:
 
     def _rollback_materialization(self, operation_dir: Path, plan: dict[str, Any]) -> None:
         self._restore_tree_files(operation_dir)
-        if "version" not in plan:
-            plan = self._upgrade_restore_plan(operation_dir, plan)
         self._validate_restore_plan(plan)
         if plan["rollback"] is None:
             plan["rollback"] = plan["attempted"] - 1
@@ -2415,7 +2170,8 @@ class Repository:
             self._write_restore_progress(operation_dir, plan)
 
     def _validate_restore_plan(self, plan: dict[str, Any]) -> None:
-        if plan.get("version") != 2 or not isinstance(plan.get("actions"), list):
+        if (type(plan.get("version")) is not int or plan["version"] != RESTORE_PLAN_VERSION
+                or not isinstance(plan.get("actions"), list)):
             raise SproutError("invalid restore recovery plan")
         count = len(plan["actions"])
         if (type(plan.get("attempted")) is not int or not 0 <= plan["attempted"] <= count
@@ -2434,54 +2190,6 @@ class Repository:
                 or type(action.get("mtime_ns")) is not int
             ):
                 raise SproutError("invalid restore recovery file metadata")
-
-    def _upgrade_restore_plan(self, operation_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
-        """Checkpoint legacy recovery before undoing anything; backups remain intact."""
-        if not isinstance(plan.get("new_paths"), list):
-            raise SproutError("invalid legacy restore recovery plan")
-        new_paths = plan["new_paths"]
-        for relative in new_paths:
-            if not isinstance(relative, str):
-                raise SproutError("invalid legacy restore recovery path")
-            self._safe_restore_path(relative)
-        backup = operation_dir / "backup"
-        actions = []
-        originals = set()
-        original_signatures = {}
-        for saved in self._restore_tree_files(backup):
-            relative = saved.relative_to(backup).as_posix()
-            self._safe_restore_path(relative)
-            originals.add(relative)
-            digest, size = self.hash_file(saved)
-            original_signatures[relative] = (digest, size)
-            actions.append({"kind": "backup", "path": relative, "hash": digest,
-                            "size": size, "mtime_ns": saved.stat().st_mtime_ns})
-        for relative in sorted(originals | set(new_paths)):
-            destination = self._safe_restore_path(relative)
-            staged = self._restore_internal(operation_dir / "staged" / relative)
-            if destination.exists():
-                if not destination.is_file() or staged.exists():
-                    self._restore_conflict(relative)
-                digest, size = self.hash_file(destination)
-                if original_signatures.get(relative) == (digest, size):
-                    continue  # A previous legacy rollback already restored it.
-                # Old plans did not identify installed contents. Only remove a
-                # file when its bytes are still available in a saved snapshot.
-                with self.connect() as db:
-                    known = db.execute(
-                        "SELECT 1 FROM commit_files WHERE path=? AND object_hash=? AND size=? LIMIT 1",
-                        (relative, digest, size),
-                    ).fetchone()
-                if known is None:
-                    self._restore_conflict(relative)
-                self._copy_verified_object(FileState(
-                    relative, digest, size, destination.stat().st_mtime_ns,
-                ))
-                actions.append({"kind": "install", "path": relative, "hash": digest,
-                                "size": size, "mtime_ns": destination.stat().st_mtime_ns})
-        upgraded = {"version": 2, "actions": actions, "attempted": len(actions), "rollback": None}
-        self._write_operation_plan(operation_dir / "plan.json", upgraded)
-        return upgraded
 
     @staticmethod
     def _restore_conflict(relative: str) -> None:

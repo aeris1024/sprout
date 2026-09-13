@@ -356,50 +356,83 @@ def test_cli_link_error_is_structured(repo, tmp_path, directory_link, monkeypatc
     assert payload["details"]["path"] == "assets/data"
 
 
-@pytest.mark.parametrize("new_path", [False, True])
-def test_legacy_recovery_preserves_unknown_work(repo, new_path):
+@pytest.mark.parametrize("version", [None, 2, 99, "1", True])
+def test_unsupported_recovery_preserves_work_and_backup(repo, version):
     file = write(repo.root, "data", b"original")
     repo.track([file])
     repo.commit("original")
-    operation = repo.tmp / "restore-legacy"
-    backup = operation / "backup"
-    backup.mkdir(parents=True)
-    if not new_path:
-        os.replace(file, backup / "data")
-    file.write_bytes(b"new unsaved work")
-    (operation / "plan.json").write_text(json.dumps({"new_paths": ["data"] if new_path else []}))
-    repo._set_active_operation(operation.name)
-    with pytest.raises(SproutError) as error:
-        Repository.discover(repo.root)
-    assert error.value.code == "restore_recovery_conflict"
-    assert file.read_bytes() == b"new unsaved work"
-    assert active(repo)
-    assert "version" not in json.loads((operation / "plan.json").read_text())
-
-
-def test_legacy_recovery_restarts_after_upgrade(repo, monkeypatch):
-    file = write(repo.root, "data", b"original")
-    repo.track([file])
-    repo.commit("original")
-    file.write_bytes(b"replacement")
-    repo.commit("replacement")
-    file.write_bytes(b"unsaved original")
-    operation = repo.tmp / "restore-legacy"
+    operation = repo.tmp / "restore-unsupported"
     backup = operation / "backup"
     backup.mkdir(parents=True)
     os.replace(file, backup / "data")
-    file.write_bytes(b"replacement")
-    (operation / "plan.json").write_text(json.dumps({"new_paths": []}))
+    file.write_bytes(b"new unsaved work")
+    plan = ({"new_paths": ["data"]} if version is None else
+            {"version": version, "actions": [], "attempted": 0, "rollback": None})
+    (operation / "plan.json").write_text(json.dumps(plan))
     repo._set_active_operation(operation.name)
+    before = state(repo)
+    saved = {p.relative_to(operation): p.read_bytes() for p in operation.rglob("*") if p.is_file()}
+    for _ in range(2):
+        with pytest.raises(SproutError, match="invalid restore recovery plan"):
+            Repository.discover(repo.root)
+        assert state(repo) == before
+        assert active(repo) == operation.name
+        assert {p.relative_to(operation): p.read_bytes() for p in operation.rglob("*") if p.is_file()} == saved
+
+
+def test_recovery_preserves_unknown_work(repo, monkeypatch):
+    file = write(repo.root, "data", b"original")
+    repo.track([file])
+    original = repo.commit("original").commit_id
+    file.write_bytes(b"replacement")
+    repo.commit("replacement")
+    apply = repo._apply_restore_action
+    def interrupt(directory, action):
+        apply(directory, action)
+        if action["kind"] == "install":
+            raise Interrupted()
+    with monkeypatch.context() as context:
+        context.setattr(repo, "_apply_restore_action", interrupt)
+        with pytest.raises(Interrupted):
+            repo.restore(original)
+    file.write_bytes(b"new unsaved work")
+    operation = repo.tmp / active(repo)
+    before = state(repo)
+    with pytest.raises(SproutError) as error:
+        Repository.discover(repo.root)
+    assert error.value.code == "restore_recovery_conflict"
+    assert state(repo) == before
+    assert (operation / "backup" / "data").read_bytes() == b"replacement"
+    assert active(repo) == operation.name
+
+
+def test_recovery_restarts_after_interrupted_undo(repo, monkeypatch):
+    file = write(repo.root, "data", b"original")
+    repo.track([file])
+    original = repo.commit("original").commit_id
+    file.write_bytes(b"replacement")
+    repo.commit("replacement")
+    file.write_bytes(b"unsaved original")
+    apply = repo._apply_restore_action
+    def interrupt_install(directory, action):
+        apply(directory, action)
+        if action["kind"] == "install":
+            raise Interrupted()
+    with monkeypatch.context() as context:
+        context.setattr(repo, "_apply_restore_action", interrupt_install)
+        with pytest.raises(Interrupted):
+            repo.restore(original, discard=True)
+    operation = repo.tmp / active(repo)
+    assert json.loads((operation / "plan.json").read_text())["version"] == 1
     undo = Repository._undo_restore_action
-    def interrupt(self, directory, action):
+    def interrupt_undo(self, directory, action):
         undo(self, directory, action)
         raise Interrupted()
     with monkeypatch.context() as context:
-        context.setattr(Repository, "_undo_restore_action", interrupt)
+        context.setattr(Repository, "_undo_restore_action", interrupt_undo)
         with pytest.raises(Interrupted):
             Repository.discover(repo.root)
-    assert (backup / "data").read_bytes() == b"unsaved original"
+    assert (operation / "backup" / "data").read_bytes() == b"unsaved original"
     Repository.discover(repo.root)
     assert file.read_bytes() == b"unsaved original"
     assert not active(repo)
@@ -460,11 +493,11 @@ def test_journal_write_failure_uses_durable_progress(repo, monkeypatch, after):
     assert not active(repo)
 
 
-def test_unsafe_legacy_plan_cannot_escape_operation(repo, tmp_path):
+def test_unsafe_plan_cannot_escape_operation(repo, tmp_path):
     external = write(tmp_path, "outside", b"external")
-    operation = repo.tmp / "restore-legacy"
+    operation = repo.tmp / "restore-interrupted"
     operation.mkdir()
-    (operation / "plan.json").write_text(json.dumps({"new_paths": ["../outside"]}))
+    (operation / "plan.json").write_text(json.dumps({"version": 1, "actions": [{"kind": "mkdir", "path": "../outside"}], "attempted": 1, "rollback": None}))
     repo._set_active_operation(operation.name)
     with pytest.raises(SproutError) as error:
         Repository.discover(repo.root)
@@ -474,12 +507,12 @@ def test_unsafe_legacy_plan_cannot_escape_operation(repo, tmp_path):
 
 
 def test_unsafe_link_in_backup_is_not_followed(repo, tmp_path, directory_link):
-    operation = repo.tmp / "restore-legacy"
+    operation = repo.tmp / "restore-interrupted"
     operation.mkdir()
     external = tmp_path / "external"
     data = write(external, "data", b"external")
     directory_link(external, operation / "backup")
-    (operation / "plan.json").write_text(json.dumps({"new_paths": []}))
+    (operation / "plan.json").write_text(json.dumps({"version": 1, "actions": [], "attempted": 0, "rollback": None}))
     repo._set_active_operation(operation.name)
     with pytest.raises(SproutError) as error:
         Repository.discover(repo.root)
