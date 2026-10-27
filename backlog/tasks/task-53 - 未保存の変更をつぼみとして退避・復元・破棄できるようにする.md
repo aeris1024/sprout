@@ -4,11 +4,13 @@ title: 未保存の変更をつぼみとして退避・復元・破棄できる�
 status: To Do
 assignee: []
 created_date: '2026-10-27 15:03'
+updated_date: '2026-10-27 15:34'
 labels:
   - cli
   - gui-redesign
 dependencies:
   - TASK-52
+  - TASK-61
 references:
   - src/sprout/repository.py
 documentation:
@@ -41,3 +43,9 @@ GUI刷新（doc-1、TASK-51）では、未保存の変更があるまま別の�
 - [ ] #7 つぼみの実体がobjectsストアで重複排除され、gcが参照中のオブジェクトを削除せず、doctorとstatsがつぼみを検査・集計する
 - [ ] #8 READMEとJSON契約が更新され、退避、一覧、復元、破棄、中断時の復旧、gc・doctor・statsとの整合がテストされる
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+未保存の変更を現在位置基準で判定するTASK-61を先に行うよう依存を追加した（2026-10-28 ユーザー指示）。
+<!-- SECTION:NOTES:END -->
