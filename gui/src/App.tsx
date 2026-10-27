@@ -542,6 +542,23 @@ function App() {
         </main>
       )}
 
+      {projectDir && !status && !initCandidate && !busy && (
+        <main className="welcome">
+          <div className="welcome-card">
+            <p className="eyebrow">COULD NOT OPEN</p>
+            <h2>このプロジェクトを開けませんでした</h2>
+            <p className="path-label">{projectDir}</p>
+            <p>上の通知で理由を確認し、CLI設定を見直すか、別のフォルダを選んでください。</p>
+            <div className="action-row">
+              <button className="button primary" onClick={() => openProject(projectDir)}>もう一度開く</button>
+              <button className="button secondary" onClick={chooseProject}>別のフォルダを選ぶ</button>
+            </div>
+            <h3>最近使ったプロジェクト</h3>
+            <RecentProjectList projects={recentProjects} current={projectDir} busy={busy} onOpen={openProject} onForget={forgetRecentProject} />
+          </div>
+        </main>
+      )}
+
       {projectDir && status && !initCandidate && (
         <main className="workspace">
           <section className="map-area" aria-label="スナップショット">

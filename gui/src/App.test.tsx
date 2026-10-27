@@ -612,6 +612,7 @@ describe("Sprout GUI operations", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     expect((await screen.findByRole("alert")).textContent).toContain("another operation is running");
+    expect(await screen.findByRole("heading", { name: "このプロジェクトを開けませんでした" })).toBeTruthy();
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();
