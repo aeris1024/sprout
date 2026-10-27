@@ -1226,6 +1226,7 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
             {"name": "main", "commit_id": None, "comment": "", "current": True}
         ],
         "tags": [],
+        "buds": [],
     }
 
 
@@ -1490,3 +1491,46 @@ def test_status_is_clean_after_moving_to_an_old_snapshot(tmp_path: Path, monkeyp
     asset.write_bytes(b"edited")
     changes = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)["changes"]
     assert changes == [{"state": "modified", "path": "asset.bin"}]
+
+
+def test_bud_command_saves_lists_restores_and_drops(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+    assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
+
+    asset.write_bytes(b"draft")
+    saved = json.loads(invoke(["bud", "--save", "--json"], project, monkeypatch).stdout)
+    assert saved["base_commit_id"] == first
+    assert saved["changes"] == [{"state": "modified", "path": "asset.bin"}]
+    assert [item["path"] for item in saved["files"]] == ["asset.bin"]
+    listed = json.loads(invoke(["bud", "--json"], project, monkeypatch).stdout)
+    assert [item["id"] for item in listed] == [saved["id"]]
+    assert invoke(["bud"], project, monkeypatch).stdout == (
+        f"{saved['id'][:12]} on {first[:12]} [main] 1 changes\n"
+    )
+    graph = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    assert [item["id"] for item in graph["buds"]] == [saved["id"]]
+    assert "Buds:          1" in invoke(["stats"], project, monkeypatch).stdout
+
+    assert invoke(["restore", "main", "--discard"], project, monkeypatch).exit_code == 0
+    restored = json.loads(
+        invoke(["bud", "--restore", saved["id"][:10], "--json"], project, monkeypatch).stdout
+    )
+    assert restored["restored"]["id"] == saved["id"]
+    assert restored["saved"] is None
+    assert asset.read_bytes() == b"draft"
+
+    again = json.loads(invoke(["bud", "--save", "--json"], project, monkeypatch).stdout)
+    refused = invoke(["bud", "--drop", again["id"]], project, monkeypatch)
+    assert refused.exit_code != 0
+    assert "--yes" in str(refused.exception)
+    assert len(json.loads(invoke(["bud", "--json"], project, monkeypatch).stdout)) == 1
+    assert invoke(["bud", "--drop", again["id"], "--yes"], project, monkeypatch).exit_code == 0
+    assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
+    assert invoke(["bud", "--save", "--drop", "x"], project, monkeypatch).exit_code != 0

@@ -218,7 +218,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
     assert metadata["schema_version"] == "1"
     assert tables == {
         "meta", "commits", "commit_files", "commit_attachments", "commit_notes",
-        "commit_labels", "branches", "tags", "tracked_paths",
+        "commit_labels", "branches", "tags", "tracked_paths", "buds", "bud_files",
     }
     assert metadata["object_compression"] == "zstd"
     assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
@@ -227,6 +227,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
     assert created_at.utcoffset() == timezone.utc.utcoffset(None)
     assert {
         "idx_commits_parent", "idx_commit_labels_label", "idx_commit_attachments_object_hash",
+        "idx_buds_base", "idx_bud_files_object_hash",
     } <= indexes
 
     discovered = Repository.discover(first.root)
@@ -2791,3 +2792,190 @@ def test_change_detection_without_recorded_position_uses_branch_tip(
     assert [(entry.state, entry.path) for entry in repo.diff()] == [
         ("modified", "asset.bin")
     ]
+
+
+def bud_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Repository, Path, str, str]:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    return repo, asset, first, second
+
+
+def test_save_bud_keeps_unsaved_changes_on_current_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, _second = bud_repo(tmp_path, monkeypatch)
+    repo.restore(first)
+    asset.write_bytes(b"draft")
+    extra = write(repo.root, "extra.bin", b"extra")
+    repo.track([extra])
+
+    bud = repo.save_bud()
+
+    assert bud.base_commit_id == first
+    assert bud.branch_name == "main"
+    assert [(entry.state, entry.path) for entry in bud.changes] == [
+        ("modified", "asset.bin"),
+        ("added", "extra.bin"),
+    ]
+    assert asset.read_bytes() == b"draft"
+    assert [item.id for item in repo.buds()] == [bud.id]
+    assert [item.id for item in repo.commit_graph().buds] == [bud.id]
+    assert repo.stats().buds == 1
+
+
+def test_save_bud_requires_unsaved_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+    with pytest.raises(SproutError) as exc:
+        repo.save_bud()
+    assert exc.value.code == "nothing_to_save"
+    assert repo.buds() == []
+
+
+def test_restore_bud_returns_to_its_snapshot_and_removes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second = bud_repo(tmp_path, monkeypatch)
+    repo.restore(first)
+    asset.write_bytes(b"draft")
+    bud = repo.save_bud()
+    repo.restore(second, discard=True)
+    assert asset.read_bytes() == b"v2"
+
+    restored, stashed = repo.restore_bud(bud.id[:8])
+
+    assert restored.id == bud.id
+    assert stashed is None
+    assert asset.read_bytes() == b"draft"
+    assert repo.current_position() == (first, False)
+    assert repo.buds() == []
+    assert [(entry.state, entry.path) for entry in repo.status()] == [
+        ("modified", "asset.bin")
+    ]
+
+
+def test_restore_bud_keeps_newer_changes_as_another_bud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second = bud_repo(tmp_path, monkeypatch)
+    repo.restore(first)
+    asset.write_bytes(b"older draft")
+    older = repo.save_bud()
+    repo.restore(second, discard=True)
+    asset.write_bytes(b"newer draft")
+
+    restored, stashed = repo.restore_bud(older.id)
+
+    assert restored.id == older.id
+    assert stashed is not None
+    assert stashed.base_commit_id == second
+    assert asset.read_bytes() == b"older draft"
+    assert [item.id for item in repo.buds()] == [stashed.id]
+
+    repo.restore_bud(stashed.id)
+    assert asset.read_bytes() == b"newer draft"
+    assert repo.current_position() == (second, True)
+    assert len(repo.buds()) == 1
+
+
+def test_buds_on_one_snapshot_are_listed_newest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, second = bud_repo(tmp_path, monkeypatch)
+    asset.write_bytes(b"one")
+    one = repo.save_bud()
+    asset.write_bytes(b"two")
+    two = repo.save_bud()
+    with repo.connect() as db:
+        db.execute("UPDATE buds SET created_at='2000-01-01T00:00:00+00:00' WHERE id=?", (one.id,))
+
+    assert [item.id for item in repo.buds()] == [two.id, one.id]
+    assert {item.base_commit_id for item in repo.buds()} == {second}
+
+
+def test_drop_bud_and_unknown_buds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+    asset.write_bytes(b"draft")
+    bud = repo.save_bud()
+
+    assert repo.drop_bud(bud.id).id == bud.id
+    assert repo.buds() == []
+    for value in (bud.id, "zz", "abc'"):
+        with pytest.raises(SproutError) as exc:
+            repo.restore_bud(value)
+        assert exc.value.code == "unknown_bud"
+
+
+def test_restore_bud_refuses_untracked_conflict_without_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, second = bud_repo(tmp_path, monkeypatch)
+    added = write(repo.root, "added.bin", b"tracked draft")
+    repo.track([added])
+    bud = repo.save_bud()
+    repo.restore(second, discard=True)
+    assert not added.exists()
+    added.write_bytes(b"untracked work")
+
+    with pytest.raises(SproutError):
+        repo.restore_bud(bud.id)
+
+    assert added.read_bytes() == b"untracked work"
+    assert asset.read_bytes() == b"v2"
+    assert [item.id for item in repo.buds()] == [bud.id]
+    assert repo.current_position() == (second, True)
+
+
+def test_gc_doctor_and_prune_respect_buds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second = bud_repo(tmp_path, monkeypatch)
+    repo.create_tag("start", first)
+    asset.write_bytes(b"middle")
+    middle = repo.commit("middle").commit_id
+    asset.write_bytes(b"last")
+    last = repo.commit("last").commit_id
+    repo.create_tag("end", last)
+    repo.restore(middle)
+    asset.write_bytes(b"only in bud")
+    bud = repo.save_bud()
+    repo.restore(last, discard=True)
+
+    assert repo.gc(dry_run=True).removed_objects == 0
+    assert repo.doctor().ok
+    assert [commit.id for commit in repo.prune("start", "end").commits] == [second]
+    assert repo.resolve_commit(middle) == middle
+
+    bud_object = next(item for item in bud.files if item.path == "asset.bin").object_hash
+    path = repo.objects / bud_object[:2] / bud_object
+    original = path.read_bytes()
+    path.write_bytes(b"corrupt")
+    assert ("corrupt_object", bud_object) in [
+        (issue.kind, issue.detail) for issue in repo.doctor().issues
+    ]
+    path.write_bytes(original)
+
+    repo.drop_bud(bud.id)
+    assert bud_object in repo.gc().objects
+
+
+def test_repository_without_bud_tables_creates_them_on_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+    with repo.connect() as db:
+        db.execute("DROP TABLE bud_files")
+        db.execute("DROP TABLE buds")
+
+    reopened = Repository.discover(repo.root)
+    assert reopened.buds() == []
+    asset.write_bytes(b"draft")
+    assert reopened.save_bud().base_commit_id is not None

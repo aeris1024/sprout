@@ -16,6 +16,7 @@ import typer._completion_shared as typer_completion_shared
 from . import __version__
 from .errors import SproutError
 from .repository import (
+    Bud,
     CommitAnnotations,
     CommitAttachment,
     CommitGraph,
@@ -276,6 +277,30 @@ def _branches_json(repository: Repository) -> list[dict[str, Any]]:
     ]
 
 
+def _bud_json(bud: Bud) -> dict[str, Any]:
+    return {
+        "id": bud.id,
+        "base_commit_id": bud.base_commit_id,
+        "branch_name": bud.branch_name,
+        "created_at": bud.created_at,
+        "changes": [{"state": entry.state, "path": entry.path} for entry in bud.changes],
+        "files": [
+            {
+                "path": item.path,
+                "object_hash": item.object_hash,
+                "size": item.size,
+                "mtime_ns": item.mtime_ns,
+            }
+            for item in bud.files
+        ],
+    }
+
+
+def _bud_summary(bud: Bud) -> str:
+    base = bud.base_commit_id[:12] if bud.base_commit_id else "(no commit)"
+    return f"{bud.id[:12]} on {base} [{bud.branch_name}] {len(bud.changes)} changes"
+
+
 def _graph_json(graph: CommitGraph) -> dict[str, Any]:
     tip = next((branch.commit_id for branch in graph.branches if branch.current), None)
     return {
@@ -316,6 +341,7 @@ def _graph_json(graph: CommitGraph) -> dict[str, Any]:
             }
             for tag in graph.tags
         ],
+        "buds": [_bud_json(bud) for bud in graph.buds],
     }
 
 
@@ -1114,6 +1140,74 @@ def tag(
         typer.echo(f"{tag_name:<20} {commit_id[:12]}{suffix}")
 
 
+@app.command()
+def bud(
+    save: Annotated[
+        bool, typer.Option("--save", help="Keep unsaved tracked changes as a new bud")
+    ] = False,
+    restore: Annotated[
+        str | None,
+        typer.Option("--restore", help="Bring a bud back into the working tree"),
+    ] = None,
+    drop: Annotated[
+        str | None, typer.Option("--drop", help="Permanently delete a bud")
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm deleting a bud with --drop")
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """List, save, restore, or drop buds of unsaved changes."""
+    if sum((save, restore is not None, drop is not None)) > 1:
+        raise SproutError("use only one of --save, --restore, or --drop")
+    repository = repo()
+    if save:
+        with _show_progress(repository, enabled=not json_output):
+            saved = repository.save_bud()
+        if json_output:
+            _echo_json(_bud_json(saved))
+            return
+        typer.echo(f"Saved bud {_bud_summary(saved)}")
+        return
+    if restore is not None:
+        with _show_progress(repository, enabled=not json_output):
+            restored, stashed = repository.restore_bud(restore)
+        if json_output:
+            _echo_json(
+                {
+                    "restored": _bud_json(restored),
+                    "saved": _bud_json(stashed) if stashed is not None else None,
+                }
+            )
+            return
+        if stashed is not None:
+            typer.echo(f"Saved bud {_bud_summary(stashed)}")
+        typer.echo(f"Restored bud {_bud_summary(restored)}")
+        return
+    if drop is not None:
+        if not yes:
+            raise SproutError("dropping a bud is irreversible; rerun with --yes")
+        dropped = repository.drop_bud(drop)
+        if json_output:
+            _echo_json(_bud_json(dropped))
+            return
+        typer.echo(f"Dropped bud {_bud_summary(dropped)}")
+        return
+    if yes:
+        raise SproutError("--yes is only used with --drop")
+    buds = repository.buds()
+    if json_output:
+        _echo_json([_bud_json(item) for item in buds])
+        return
+    if not buds:
+        typer.echo("No buds")
+        return
+    for item in buds:
+        typer.echo(_bud_summary(item))
+
+
 @app.command(name="switch")
 def switch_command(
     branch_name: Annotated[
@@ -1339,6 +1433,7 @@ def stats() -> None:
     typer.echo(f"Commits:       {result.commits}")
     typer.echo(f"Branches:      {result.branches}")
     typer.echo(f"Tracked paths: {result.tracked_paths}")
+    typer.echo(f"Buds:          {result.buds}")
     typer.echo(f"Objects:       {result.objects} ({result.objects_bytes} bytes)")
     typer.echo(f"Logical size:  {result.logical_bytes} bytes")
     typer.echo(f"Unique size:   {result.unique_bytes} bytes")
