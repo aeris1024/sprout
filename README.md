@@ -293,6 +293,19 @@ Sproutは、作業ツリーがどのスナップショットに基づいてい�
 
 現在位置がブランチ先端以外のときに`commit`すると、変更が先端の上に積まれないよう、現在位置を起点とする新しいブランチを自動で作成して切り替え、そこへコミットします。ブランチ名は`branch-YYYYMMDD-HHMMSS`（ローカル時刻）で、既存のブランチ名やタグ名と重なる場合は末尾に`-2`、`-3`…を付けます。名前は`sprout branch OLD --rename NEW`で変更できます。`commit --json`の`created_branch`で、ブランチを自動作成したかどうかが分かります。現在位置から変更がない場合は、ブランチを作らずに`nothing to commit`となります。
 
+## スナップショット間を移動する
+
+`go`は、確認なしで別のスナップショットへ移動します。コミットID（または先頭部分）、ブランチ名、タグ名を指定できます。
+
+```powershell
+sprout go <commit-id>
+sprout go main
+```
+
+未保存の変更がある場合は、先にその変更を移動前の現在位置の「つぼみ」として残してから移動するため、`--discard`は不要です。移動先が現在のブランチの先端ならブランチはそのまま、他のブランチの先端ならそのブランチへ切り替えます（複数のブランチの先端なら、指定したブランチ名、なければ名前順で最初のブランチ）。途中のスナップショットへの移動ではブランチを変えず、現在位置だけを移します。未追跡ファイルとの衝突やリンクがある場合は、つぼみも作らず何も変更せずに中止します。移動途中で中断された場合は、次の起動時に移動前の状態へ戻します。
+
+`sprout move`は追跡ファイルの名前や場所を変えるコマンドで、`go`とは別のものです。
+
 ## 未保存の変更をつぼみとして残す
 
 コミットするほどではない未保存の変更は、「つぼみ」として現在位置のスナップショットに残せます。つぼみには追跡中ファイルのその時点の内容が保存され、実体は通常のコミットと同じobjectsストアで重複排除されます。1つのスナップショットにいくつでも付けられます。
@@ -453,6 +466,7 @@ sprout commit -m "ファイルを移動"
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH [--json]` | 別のブランチへ切り替える |
+| `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元・破棄する |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
@@ -473,7 +487,7 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -586,6 +600,15 @@ bud --json（一覧）:
 
 bud --save --json / bud --drop BUD --yes --json:
 Bud
+
+go --json:
+{
+  "current_commit": string,
+  "branch": string,
+  "at_branch_tip": boolean,
+  "bud": Bud | null,
+  "changes": [{"state": string, "path": string}]
+}
 
 bud --restore BUD --json:
 {

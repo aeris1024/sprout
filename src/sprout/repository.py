@@ -274,6 +274,15 @@ class Bud:
 
 
 @dataclass(frozen=True)
+class GoResult:
+    commit_id: str
+    branch: str
+    at_branch_tip: bool
+    bud: Bud | None
+    changes: tuple[StatusEntry, ...]
+
+
+@dataclass(frozen=True)
 class GcResult:
     dry_run: bool
     removed_objects: int
@@ -2907,19 +2916,32 @@ class Repository:
             branch_exists = db.execute(
                 "SELECT 1 FROM branches WHERE name=?", (bud.branch_name,)
             ).fetchone() is not None
+        stashed = self._materialize_keeping_changes(
+            {item.path: item for item in bud.files},
+            head_branch=bud.branch_name if branch_exists else None,
+            current_commit=bud.base_commit_id or "",
+        )
+        with self.connect() as db:
+            db.execute("DELETE FROM buds WHERE id=?", (bud.id,))
+        return bud, stashed
+
+    def _materialize_keeping_changes(
+        self,
+        target: dict[str, FileState],
+        *,
+        head_branch: str | None,
+        current_commit: str,
+    ) -> Bud | None:
+        """Replace the whole working tree, first keeping unsaved changes as a bud."""
+        self._validate_restore_inputs(target)
+        self._restore_plan(target, partial=False)
+        with self.connect() as db:
             position_before = db.execute(
                 "SELECT value FROM meta WHERE key='current_commit'"
             ).fetchone()
-        target = {item.path: item for item in bud.files}
-        self._validate_restore_inputs(target)
-        self._restore_plan(target, partial=False)
         stashed = self._save_bud() if self._has_unsaved_changes() else None
         try:
-            self._materialize(
-                target,
-                head_branch=bud.branch_name if branch_exists else None,
-                current_commit=bud.base_commit_id or "",
-            )
+            self._materialize(target, head_branch=head_branch, current_commit=current_commit)
         except BaseException:
             if stashed is not None:
                 with self.connect() as db:
@@ -2930,9 +2952,43 @@ class Repository:
                     if position_after == position_before:
                         db.execute("DELETE FROM buds WHERE id=?", (stashed.id,))
             raise
+        return stashed
+
+    @locked
+    def go(self, value: str) -> GoResult:
+        """Move to a snapshot, keeping unsaved changes as a bud on the current one."""
+        commit_id = self.resolve_commit(value)
         with self.connect() as db:
-            db.execute("DELETE FROM buds WHERE id=?", (bud.id,))
-        return bud, stashed
+            current_branch = db.execute(
+                "SELECT value FROM meta WHERE key='head_branch'"
+            ).fetchone()[0]
+            tips = [
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM branches WHERE commit_id=? ORDER BY name", (commit_id,)
+                )
+            ]
+        if current_branch in tips:
+            branch = current_branch
+        elif value in tips:
+            branch = value
+        elif tips:
+            branch = tips[0]
+        else:
+            branch = current_branch
+        stashed = self._materialize_keeping_changes(
+            self.manifest(commit_id),
+            head_branch=branch if branch != current_branch else None,
+            current_commit=commit_id,
+        )
+        _, at_tip = self.current_position()
+        return GoResult(
+            commit_id=commit_id,
+            branch=self.head_branch(),
+            at_branch_tip=at_tip,
+            bud=stashed,
+            changes=tuple(self.status()),
+        )
 
     @locked
     def drop_bud(self, value: str) -> Bud:
