@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprout Map Mockup</title>
+<style>
+:root {
+  --paper: #EEF4E6;
+  --panel: #E3EDD6;
+  --ink: #173404;
+  --ink-2: #3B6D11;
+  --line: #C0DD97;
+  --stem: #27500A;
+  --branch: #3B6D11;
+  --node: #27500A;
+  --current: #185FA5;
+  --bud: #854F0B;
+  --bud-bg: #FAEEDA;
+  --chip-bg: #D5E8BE;
+  --chip-ink: #173404;
+  --primary: #173404;
+  --on-primary: #EAF3DE;
+  --empty-leaf: #FFFFFF;
+  --danger: #A32D2D;
+  --radius: 10px;
+  --leaf-radius: 10px;
+  --font-ui: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-note: var(--font-ui);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F2416; --panel: #142D1C; --ink: #E1F5EE; --ink-2: #9FE1CB; --line: #24482F;
+    --stem: #5DCAA5; --branch: #9FE1CB; --node: #5DCAA5; --current: #85B7EB;
+    --bud: #EF9F27; --bud-bg: #412402; --chip-bg: #1D3B27; --chip-ink: #9FE1CB;
+    --primary: #5DCAA5; --on-primary: #04342C; --empty-leaf: #1D3B27; --danger: #F09595;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F2416; --panel: #142D1C; --ink: #E1F5EE; --ink-2: #9FE1CB; --line: #24482F;
+  --stem: #5DCAA5; --branch: #9FE1CB; --node: #5DCAA5; --current: #85B7EB;
+  --bud: #EF9F27; --bud-bg: #412402; --chip-bg: #1D3B27; --chip-ink: #9FE1CB;
+  --primary: #5DCAA5; --on-primary: #04342C; --empty-leaf: #1D3B27; --danger: #F09595;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-ui); font-size: 14px; display: flex; flex-direction: column; }
+button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 12px; cursor: pointer; }
+button:hover { background: var(--panel); border-color: var(--ink-2); }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+button:disabled { opacity: .45; cursor: default; }
+input, textarea { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; width: 100%; }
+.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-note); font-size: 18px; }
+.project { font-weight: 600; border: none; padding: 4px 6px; }
+.chip { font-size: 12px; padding: 2px 10px; border-radius: var(--radius); background: var(--chip-bg); color: var(--chip-ink); }
+.chip.dirty { background: var(--bud-bg); color: var(--bud); }
+.spacer { flex: 1; }
+.demo { border-style: dashed; color: var(--ink-2); font-size: 12px; }
+.main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 0; }
+.map { overflow: auto; position: relative; }
+.map svg { display: block; margin: 0 auto; }
+.panel { border-left: 1px solid var(--line); background: var(--panel); padding: 16px; overflow: auto; }
+.panel h2 { font-family: var(--font-note); font-weight: 500; font-size: 18px; margin: 4px 0 6px; }
+.panel .meta { color: var(--ink-2); font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
+.panel .thumb { height: 150px; border-radius: var(--leaf-radius); border: 1px solid var(--line); margin-bottom: 10px; }
+.panel .actions { display: grid; gap: 8px; }
+.panel .hint { font-size: 12px; color: var(--ink-2); margin: 8px 0; line-height: 1.6; }
+.panel ul { padding-left: 18px; margin: 6px 0 12px; color: var(--ink-2); font-size: 13px; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; color: var(--ink-2); }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 8px 16px; border-radius: 999px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.leaf { cursor: pointer; }
+rect.leafbox { rx: var(--leaf-radius); }
+.leaf text, .bud text { font-size: 12px; pointer-events: none; }
+@media (max-width: 760px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .panel { border-left: none; border-top: 1px solid var(--line); max-height: 45vh; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22V11" stroke="var(--stem)" stroke-width="2" fill="none"/><path d="M12 13C12 8 8 6 4 6c0 4 3 7 8 7z" fill="var(--branch)"/><path d="M12 11c0-4 3-7 8-7 0 4-3 7-8 7z" fill="var(--stem)"/></svg>Sprout</div>
+  <button class="project" title="最近使ったプロジェクト">poster-design ▾</button>
+  <span class="chip" id="branchChip"></span>
+  <span class="chip dirty" id="dirtyChip"></span>
+  <span class="spacer"></span>
+  <button class="demo" id="editBtn">（デモ）ファイルを編集する</button>
+  <button id="filesBtn">ファイル</button>
+  <button class="primary" id="saveBtn">保存</button>
+  <button class="demo" id="paletteBtn" title="配色案の切り替え（モック確認用）">配色: C 夜の温室</button>
+  <button class="demo" id="themeBtn" title="ライト・ダークの切り替え（モック確認用）">表示: 自動</button>
+  <button title="設定" aria-label="設定">⚙</button>
+</header>
+<div class="main">
+  <div class="map" id="map"></div>
+  <aside class="panel" id="panel"></aside>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const PALETTE = ["#C0DD97", "#97C459", "#9FE1CB", "#5DCAA5", "#FAC775", "#F5C4B3", "#B5D4F4", "#CECBF6", "#F4C0D1"];
+const state = {
+  commits: [
+    { id: "c1", parent: null, branch: "main", msg: "初稿", date: "10/20 10:12", color: 0, tag: "提出" },
+    { id: "c2", parent: "c1", branch: "main", msg: "ラフ1", date: "10/21 15:40", color: 1 },
+    { id: "c3", parent: "c2", branch: "main", msg: "ラフ2", date: "10/22 11:05", color: 2 },
+    { id: "b1", parent: "c3", branch: "別案", msg: "背景写真案", date: "10/23 09:30", color: 5 },
+    { id: "c4", parent: "c3", branch: "main", msg: "配色を青系に", date: "10/24 14:02", color: 3 },
+    { id: "b2", parent: "b1", branch: "別案", msg: "写真を差し替え", date: "10/25 16:20", color: 6 },
+    { id: "c5", parent: "c4", branch: "main", msg: "文字組みを調整", date: "10/27 13:48", color: 4, noThumb: false },
+    { id: "c6", parent: "c5", branch: "main", msg: "素材を追加", date: "10/27 14:30", color: 0, noThumb: true },
+  ],
+  branches: [{ name: "main", tip: "c6" }, { name: "別案", tip: "b2" }],
+  current: { branch: "main", position: "c6" },
+  dirty: 0,
+  buds: [],
+  selected: "c6",
+  seq: 1,
+};
+
+const ROW = 92, LEAF_W = 112, LEAF_H = 66, LANE = 280, GAP = 18, TOP = 90, BOTTOM = 60;
+const $ = (id) => document.getElementById(id);
+const byId = (id) => state.commits.find((c) => c.id === id);
+const tipOf = (id) => state.branches.filter((b) => b.tip === id);
+const isTip = (id, branch) => state.branches.some((b) => b.tip === id && (!branch || b.name === branch));
+
+function toast(text) {
+  const el = $("toast");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+function layout() {
+  const lanes = [];
+  state.commits.forEach((c) => { if (!lanes.includes(c.branch)) lanes.push(c.branch); });
+  const laneIndex = Object.fromEntries(lanes.map((n, i) => [n, i]));
+  const perLane = {};
+  const pos = {};
+  state.commits.forEach((c, row) => {
+    const lane = laneIndex[c.branch];
+    const k = (perLane[lane] = (perLane[lane] ?? -1) + 1);
+    pos[c.id] = { lane, row, side: k % 2 === 0 ? -1 : 1, x: 170 + lane * LANE };
+  });
+  const height = TOP + BOTTOM + state.commits.length * ROW;
+  for (const p of Object.values(pos)) p.y = height - BOTTOM - p.row * ROW - ROW / 2;
+  const width = 170 + (lanes.length - 1) * LANE + GAP + LEAF_W + 40;
+  return { lanes, pos, width, height };
+}
+
+function svgEl(tag, attrs, text) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function render() {
+  const { lanes, pos, width, height } = layout();
+  const svg = svgEl("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "芽のマップ" });
+  svg.append(svgEl("path", { d: `M40 ${height - BOTTOM + 6} H${width - 40}`, stroke: "var(--line)", "stroke-width": 1.5, fill: "none" }));
+  svg.append(svgEl("text", { x: 52, y: height - BOTTOM + 26, fill: "var(--ink-2)", "font-size": 12 }, "はじまり"));
+
+  lanes.forEach((name) => {
+    const members = state.commits.filter((c) => c.branch === name);
+    const first = members[0], last = members[members.length - 1];
+    const p0 = pos[first.id], p1 = pos[last.id];
+    const color = name === "main" ? "var(--stem)" : "var(--branch)";
+    let d;
+    if (first.parent && pos[first.parent]) {
+      const pp = pos[first.parent];
+      d = `M${pp.x} ${pp.y} C${pp.x} ${pp.y - 40} ${p0.x} ${pp.y - 10} ${p0.x} ${pp.y - 60} V${p1.y}`;
+    } else {
+      d = `M${p0.x} ${height - BOTTOM + 6} V${p1.y}`;
+    }
+    svg.append(svgEl("path", { d, stroke: color, "stroke-width": name === "main" ? 5 : 4, fill: "none", "stroke-linecap": "round" }));
+    const current = state.current.branch === name;
+    svg.append(svgEl("path", { d: `M${p1.x} ${p1.y} V${p1.y - 92}`, stroke: color, "stroke-width": 2, "stroke-dasharray": "2 5", fill: "none" }));
+    svg.append(svgEl("text", { x: p1.x, y: p1.y - 100, "text-anchor": "middle", fill: current ? "var(--current)" : "var(--ink-2)", "font-size": 13, "font-weight": current ? 600 : 400 }, current ? `${name}（現在のブランチ）` : name));
+  });
+
+  state.commits.forEach((c) => {
+    const p = pos[c.id];
+    const lx = p.side < 0 ? p.x - GAP - LEAF_W : p.x + GAP;
+    const g = svgEl("g", { class: "leaf", tabindex: 0, role: "button", "aria-label": c.msg });
+    g.addEventListener("click", () => select(c.id));
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter") select(c.id); });
+    const here = state.current.position === c.id;
+    const selected = state.selected === c.id;
+    g.append(svgEl("path", { d: `M${p.x} ${p.y} H${p.side < 0 ? lx + LEAF_W : lx}`, stroke: c.branch === "main" ? "var(--stem)" : "var(--branch)", "stroke-width": 2 }));
+    g.append(svgEl("circle", { cx: p.x, cy: p.y, r: here ? 7 : 5, fill: here ? "var(--current)" : "var(--node)" }));
+    g.append(svgEl("rect", {
+      x: lx, y: p.y - LEAF_H / 2, width: LEAF_W, height: LEAF_H, class: "leafbox",
+      fill: c.noThumb ? "var(--empty-leaf)" : PALETTE[c.color],
+      stroke: here ? "var(--current)" : selected ? "var(--ink)" : "var(--line)",
+      "stroke-width": here ? 3 : selected ? 2 : 1,
+      "stroke-dasharray": selected && !here ? "4 3" : "none",
+    }));
+    if (c.noThumb) g.append(svgEl("text", { x: lx + LEAF_W / 2, y: p.y - 2, "text-anchor": "middle", fill: "var(--ink-2)" }, "画像なし"));
+    g.append(svgEl("text", { x: lx, y: p.y + LEAF_H / 2 + 15, fill: "var(--ink)" }, c.msg));
+    if (c.tag) {
+      g.append(svgEl("rect", { x: lx + 6, y: p.y - LEAF_H / 2 + 6, width: 48, height: 18, rx: 9, fill: "var(--bud-bg)" }));
+      g.append(svgEl("text", { x: lx + 30, y: p.y - LEAF_H / 2 + 19, "text-anchor": "middle", fill: "var(--bud)" }, `#${c.tag}`));
+    }
+    if (here) g.append(svgEl("text", { x: p.side < 0 ? lx : lx + LEAF_W, y: p.y - LEAF_H / 2 - 8, "text-anchor": p.side < 0 ? "start" : "end", fill: "var(--current)", "font-size": 12 }, "いまここ"));
+    svg.append(g);
+
+    state.buds.filter((b) => b.base === c.id).forEach((b, i) => {
+      const bx = p.side < 0 ? lx + LEAF_W - 74 : lx;
+      const by = p.y + LEAF_H / 2 + 26 + i * 28;
+      const bg = svgEl("g", { class: "bud leaf", tabindex: 0, role: "button", "aria-label": "つぼみ" });
+      bg.addEventListener("click", () => select(b.id));
+      bg.append(svgEl("rect", { x: bx, y: by, width: 74, height: 22, rx: 11, fill: "var(--bud-bg)", stroke: state.selected === b.id ? "var(--ink)" : "var(--bud)", "stroke-width": 1.2 }));
+      bg.append(svgEl("text", { x: bx + 37, y: by + 15, "text-anchor": "middle", fill: "var(--bud)" }, `つぼみ ${b.files}`));
+      svg.append(bg);
+    });
+  });
+
+  if (state.dirty > 0) {
+    const p = pos[state.current.position];
+    const lx = p.side < 0 ? p.x - GAP - LEAF_W : p.x + GAP;
+    const g = svgEl("g", { class: "bud leaf", tabindex: 0, role: "button", "aria-label": "未保存の芽" });
+    g.addEventListener("click", () => select("working"));
+    g.append(svgEl("rect", { x: lx + 10, y: p.y - LEAF_H / 2 - 54, width: LEAF_W - 20, height: 30, rx: 15, fill: "none", stroke: "var(--bud)", "stroke-width": 2, "stroke-dasharray": "5 4" }));
+    g.append(svgEl("text", { x: lx + LEAF_W / 2, y: p.y - LEAF_H / 2 - 34, "text-anchor": "middle", fill: "var(--bud)" }, `未保存の芽 ${state.dirty}`));
+    svg.append(g);
+  }
+
+  $("map").replaceChildren(svg);
+  const here = pos[state.current.position];
+  const map = $("map");
+  const offsetX = Math.max(0, (map.clientWidth - width) / 2);
+  const viewTop = map.scrollTop, viewLeft = map.scrollLeft;
+  if (here.y - 120 < viewTop || here.y + 80 > viewTop + map.clientHeight || here.x + offsetX < viewLeft || here.x + offsetX > viewLeft + map.clientWidth) {
+    map.scrollTo({ top: here.y - map.clientHeight / 2, left: here.x + offsetX - map.clientWidth / 2, behavior: "smooth" });
+  }
+  $("branchChip").textContent = state.current.branch;
+  $("dirtyChip").textContent = state.dirty ? `未保存の変更 ${state.dirty}` : "保存済み";
+  $("dirtyChip").classList.toggle("dirty", state.dirty > 0);
+  renderPanel();
+}
+
+function renderPanel() {
+  const panel = $("panel");
+  const sel = state.selected;
+  if (sel === "working") {
+    const mid = !isTip(state.current.position, state.current.branch);
+    panel.innerHTML = `
+      <div class="eyebrow">未保存の芽</div>
+      <h2>変更 ${state.dirty} 件</h2>
+      <ul>${Array.from({ length: state.dirty }, (_, i) => `<li>layers/part${i + 1}.psd を変更</li>`).join("")}</ul>
+      <label class="eyebrow" for="msg">メッセージ</label>
+      <textarea id="msg" rows="3" placeholder="このスナップショットで行ったこと"></textarea>
+      <p class="hint">サムネイル（任意）: <button id="pick">画像を選ぶ</button></p>
+      ${mid ? `<p class="hint">途中の芽から保存するため、新しい枝が自動で作られます。</p>` : ""}
+      <div class="actions"><button class="primary" id="doSave">保存して葉にする</button></div>`;
+    $("doSave").onclick = () => save($("msg").value.trim());
+    $("pick").onclick = () => toast("画像選択ダイアログ（モック）");
+    return;
+  }
+  const bud = state.buds.find((b) => b.id === sel);
+  if (bud) {
+    const base = byId(bud.base);
+    panel.innerHTML = `
+      <div class="eyebrow">つぼみ（退避した未保存の変更）</div>
+      <h2>「${base.msg}」の上の変更 ${bud.files} 件</h2>
+      <div class="meta">退避: ${bud.date}</div>
+      <div class="actions">
+        <button class="primary" id="back">このつぼみに戻る</button>
+        <button id="drop" style="color:var(--danger)">つぼみを捨てる</button>
+      </div>`;
+    $("back").onclick = () => restoreBud(bud.id);
+    $("drop").onclick = () => { if (confirm("このつぼみを捨てます。元に戻せません。")) { state.buds = state.buds.filter((b) => b !== bud); state.selected = state.current.position; render(); } };
+    return;
+  }
+  const c = byId(sel);
+  if (!c) { panel.innerHTML = ""; return; }
+  const here = state.current.position === c.id;
+  const tips = tipOf(c.id).map((b) => b.name);
+  panel.innerHTML = `
+    <div class="eyebrow">${here ? "いまここ" : "スナップショット"}</div>
+    <div class="thumb" style="background:${c.noThumb ? "var(--empty-leaf)" : PALETTE[c.color]}"></div>
+    <h2>${c.msg}</h2>
+    <div class="meta">${c.date} · ${c.branch}${tips.length ? ` · 枝先: ${tips.join(", ")}` : ""}${c.tag ? ` · #${c.tag}` : ""}<br>ファイル 12 件</div>
+    <div class="actions">
+      <button class="primary" id="go" ${here ? "disabled" : ""}>${here ? "この芽にいます" : "ここへ移動"}</button>
+      <button id="grow">ここから枝を伸ばす</button>
+      <button id="thumb">${c.noThumb ? "サムネイルを登録" : "サムネイルを変更"}</button>
+      <button id="export">ファイルを取り出す</button>
+    </div>
+    ${!here && state.dirty ? `<p class="hint">移動すると、未保存の変更 ${state.dirty} 件は今の芽につぼみとして退避されます。</p>` : ""}`;
+  $("go").onclick = () => moveTo(c.id);
+  $("grow").onclick = () => { moveTo(c.id); toast("この芽から新しい枝を伸ばします（保存すると枝ができます）"); };
+  $("thumb").onclick = () => toast("サムネイル選択（モック）");
+  $("export").onclick = () => toast("書き出し先の選択（モック）");
+}
+
+function now() {
+  const d = new Date();
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function stashIfDirty() {
+  if (!state.dirty) return false;
+  state.buds.push({ id: `bud${state.seq++}`, base: state.current.position, files: state.dirty, date: now() });
+  state.dirty = 0;
+  return true;
+}
+
+function branchFor(id) {
+  const tips = tipOf(id).map((b) => b.name);
+  if (tips.includes(state.current.branch)) return state.current.branch;
+  return tips[0] ?? byId(id).branch;
+}
+
+function moveTo(id) {
+  const stashed = stashIfDirty();
+  state.current = { branch: branchFor(id), position: id };
+  state.selected = id;
+  render();
+  toast(stashed ? "未保存の変更をつぼみに退避して移動しました" : "移動しました");
+}
+
+function restoreBud(budId) {
+  const bud = state.buds.find((b) => b.id === budId);
+  const stashed = stashIfDirty();
+  state.buds = state.buds.filter((b) => b.id !== budId);
+  state.current = { branch: branchFor(bud.base), position: bud.base };
+  state.dirty = bud.files;
+  state.selected = "working";
+  render();
+  toast(stashed ? "今の変更をつぼみに退避して、選んだつぼみに戻りました" : "つぼみの変更に戻りました");
+}
+
+function save(message) {
+  if (!state.dirty) { toast("保存する変更はありません"); return; }
+  if (!message) { toast("メッセージを入力してください"); return; }
+  const id = `n${state.seq++}`;
+  let branch = state.current.branch;
+  if (!isTip(state.current.position, branch)) {
+    const d = new Date();
+    branch = `枝-${d.getMonth() + 1}${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+    state.branches.push({ name: branch, tip: null });
+    toast(`途中の芽から保存したので、新しい枝「${branch}」を作りました`);
+  } else {
+    toast("保存しました");
+  }
+  state.commits.push({ id, parent: state.current.position, branch, msg: message, date: now(), color: state.seq % PALETTE.length });
+  state.branches.find((b) => b.name === branch).tip = id;
+  state.current = { branch, position: id };
+  state.dirty = 0;
+  state.selected = id;
+  render();
+}
+
+function select(id) { state.selected = id; render(); }
+
+$("editBtn").onclick = () => { state.dirty += 1; render(); };
+$("saveBtn").onclick = () => { if (state.dirty) select("working"); else toast("保存する変更はありません"); };
+$("filesBtn").onclick = () => toast("追跡ファイルのパネル（モック）");
+const font = {
+  gothic: '"Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif',
+  mincho: '"Yu Mincho", "Hiragino Mincho ProN", "Noto Serif JP", serif',
+};
+const PALETTES = {
+  a: {
+    label: "A 植物ノート",
+    shape: { radius: "8px", "leaf-radius": "10px", "font-note": font.mincho },
+    light: { paper: "#F6F1E4", panel: "#FBF8F0", ink: "#2C2C2A", "ink-2": "#5F5E5A", line: "#D9D0BB", stem: "#3B6D11", branch: "#639922", node: "#3B6D11", current: "#185FA5", bud: "#BA7517", "bud-bg": "#FAEEDA", "chip-bg": "#EAF3DE", "chip-ink": "#27500A", primary: "#3B6D11", "on-primary": "#F6F1E4", "empty-leaf": "#FBF8F0", danger: "#A32D2D" },
+    dark: { paper: "#22201B", panel: "#2A2722", ink: "#F1EFE8", "ink-2": "#B4B2A9", line: "#47443C", stem: "#97C459", branch: "#C0DD97", node: "#97C459", current: "#85B7EB", bud: "#EF9F27", "bud-bg": "#412402", "chip-bg": "#27500A", "chip-ink": "#EAF3DE", primary: "#97C459", "on-primary": "#173404", "empty-leaf": "#2A2722", danger: "#F09595" },
+  },
+  b: {
+    label: "B ミニマル",
+    shape: { radius: "6px", "leaf-radius": "6px", "font-note": font.gothic },
+    light: { paper: "#FFFFFF", panel: "#F7F7F5", ink: "#2C2C2A", "ink-2": "#6B6A65", line: "#E3E1DA", stem: "#639922", branch: "#97C459", node: "#639922", current: "#185FA5", bud: "#BA7517", "bud-bg": "#FAEEDA", "chip-bg": "#F1EFE8", "chip-ink": "#444441", primary: "#2C2C2A", "on-primary": "#FFFFFF", "empty-leaf": "#F1EFE8", danger: "#A32D2D" },
+    dark: { paper: "#1E1E1D", panel: "#262624", ink: "#F1EFE8", "ink-2": "#B4B2A9", line: "#3A3A38", stem: "#97C459", branch: "#C0DD97", node: "#97C459", current: "#85B7EB", bud: "#EF9F27", "bud-bg": "#412402", "chip-bg": "#333331", "chip-ink": "#D3D1C7", primary: "#F1EFE8", "on-primary": "#1E1E1D", "empty-leaf": "#333331", danger: "#F09595" },
+  },
+  c: {
+    label: "C 夜の温室",
+    shape: { radius: "10px", "leaf-radius": "10px", "font-note": font.gothic },
+    light: { paper: "#EEF4E6", panel: "#E3EDD6", ink: "#173404", "ink-2": "#3B6D11", line: "#C0DD97", stem: "#27500A", branch: "#3B6D11", node: "#27500A", current: "#185FA5", bud: "#854F0B", "bud-bg": "#FAEEDA", "chip-bg": "#D5E8BE", "chip-ink": "#173404", primary: "#173404", "on-primary": "#EAF3DE", "empty-leaf": "#FFFFFF", danger: "#A32D2D" },
+    dark: { paper: "#0F2416", panel: "#142D1C", ink: "#E1F5EE", "ink-2": "#9FE1CB", line: "#24482F", stem: "#5DCAA5", branch: "#9FE1CB", node: "#5DCAA5", current: "#85B7EB", bud: "#EF9F27", "bud-bg": "#412402", "chip-bg": "#1D3B27", "chip-ink": "#9FE1CB", primary: "#5DCAA5", "on-primary": "#04342C", "empty-leaf": "#1D3B27", danger: "#F09595" },
+  },
+};
+const modes = [["auto", "表示: 自動"], ["light", "表示: ライト"], ["dark", "表示: ダーク"]];
+const paletteOrder = ["c", "b", "a"];
+let modeIndex = 0, paletteIndex = 0;
+const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  const palette = PALETTES[paletteOrder[paletteIndex]];
+  const mode = modes[modeIndex][0] === "auto" ? (darkQuery.matches ? "dark" : "light") : modes[modeIndex][0];
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries({ ...palette.shape, ...palette[mode] })) root.style.setProperty(`--${k}`, v);
+  root.style.colorScheme = mode;
+  $("themeBtn").textContent = modes[modeIndex][1];
+  $("paletteBtn").textContent = `配色: ${palette.label}`;
+}
+darkQuery.addEventListener("change", applyTheme);
+$("themeBtn").onclick = () => { modeIndex = (modeIndex + 1) % modes.length; applyTheme(); };
+$("paletteBtn").onclick = () => { paletteIndex = (paletteIndex + 1) % paletteOrder.length; applyTheme(); };
+applyTheme();
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); $("saveBtn").click(); }
+});
+render();
+</script>
+</body>
+</html>
