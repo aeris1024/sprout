@@ -4,13 +4,16 @@ title: serveコマンド(常駐モード)を追加してGUIの応答性を上げ
 status: To Do
 assignee: []
 created_date: '2026-07-15 16:38'
+updated_date: '2026-10-27 15:05'
 labels: []
 dependencies:
   - TASK-19
+  - TASK-54
+  - TASK-55
 references:
   - src/sprout/cli.py
   - src/sprout/repository.py
-priority: low
+priority: medium
 type: feature
 ordinal: 27000
 ---
@@ -44,4 +47,11 @@ discover時のリカバリ確認は起動時に1回だけ行われる。常駐�
 - [ ] #4 常駐中に別プロセスのCLI実行と安全に共存できる(ロックが機能する)
 - [ ] #5 プロトコル仕様がドキュメント化されている
 - [ ] #6 リクエスト・レスポンスの往復がテストで検証されている
+- [ ] #7 TASK-52〜55で追加・変更した現在位置、つぼみ、move、自動ブランチ作成付きcommitもserve経由で実行でき、通常CLIと同じJSONを返す
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+TASK-51のGUI刷新設計（doc-1）で、新GUI実装（TASK-57）の前提として本タスクを先に行うと決定した。優先度をMediumへ上げ、新しいCLI操作もserveで扱えるようTASK-54・55への依存を追加した。
+<!-- SECTION:NOTES:END -->
