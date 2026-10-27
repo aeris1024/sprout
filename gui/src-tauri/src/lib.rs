@@ -2,8 +2,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -66,8 +68,171 @@ fn parse_cli_error(stderr: &str, exit_code: Option<i32>) -> SproutCliError {
     )
 }
 
-#[tauri::command]
-fn run_sprout(
+/// One long-lived `sprout serve` process reused across GUI requests.
+struct ServeClient {
+    program: String,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    next_id: u64,
+}
+
+impl ServeClient {
+    fn spawn(program: &str) -> Result<Option<Self>, SproutCliError> {
+        let mut command = Command::new(program);
+        command
+            .arg("serve")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        configure(&mut command);
+        let mut child = command.spawn().map_err(|error| spawn_error(program, &error))?;
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            let _ = child.kill();
+            return Ok(None);
+        };
+        let mut stdout = BufReader::new(stdout);
+        let mut ready = String::new();
+        let started = stdout.read_line(&mut ready).ok().filter(|read| *read > 0).is_some()
+            && serde_json::from_str::<Value>(&ready)
+                .ok()
+                .and_then(|value| value.get("ready").and_then(Value::as_bool))
+                == Some(true);
+        if !started {
+            // Older CLIs without serve exit immediately; fall back to one process per call.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            program: program.to_owned(),
+            child,
+            stdin,
+            stdout,
+            next_id: 0,
+        }))
+    }
+
+    fn request(&mut self, project: &Path, args: &[String]) -> std::io::Result<Value> {
+        self.next_id += 1;
+        let request = json!({
+            "id": self.next_id,
+            "args": args,
+            "cwd": project.to_string_lossy(),
+        });
+        writeln!(self.stdin, "{request}")?;
+        self.stdin.flush()?;
+        let mut line = String::new();
+        if self.stdout.read_line(&mut line)? == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "sprout serve stopped",
+            ));
+        }
+        serde_json::from_str(&line)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+}
+
+impl Drop for ServeClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Default)]
+struct ServeState {
+    client: Mutex<Option<ServeClient>>,
+    unsupported: Mutex<Option<String>>,
+}
+
+fn configure(command: &mut Command) {
+    command
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("NO_COLOR", "1");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn spawn_error(program: &str, error: &std::io::Error) -> SproutCliError {
+    let code = if error.kind() == std::io::ErrorKind::NotFound {
+        "sprout_not_found"
+    } else {
+        "sprout_spawn_failed"
+    };
+    SproutCliError::new(
+        code,
+        if code == "sprout_not_found" {
+            "Sprout CLIが見つかりません。PATHまたはCLIパス設定を確認してください"
+        } else {
+            "Sprout CLIを起動できませんでした"
+        },
+        json!({ "program": program, "reason": error.to_string() }),
+    )
+}
+
+fn serve_response(response: Value) -> Result<Value, SproutCliError> {
+    if response.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(response.get("result").cloned().unwrap_or(Value::Null));
+    }
+    let exit_code = response.get("exit_code").cloned().unwrap_or(Value::Null);
+    let error = response.get("error").cloned().unwrap_or_else(|| json!({}));
+    let mut details = error.get("details").cloned().unwrap_or_else(|| json!({}));
+    if let Some(object) = details.as_object_mut() {
+        object.insert("exit_code".to_owned(), exit_code);
+    }
+    Err(SproutCliError::new(
+        error.get("code").and_then(Value::as_str).unwrap_or("sprout_cli_failed"),
+        error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("Sprout CLIがエラー終了しました"),
+        details,
+    ))
+}
+
+/// Run through the resident serve process, or `None` when it cannot be used.
+fn run_via_serve(
+    state: &ServeState,
+    program: &str,
+    project: &Path,
+    args: &[String],
+) -> Result<Option<Value>, SproutCliError> {
+    if state.unsupported.lock().unwrap().as_deref() == Some(program) {
+        return Ok(None);
+    }
+    let mut guard = state.client.lock().unwrap();
+    if guard.as_ref().is_some_and(|client| client.program != program) {
+        *guard = None;
+    }
+    if guard.is_none() {
+        match ServeClient::spawn(program)? {
+            Some(client) => *guard = Some(client),
+            None => {
+                *state.unsupported.lock().unwrap() = Some(program.to_owned());
+                return Ok(None);
+            }
+        }
+    }
+    let client = guard.as_mut().expect("serve client was just started");
+    match client.request(project, args) {
+        Ok(response) => serve_response(response).map(Some),
+        Err(_) => {
+            // A broken pipe drops the process; this call runs once without it.
+            *guard = None;
+            Ok(None)
+        }
+    }
+}
+
+fn execute(
+    state: &ServeState,
     project_dir: String,
     args: Vec<String>,
     sprout_program: Option<String>,
@@ -96,36 +261,16 @@ fn run_sprout(
         .filter(|value| !value.is_empty())
         .unwrap_or("sprout");
     let arguments = command_arguments(&args);
-    let mut command = Command::new(program);
-    command
-        .current_dir(project)
-        .args(arguments)
-        .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("NO_COLOR", "1");
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
+    if let Some(value) = run_via_serve(state, program, project, &arguments)? {
+        return Ok(value);
     }
+    let mut command = Command::new(program);
+    command.current_dir(project).args(arguments);
+    configure(&mut command);
 
-    let output = command.output().map_err(|error| {
-        let code = if error.kind() == std::io::ErrorKind::NotFound {
-            "sprout_not_found"
-        } else {
-            "sprout_spawn_failed"
-        };
-        SproutCliError::new(
-            code,
-            if code == "sprout_not_found" {
-                "Sprout CLIが見つかりません。PATHまたはCLIパス設定を確認してください"
-            } else {
-                "Sprout CLIを起動できませんでした"
-            },
-            json!({ "program": program, "reason": error.to_string() }),
-        )
-    })?;
+    let output = command
+        .output()
+        .map_err(|error| spawn_error(program, &error))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -140,6 +285,16 @@ fn run_sprout(
             json!({ "reason": error.to_string(), "stdout": stdout.trim() }),
         )
     })
+}
+
+#[tauri::command]
+fn run_sprout(
+    state: tauri::State<'_, ServeState>,
+    project_dir: String,
+    args: Vec<String>,
+    sprout_program: Option<String>,
+) -> Result<Value, SproutCliError> {
+    execute(&state, project_dir, args, sprout_program)
 }
 
 fn thumbnail_data_url(media_type: &str, bytes: &[u8]) -> Result<String, SproutCliError> {
@@ -162,6 +317,7 @@ fn thumbnail_data_url(media_type: &str, bytes: &[u8]) -> Result<String, SproutCl
 
 #[tauri::command]
 fn read_sprout_thumbnail(
+    state: tauri::State<'_, ServeState>,
     project_dir: String,
     commit_id: String,
     media_type: String,
@@ -186,7 +342,7 @@ fn read_sprout_thumbnail(
         "--output".to_owned(),
         output.to_string_lossy().into_owned(),
     ];
-    let export_result = run_sprout(project_dir, args, sprout_program);
+    let export_result = execute(&state, project_dir, args, sprout_program);
     if let Err(error) = export_result {
         let _ = fs::remove_file(&output);
         return Err(error);
@@ -207,6 +363,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .manage(ServeState::default())
         .invoke_handler(tauri::generate_handler![run_sprout, read_sprout_thumbnail])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -246,6 +403,23 @@ mod tests {
         assert_eq!(error.code, "sprout_cli_failed");
         assert_eq!(error.message, "unexpected failure");
         assert_eq!(error.details["exit_code"], 7);
+    }
+
+    #[test]
+    fn maps_serve_responses() {
+        let ok = serve_response(json!({"id": 1, "ok": true, "exit_code": 0, "result": {"a": 1}}));
+        assert_eq!(ok.unwrap()["a"], 1);
+        let error = serve_response(json!({
+            "id": 2,
+            "ok": false,
+            "exit_code": 1,
+            "error": {"code": "repository_locked", "message": "busy", "details": {"retryable": true}}
+        }))
+        .unwrap_err();
+        assert_eq!(error.code, "repository_locked");
+        assert_eq!(error.message, "busy");
+        assert_eq!(error.details["retryable"], true);
+        assert_eq!(error.details["exit_code"], 1);
     }
 
     #[test]

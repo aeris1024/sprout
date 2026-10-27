@@ -7,6 +7,8 @@ export interface StatusChange {
 
 export interface SproutStatus {
   branch: string;
+  current_commit?: string | null;
+  at_branch_tip?: boolean;
   changes: StatusChange[];
   tracked?: string[];
   untracked?: string[];
@@ -19,6 +21,7 @@ export interface PathOperationResult {
 export interface CommitResult {
   id: string;
   branch: string;
+  created_branch?: boolean;
   message: string;
   removed_paths: string[];
 }
@@ -80,10 +83,37 @@ export interface GraphTag {
   created_at: string;
 }
 
+export interface BudFile {
+  path: string;
+  object_hash: string;
+  size: number;
+  mtime_ns: number;
+}
+
+export interface Bud {
+  id: string;
+  base_commit_id: string | null;
+  branch_name: string;
+  created_at: string;
+  changes: StatusChange[];
+  files: BudFile[];
+}
+
 export interface CommitGraph {
+  current_commit?: string | null;
+  at_branch_tip?: boolean;
   commits: GraphCommit[];
   branches: BranchInfo[];
   tags: GraphTag[];
+  buds?: Bud[];
+}
+
+export interface GoResult {
+  current_commit: string;
+  branch: string;
+  at_branch_tip: boolean;
+  bud: Bud | null;
+  changes: StatusChange[];
 }
 
 export interface SproutCliError {
