@@ -192,6 +192,17 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .tag-chip rect { fill: var(--bud-bg); rx: 9px; }
 .tag-chip text { fill: var(--bud); font-size: 11px; }
 
+.bud, .unsaved-bud { cursor: pointer; outline: none; }
+.bud rect { fill: var(--bud-bg); stroke: var(--bud); stroke-width: 1.2; rx: 11px; }
+.bud text, .unsaved-bud text { fill: var(--bud); font-size: 12px; }
+.bud.selected rect, .bud:focus-visible rect { stroke: var(--ink); stroke-width: 2; }
+.unsaved-bud rect { fill: var(--paper); stroke: var(--bud); stroke-width: 2; stroke-dasharray: 5 4; rx: 14px; }
+.unsaved-bud.selected rect, .unsaved-bud:focus-visible rect { fill: var(--bud-bg); }
+.grow-note { color: var(--bud); }
+.grow-form { display: grid; gap: 8px; }
+.grow-form input { color: var(--ink); }
+.notice-path { font-family: ui-monospace, "Cascadia Mono", monospace; word-break: break-all; }
+
 .message-heading { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
 .message-heading h3 { margin: 0; }
 .message-editor { display: grid; gap: 8px; }

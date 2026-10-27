@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAP, layoutSproutMap } from "./sproutMap";
+import { MAP, lanePath, layoutSproutMap } from "./sproutMap";
 import type { CommitGraph, GraphCommit } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {
@@ -55,10 +55,19 @@ describe("layoutSproutMap", () => {
     const byId = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
 
     expect(lanes.main.fork).toBeNull();
-    expect(lanes.side.fork).toEqual({ x: byId.b.x, y: byId.b.y });
+    expect(lanes.side.fork).toEqual({ x: byId.b.x, y: byId.b.y, side: byId.b.side });
     expect(lanes.side.x).toBeGreaterThan(lanes.main.x);
     expect(lanes.gone.live).toBe(false);
     expect(lanes.side.live).toBe(true);
+  });
+
+  it("routes a fork from a right-side leaf above that leaf", () => {
+    const lane = { name: "x", x: 500, fork: { x: 100, y: 400, side: 1 as const }, bottomY: 300, topY: 100, live: true };
+    const path = lanePath(lane, 900);
+    const turnY = 400 - MAP.leafHeight / 2 - 12;
+    expect(path.startsWith(`M100 400 V${turnY} C`)).toBe(true);
+    expect(lanePath({ ...lane, fork: { ...lane.fork, side: -1 } }, 900).startsWith("M100 400 V400 C")).toBe(true);
+    expect(lanePath({ ...lane, fork: null }, 900)).toBe("M500 900 V100");
   });
 
   it("labels branch tips, tags, buds, and the current position", () => {

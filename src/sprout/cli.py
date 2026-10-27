@@ -1336,11 +1336,23 @@ def export_command(
         bool,
         typer.Option("--force", help="Overwrite existing output files"),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Write files from a commit without changing the working tree."""
     repository = repo()
-    with _show_progress(repository):
+    with _show_progress(repository, enabled=not json_output):
         result = repository.export(commit, output, paths, force=force)
+    if json_output:
+        _echo_json(
+            {
+                "commit_id": result.commit_id,
+                "output": str(output.resolve()),
+                "paths": list(result.paths),
+            }
+        )
+        return
     for path in result.paths:
         typer.echo(f"export  {path}")
     typer.echo(

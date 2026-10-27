@@ -272,23 +272,172 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(/コミット cccccccccccc を作成しました/)).toBeTruthy();
   });
 
-  it("loads commit detail and confirms discard before restore", async () => {
+  it("moves to a snapshot without confirmation and updates from one reply", async () => {
+    const user = userEvent.setup();
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const graph: CommitGraph = {
+      current_commit: tipId,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+      ],
+      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      tags: [],
+      buds: [],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace({ ...cleanStatus, current_commit: tipId, at_branch_tip: true, changes: [{ state: "modified", path: "design/main.psd" }] }, [], graph.branches, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    expect(screen.getByRole("button", { name: "未保存の芽" })).toBeTruthy();
+
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
+    await user.click(screen.getByRole("button", { name: "Past commit" }));
+    expect(screen.getByRole("button", { name: "Past commit" }).getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByText("移動すると、未保存の変更 1件は今の芽につぼみとして残ります。")).toBeTruthy();
+
+    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+    mocks.runSprout.mockResolvedValueOnce({ current_commit: rootId, branch: "main", at_branch_tip: false, bud, changes: [] });
+    const callsBefore = mocks.runSprout.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "ここへ移動" }));
+
+    expect(await screen.findByText(/未保存の変更をつぼみに残して dddddddddddd へ移動しました/)).toBeTruthy();
+    expect(mocks.runSprout.mock.calls.slice(callsBefore).map((call) => call[1])).toEqual([["go", rootId]]);
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("保存状態").textContent).toBe("保存済み");
+    expect(screen.getByRole("button", { name: "つぼみ（1件の変更）" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "この芽にいます" })).toBeTruthy();
+  });
+
+  it("marks the current snapshot in its panel", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [{ path: "design/main.psd", object_hash: "f".repeat(64), size: 42, mtime_ns: 0 }] });
-    await user.click(screen.getByRole("button", { name: /Initial design/ }));
-    expect(await screen.findByRole("button", { name: "このコミットを復元" })).toBeTruthy();
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await screen.findByRole("region", { name: "選択中のスナップショット" });
+    // The fixture graph has no recorded position, so the single commit is the current one.
+    expect(screen.getByRole("button", { name: "この芽にいます" })).toBeTruthy();
+  });
 
+  it("reports untracked conflicts with the path when moving", async () => {
+    const user = userEvent.setup();
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const graph: CommitGraph = {
+      current_commit: tipId,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+      ],
+      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      tags: [],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [], graph.branches, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
+    await user.click(screen.getByRole("button", { name: "Past commit" }));
+    mocks.runSprout.mockRejectedValueOnce({ code: "untracked_conflict", message: "untracked path would be overwritten: notes.txt", details: { path: "notes.txt" } });
+    await user.click(await screen.findByRole("button", { name: "ここへ移動" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("untracked path would be overwritten: notes.txt（作業フォルダは変更していません。）");
+    expect(alert.textContent).toContain("対象: notes.txt");
+  });
+
+  it("restores and drops buds from the bud panel", async () => {
+    const user = userEvent.setup();
+    const tipId = commitEntry.id;
+    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+    const graph: CommitGraph = {
+      current_commit: tipId,
+      commits: [{ ...commitEntry, branch_name: "main", attachments: [] }],
+      branches: mainBranch,
+      tags: [],
+      buds: [bud],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [], mainBranch, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+
+    await user.click(screen.getByRole("button", { name: "つぼみ（1件の変更）" }));
+    expect(screen.getByRole("heading", { name: "「Initial design」の上の変更 1件" })).toBeTruthy();
+
+    mocks.confirm.mockResolvedValueOnce(false);
+    await user.click(screen.getByRole("button", { name: "つぼみを捨てる" }));
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("元に戻せません"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "bud")).toBe(false);
+
+    mocks.runSprout.mockResolvedValueOnce({ restored: bud, saved: null });
+    mockWorkspace({ ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] }, [], mainBranch, { ...graph, buds: [] });
+    await user.click(screen.getByRole("button", { name: "このつぼみに戻る" }));
+    expect(await screen.findByText("つぼみの変更に戻りました")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "--restore", bud.id], "");
+    expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+  });
+
+  it("opens the save form from the unsaved bud, top bar, and Ctrl+S and warns about new branches", async () => {
+    const user = userEvent.setup();
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const graph: CommitGraph = {
+      current_commit: rootId,
+      at_branch_tip: false,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+      ],
+      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      tags: [],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace({ ...cleanStatus, current_commit: rootId, at_branch_tip: false, changes: [{ state: "modified", path: "design/main.psd" }] }, [], graph.branches, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: tipId, branch_name: "main", message: "Current tip", thumbnail: null, files: [] });
+    await user.click(screen.getByRole("button", { name: "Current tip" }));
+    await screen.findByRole("region", { name: "選択中のスナップショット" });
+    await user.keyboard("{Control>}s{/Control}");
+    expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+    expect(screen.getByText("途中の芽から保存するため、新しい枝が自動で作られます。")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "ファイル" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "未保存の芽" }));
+    expect(screen.getByRole("button", { name: "未保存の芽" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("grows a named branch and exports files from a snapshot", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "ここから枝を伸ばす" }));
+    await user.type(screen.getByLabelText("新しい枝の名前"), "rethink");
     mocks.runSprout
-      .mockRejectedValueOnce({ code: "uncommitted_changes", message: "working tree has uncommitted changes", details: { can_discard: true } })
-      .mockResolvedValueOnce({ commit_id: commitEntry.id, paths: null });
+      .mockResolvedValueOnce({ current_commit: commitEntry.id, branch: "main", at_branch_tip: true, bud: null, changes: [] })
+      .mockResolvedValueOnce({ name: "rethink", commit_id: commitEntry.id, comment: "", current: true });
     mockWorkspace();
-    await user.click(screen.getByRole("button", { name: "このコミットを復元" }));
+    await user.click(screen.getByRole("button", { name: "枝を作って移動" }));
+    expect(await screen.findByText("aaaaaaaaaaaa から枝 rethink を伸ばしました")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["branch", "rethink", commitEntry.id, "--switch"], "");
 
-    expect(await screen.findByText(/の内容を復元しました/)).toBeTruthy();
-    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("取り消せません"), expect.objectContaining({ kind: "warning" }));
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["restore", commitEntry.id, "--discard"], "");
+    mocks.open.mockResolvedValueOnce("C:\\work\\out");
+    mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, output: "C:\\work\\out", paths: ["design/main.psd"] });
+    await user.click(screen.getByRole("button", { name: "ファイルを取り出す" }));
+    expect(await screen.findByText("1件のファイルを C:\\work\\out へ書き出しました")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["export", commitEntry.id, "--output", "C:\\work\\out"], "");
   });
 
   it("shows the sprout map with thumbnails and selected commit actions", async () => {
@@ -340,8 +489,8 @@ describe("Sprout GUI operations", () => {
     const detail = { ...commitEntry, id: tipId, branch_name: "main", message: "Tree tip", thumbnail, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Tree tip/ }));
-    expect(await screen.findByRole("button", { name: "このコミットを復元" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "alternateへ切り替え" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "この芽にいます" })).toBeTruthy();
+    expect(screen.getByText("main, alternate", { selector: "dd" })).toBeTruthy();
 
     const image = "C:\\work\\replacement.png";
     mocks.open.mockResolvedValueOnce(image);
@@ -463,6 +612,7 @@ describe("Sprout GUI operations", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     expect((await screen.findByRole("alert")).textContent).toContain("another operation is running");
+    expect(await screen.findByRole("heading", { name: "このプロジェクトを開けませんでした" })).toBeTruthy();
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();

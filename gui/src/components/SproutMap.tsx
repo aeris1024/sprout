@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MAP, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
+import { MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { CommitAttachment, CommitGraph } from "../lib/sprout";
 
@@ -75,15 +75,32 @@ function LeafImage({ leaf, attachment, projectDir, sproutProgram }: LeafImagePro
   );
 }
 
+export type MapSelection = { kind: "commit" | "bud"; id: string } | { kind: "unsaved" } | null;
+
 interface SproutMapProps {
   graph: CommitGraph;
-  selectedId: string | null;
+  selection: MapSelection;
+  unsavedCount: number;
   projectDir: string;
   sproutProgram: string;
   onSelect: (commitId: string) => void;
+  onSelectBud: (budId: string) => void;
+  onSelectUnsaved: () => void;
 }
 
-export default function SproutMap({ graph, selectedId, projectDir, sproutProgram, onSelect }: SproutMapProps) {
+const BUD_WIDTH = 84;
+
+export default function SproutMap({
+  graph,
+  selection,
+  unsavedCount,
+  projectDir,
+  sproutProgram,
+  onSelect,
+  onSelectBud,
+  onSelectUnsaved,
+}: SproutMapProps) {
+  const selectedId = selection?.kind === "commit" ? selection.id : null;
   const layout = useMemo(() => layoutSproutMap(graph), [graph]);
   const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(1));
   const zoom = ZOOM_STEPS[zoomIndex];
@@ -125,10 +142,10 @@ export default function SproutMap({ graph, selectedId, projectDir, sproutProgram
     );
   }
 
-  function onLeafKey(event: KeyboardEvent<SVGGElement>, commitId: string) {
+  function onKey(event: KeyboardEvent<SVGGElement>, action: () => void) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onSelect(commitId);
+      action();
     }
   }
 
@@ -152,13 +169,7 @@ export default function SproutMap({ graph, selectedId, projectDir, sproutProgram
           <text className="ground-label" x={32} y={layout.groundY + 28}>はじまり</text>
           {layout.lanes.map((lane, index) => (
             <g key={lane.name} className={index === 0 ? "stem main" : "stem"}>
-              <path
-                d={
-                  lane.fork
-                    ? `M${lane.fork.x} ${lane.fork.y} C${lane.fork.x} ${lane.fork.y - 40} ${lane.x} ${lane.fork.y - 10} ${lane.x} ${lane.fork.y - 60} V${lane.topY}`
-                    : `M${lane.x} ${layout.groundY + 8} V${lane.topY}`
-                }
-              />
+              <path d={lanePath(lane, layout.groundY + 8)} />
               {!lane.live && (
                 <text className="lane-label" x={lane.x} y={lane.topY - MAP.row + 12} textAnchor="middle">
                   {`削除済みブランチ由来: ${lane.name}`}
@@ -191,7 +202,7 @@ export default function SproutMap({ graph, selectedId, projectDir, sproutProgram
                 aria-label={leaf.commit.message}
                 aria-pressed={selected}
                 onClick={() => onSelect(leaf.commit.id)}
-                onKeyDown={(event) => onLeafKey(event, leaf.commit.id)}
+                onKeyDown={(event) => onKey(event, () => onSelect(leaf.commit.id))}
               >
                 <path className="leaf-stalk" d={`M${leaf.x} ${leaf.y} H${leaf.side < 0 ? leaf.leafX + MAP.leafWidth : leaf.leafX}`} />
                 <circle className="node" cx={leaf.x} cy={leaf.y} r={here ? 7 : 5} />
@@ -221,6 +232,44 @@ export default function SproutMap({ graph, selectedId, projectDir, sproutProgram
               </g>
             );
           })}
+          {layout.leaves.flatMap((leaf) =>
+            leaf.buds.map((bud, index) => {
+              const x = leaf.side < 0 ? leaf.leafX + MAP.leafWidth - BUD_WIDTH : leaf.leafX;
+              const y = leaf.y + MAP.leafHeight / 2 + 24 + index * 28;
+              const selected = selection?.kind === "bud" && selection.id === bud.id;
+              return (
+                <g
+                  key={bud.id}
+                  className={`bud${selected ? " selected" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`つぼみ（${bud.changes.length}件の変更）`}
+                  aria-pressed={selected}
+                  onClick={() => onSelectBud(bud.id)}
+                  onKeyDown={(event) => onKey(event, () => onSelectBud(bud.id))}
+                >
+                  <rect x={x} y={y} width={BUD_WIDTH} height={22} />
+                  <text x={x + BUD_WIDTH / 2} y={y + 15} textAnchor="middle">{`つぼみ ${bud.changes.length}`}</text>
+                </g>
+              );
+            }),
+          )}
+          {currentLeaf && unsavedCount > 0 && (
+            <g
+              className={`unsaved-bud${selection?.kind === "unsaved" ? " selected" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-label="未保存の芽"
+              aria-pressed={selection?.kind === "unsaved"}
+              onClick={onSelectUnsaved}
+              onKeyDown={(event) => onKey(event, onSelectUnsaved)}
+            >
+              <rect x={currentLeaf.leafX + 10} y={currentLeaf.y - MAP.leafHeight / 2 - 52} width={MAP.leafWidth - 20} height={28} />
+              <text x={currentLeaf.leafX + MAP.leafWidth / 2} y={currentLeaf.y - MAP.leafHeight / 2 - 33} textAnchor="middle">
+                {`未保存の芽 ${unsavedCount}`}
+              </text>
+            </g>
+          )}
         </svg>
       </div>
     </div>

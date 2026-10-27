@@ -486,7 +486,7 @@ sprout commit -m "ファイルを移動"
 | `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元・破棄する |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
-| `export COMMIT [PATH...] --output DIR [--force]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
+| `export COMMIT [PATH...] --output DIR [--force] [--json]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
 | `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
@@ -527,6 +527,7 @@ commit:     {"id": string, "branch": string, "created_branch": boolean, "message
 message:    {"commit_id": string, "message": string}
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
 switch:     {"branch": string, "commit_id": string | null}
+export:     {"commit_id": string, "output": string, "paths": [string]}
 restore:    {"commit_id": string, "paths": [string] | null}
 
 prune:

@@ -1595,3 +1595,38 @@ def test_go_command_moves_and_reports_state(tmp_path: Path, monkeypatch) -> None
     assert text.exit_code == 0
     assert text.stdout == f"Moved to branch tip {second[:12]} on main\n"
     assert asset.read_bytes() == b"v2"
+
+
+def test_export_json_and_structured_untracked_conflict(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+
+    out = tmp_path / "out"
+    exported = invoke(["export", first, "--output", str(out), "--json"], project, monkeypatch)
+    assert exported.exit_code == 0
+    assert json.loads(exported.stdout) == {
+        "commit_id": first,
+        "output": str(out.resolve()),
+        "paths": ["asset.bin"],
+    }
+    assert (out / "asset.bin").read_bytes() == b"v1"
+
+    extra = project / "extra.bin"
+    extra.write_bytes(b"tracked")
+    assert invoke(["track", "extra.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first], project, monkeypatch).exit_code == 0
+    extra.write_bytes(b"untracked work")
+    blocked = invoke(["go", "main", "--json"], project, monkeypatch)
+    assert blocked.exit_code != 0
+    error = blocked.exception
+    assert isinstance(error, SproutError)
+    assert error.code == "untracked_conflict"
+    assert error.details["path"] == "extra.bin"
+    assert extra.read_bytes() == b"untracked work"
