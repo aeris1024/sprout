@@ -189,6 +189,8 @@ class DiffEntry:
 class CommitResult:
     commit_id: str
     removed_paths: tuple[str, ...]
+    branch: str = "main"
+    created_branch: bool = False
 
 
 @dataclass(frozen=True)
@@ -1075,7 +1077,7 @@ class Repository:
             )
             for item in files
         ]
-        parent = self.head_commit()
+        parent = self.current_commit()
         previous = self.manifest(parent)
         current = {item.path: item for item in files}
         content_signature = lambda manifest: {
@@ -1090,8 +1092,20 @@ class Repository:
         )
         commit_id = uuid.uuid4().hex
         branch = self.head_branch()
-        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now = datetime.now(timezone.utc)
+        created_at = now.isoformat(timespec="seconds")
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            tip = db.execute("SELECT commit_id FROM branches WHERE name=?", (branch,)).fetchone()
+            # Saving on top of a non-tip snapshot grows a new branch from it.
+            created_branch = parent is not None and (tip is None or tip[0] != parent)
+            if created_branch:
+                branch = self._auto_branch_name(db, now)
+                db.execute(
+                    "INSERT INTO branches(name, commit_id, comment) VALUES(?, NULL, '')",
+                    (branch,),
+                )
+                db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (branch,))
             db.execute(
                 "INSERT INTO commits(id, parent_id, branch_name, created_at, message) VALUES(?,?,?,?,?)",
                 (commit_id, parent, branch, created_at, message.strip()),
@@ -1120,7 +1134,19 @@ class Repository:
             db.execute("UPDATE branches SET commit_id=? WHERE name=?", (commit_id, branch))
             self._set_current_commit(db, commit_id)
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
-        return CommitResult(commit_id, tuple(missing))
+        return CommitResult(commit_id, tuple(missing), branch, created_branch)
+
+    @staticmethod
+    def _auto_branch_name(db: sqlite3.Connection, now: datetime) -> str:
+        """Return an unused branch name such as branch-20261028-153000."""
+        base = "branch-" + now.astimezone().strftime("%Y%m%d-%H%M%S")
+        taken = {
+            row[0] for row in db.execute("SELECT name FROM branches UNION SELECT name FROM tags")
+        }
+        name, suffix = base, 2
+        while name in taken:
+            name, suffix = f"{base}-{suffix}", suffix + 1
+        return name
 
     def resolve_commit(self, value: str) -> str:
         if not value.strip():

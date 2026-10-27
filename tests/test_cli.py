@@ -1371,6 +1371,7 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     assert commit_payload == {
         "id": commit_id,
         "branch": "main",
+        "created_branch": False,
         "message": "日本語コミット",
         "removed_paths": [],
     }
@@ -1534,3 +1535,31 @@ def test_bud_command_saves_lists_restores_and_drops(tmp_path: Path, monkeypatch)
     assert invoke(["bud", "--drop", again["id"], "--yes"], project, monkeypatch).exit_code == 0
     assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
     assert invoke(["bud", "--save", "--drop", "x"], project, monkeypatch).exit_code != 0
+
+
+def test_commit_reports_auto_created_branch(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+    asset.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+
+    asset.write_bytes(b"alt one")
+    payload = json.loads(
+        invoke(["commit", "-m", "alt one", "--json"], project, monkeypatch).stdout
+    )
+    assert payload["created_branch"] is True
+    assert payload["branch"].startswith("branch-")
+
+    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    asset.write_bytes(b"alt two")
+    lines = invoke(["commit", "-m", "alt two"], project, monkeypatch).stdout.splitlines()
+    assert lines[0].startswith("Created branch branch-")
+    assert lines[0].endswith(" from a snapshot that is not a branch tip")
+    assert lines[1].startswith("[branch-")

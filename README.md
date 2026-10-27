@@ -291,6 +291,8 @@ sprout restore main
 
 Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。`status`の変更一覧、引数なしの`diff`、移動前の未保存変更の判定は、ブランチ先端ではなく現在位置と作業ツリーを比べます。そのため、過去のスナップショットへ移動した直後は変更なしと表示され、編集しなければ`--discard`なしで別のスナップショットへ移動できます。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置の記録がない既存のリポジトリは、現在のブランチ先端にいるものとして扱います。
 
+現在位置がブランチ先端以外のときに`commit`すると、変更が先端の上に積まれないよう、現在位置を起点とする新しいブランチを自動で作成して切り替え、そこへコミットします。ブランチ名は`branch-YYYYMMDD-HHMMSS`（ローカル時刻）で、既存のブランチ名やタグ名と重なる場合は末尾に`-2`、`-3`…を付けます。名前は`sprout branch OLD --rename NEW`で変更できます。`commit --json`の`created_branch`で、ブランチを自動作成したかどうかが分かります。現在位置から変更がない場合は、ブランチを作らずに`nothing to commit`となります。
+
 ## 未保存の変更をつぼみとして残す
 
 コミットするほどではない未保存の変更は、「つぼみ」として現在位置のスナップショットに残せます。つぼみには追跡中ファイルのその時点の内容が保存され、実体は通常のコミットと同じobjectsストアで重複排除されます。1つのスナップショットにいくつでも付けられます。
@@ -490,7 +492,7 @@ sprout switch ideas --json
 init:       {"root": string}
 track:      {"paths": [string]}
 untrack:    {"paths": [string]}
-commit:     {"id": string, "branch": string, "message": string, "removed_paths": [string]}
+commit:     {"id": string, "branch": string, "created_branch": boolean, "message": string, "removed_paths": [string]}
 message:    {"commit_id": string, "message": string}
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
 switch:     {"branch": string, "commit_id": string | null}
