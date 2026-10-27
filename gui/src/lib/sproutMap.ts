@@ -26,8 +26,8 @@ export interface MapLeaf {
 export interface MapLane {
   name: string;
   x: number;
-  /** Fork point on the parent lane, or null when the lane grows from the ground. */
-  fork: { x: number; y: number } | null;
+  /** Fork point on the parent lane and the side its leaf sits on, or null when the lane grows from the ground. */
+  fork: { x: number; y: number; side: -1 | 1 } | null;
   bottomY: number;
   topY: number;
   live: boolean;
@@ -38,6 +38,16 @@ export interface MapLabel {
   y: number;
   names: string[];
   current: boolean;
+}
+
+/** Path of a lane's stem: from the ground, or curving out of its fork without crossing the fork's leaf. */
+export function lanePath(lane: MapLane, groundY: number): string {
+  if (!lane.fork) return `M${lane.x} ${groundY} V${lane.topY}`;
+  const { x, y, side } = lane.fork;
+  // A leaf on the right of the stem would be crossed, so climb above it before turning.
+  const turnY = side > 0 ? y - MAP.leafHeight / 2 - 12 : y;
+  const riseY = turnY - 48;
+  return `M${x} ${y} V${turnY} C${x} ${turnY - 24} ${lane.x} ${turnY - 12} ${lane.x} ${riseY} V${lane.topY}`;
 }
 
 export interface SproutMapLayout {
@@ -121,7 +131,7 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     return {
       name,
       x: MAP.left + index * MAP.lane,
-      fork: parent && parent.lane !== index ? { x: parent.x, y: parent.y } : null,
+      fork: parent && parent.lane !== index ? { x: parent.x, y: parent.y, side: parent.side } : null,
       bottomY: first.y,
       topY: members[members.length - 1].y,
       live: liveNames.has(name),

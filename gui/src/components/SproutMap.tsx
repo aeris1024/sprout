@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MAP, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
+import { MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { CommitAttachment, CommitGraph } from "../lib/sprout";
 
@@ -169,13 +169,7 @@ export default function SproutMap({
           <text className="ground-label" x={32} y={layout.groundY + 28}>はじまり</text>
           {layout.lanes.map((lane, index) => (
             <g key={lane.name} className={index === 0 ? "stem main" : "stem"}>
-              <path
-                d={
-                  lane.fork
-                    ? `M${lane.fork.x} ${lane.fork.y} C${lane.fork.x} ${lane.fork.y - 40} ${lane.x} ${lane.fork.y - 10} ${lane.x} ${lane.fork.y - 60} V${lane.topY}`
-                    : `M${lane.x} ${layout.groundY + 8} V${lane.topY}`
-                }
-              />
+              <path d={lanePath(lane, layout.groundY + 8)} />
               {!lane.live && (
                 <text className="lane-label" x={lane.x} y={lane.topY - MAP.row + 12} textAnchor="middle">
                   {`削除済みブランチ由来: ${lane.name}`}
