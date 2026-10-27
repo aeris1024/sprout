@@ -277,7 +277,10 @@ def _branches_json(repository: Repository) -> list[dict[str, Any]]:
 
 
 def _graph_json(graph: CommitGraph) -> dict[str, Any]:
+    tip = next((branch.commit_id for branch in graph.branches if branch.current), None)
     return {
+        "current_commit": graph.current_commit,
+        "at_branch_tip": graph.current_commit == tip,
         "commits": [
             {
                 "id": commit.id,
@@ -343,8 +346,11 @@ def _tree_commit_text(
     commit: GraphCommit,
     branches_by_commit: dict[str, list[str]],
     tags_by_commit: dict[str, list[str]],
+    current_commit: str | None = None,
 ) -> str:
     markers = [f"created:{commit.branch_name}"]
+    if commit.id == current_commit:
+        markers.append("current")
     markers.extend(
         f"branch:{branch}" for branch in branches_by_commit.get(commit.id, [])
     )
@@ -385,9 +391,10 @@ def _tree_lines(graph: CommitGraph) -> list[str]:
 
     lines: list[str] = []
     for root in children.get(None, []):
-        lines.append(
-            f"* {_tree_commit_text(root, branches_by_commit, tags_by_commit)}"
+        text = _tree_commit_text(
+            root, branches_by_commit, tags_by_commit, graph.current_commit
         )
+        lines.append(f"* {text}")
         root_children = children.get(root.id, [])
         stack: list[tuple[GraphCommit, str, bool]] = [
             (child, "", index == len(root_children) - 1)
@@ -396,7 +403,9 @@ def _tree_lines(graph: CommitGraph) -> list[str]:
         while stack:
             commit, prefix, is_last = stack.pop()
             connector = "`- " if is_last else "|- "
-            text = _tree_commit_text(commit, branches_by_commit, tags_by_commit)
+            text = _tree_commit_text(
+                commit, branches_by_commit, tags_by_commit, graph.current_commit
+            )
             lines.append(f"{prefix}{connector}* {text}")
             child_prefix = prefix + ("   " if is_last else "|  ")
             nested = children.get(commit.id, [])
@@ -485,6 +494,14 @@ def move(
     typer.echo(f"move  {old} -> {new}")
 
 
+def _echo_branch_position(
+    branch_name: str, current_commit: str | None, at_branch_tip: bool
+) -> None:
+    typer.echo(f"On branch {branch_name}")
+    if current_commit is not None and not at_branch_tip:
+        typer.echo(f"Viewing saved snapshot {current_commit[:12]} (not the branch tip)")
+
+
 @app.command()
 def status(
     paths: Annotated[list[Path] | None, typer.Argument(help="Paths whose tracking state should be checked")] = None,
@@ -495,6 +512,8 @@ def status(
     """Show changes or whether specific paths are tracked."""
     repository = repo()
     branch_name = repository.head_branch()
+    current_commit, at_branch_tip = repository.current_position()
+    position = {"current_commit": current_commit, "at_branch_tip": at_branch_tip}
     if paths:
         if tracked or untracked:
             raise SproutError("path status cannot be combined with --tracked or --untracked")
@@ -503,6 +522,7 @@ def status(
             _echo_json(
                 {
                     "branch": branch_name,
+                    **position,
                     "paths": [
                         {"path": path, "tracked": is_tracked}
                         for path, is_tracked in path_entries
@@ -510,7 +530,7 @@ def status(
                 }
             )
             return
-        typer.echo(f"On branch {branch_name}")
+        _echo_branch_position(branch_name, current_commit, at_branch_tip)
         for path, is_tracked in path_entries:
             typer.echo(f"{'tracked' if is_tracked else 'untracked':<9} {path}")
         return
@@ -519,6 +539,7 @@ def status(
     if json_output:
         payload: dict[str, Any] = {
             "branch": branch_name,
+            **position,
             "changes": [{"state": entry.state, "path": entry.path} for entry in entries],
         }
         if tracked:
@@ -527,7 +548,7 @@ def status(
             payload["untracked"] = repository.untracked_files()
         _echo_json(payload)
         return
-    typer.echo(f"On branch {branch_name}")
+    _echo_branch_position(branch_name, current_commit, at_branch_tip)
     if not entries:
         typer.echo("Working tree clean")
     for entry in entries:

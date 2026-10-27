@@ -538,3 +538,17 @@ def test_registration_error_does_not_leave_unrecoverable_metadata(repo, monkeypa
     assert not active(repo)
     assert state(repo) == before
     Repository.discover(repo.root)
+
+
+def test_interrupted_restore_keeps_current_position(repo, monkeypatch):
+    first, second = topology(repo)
+    before = repo.current_position()
+    def interrupt(*args, **kwargs):
+        raise Interrupted()
+    monkeypatch.setattr(repo, "_finalize_materialization", interrupt)
+    with pytest.raises(Interrupted):
+        repo.restore(first)
+    monkeypatch.undo()
+    recovered = Repository.discover(repo.root)
+    assert not active(recovered)
+    assert recovered.current_position() == before
