@@ -73,7 +73,7 @@ button:disabled { cursor: wait; opacity: .55; }
 :focus-visible { outline: 2px solid var(--current); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.app-shell { height: 100vh; display: flex; flex-direction: column; overflow: auto; }
 .topbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand h1 { margin: 0; font-size: 18px; font-weight: 600; }
@@ -141,7 +141,7 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .muted { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
 
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
-.map-area { min-width: 0; overflow: auto; padding: 16px; }
+.map-area { min-width: 0; }
 .detail-panel { border-left: 1px solid var(--line); background: var(--panel); padding: 16px; overflow: auto; }
 .panel-section { display: grid; gap: 10px; }
 .panel-section h3 { margin: 0; font-size: 17px; }
@@ -161,45 +161,46 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .state-badge.deleted { background: var(--danger-bg); color: var(--danger); }
 .state-badge.added { background: var(--bud-bg); color: var(--bud); }
 
-/* Interim commit tree (replaced by the sprout map). */
-.tree-layout { display: grid; gap: var(--gap); }
-.operation-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 12px; }
-.card-heading { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
-.card-heading h3 { margin: 0; font-size: 15px; }
-.card-heading span { font-size: 12px; color: var(--muted); }
-.tree-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; font-size: 11px; color: var(--muted); }
-.tree-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 50%; }
-.legend-current { background: var(--current); }
-.legend-selected { background: var(--bud); }
-.commit-tree { display: grid; gap: 4px; }
-.tree-row { display: flex; align-items: center; gap: 6px; padding-left: calc(var(--tree-depth, 0) * 18px); }
-.tree-rail { width: 2px; align-self: stretch; background: var(--line); }
-.tree-toggle, .tree-dot { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); font-size: 12px; padding: 0; }
-.tree-dot { background: var(--stem); border: 0; width: 8px; height: 8px; margin: 0 6px; }
-.tree-node { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; text-align: left; padding: 6px; border-radius: var(--radius); border: 1px solid transparent; background: transparent; }
-.tree-row.selected .tree-node { border-color: var(--bud); }
-.tree-row.current-tip .tree-node { background: var(--chip-bg); }
-.tree-thumbnail { width: 72px; height: 48px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: var(--leaf-radius); background: var(--empty-leaf); border: 1px solid var(--line); font-size: 10px; color: var(--muted); }
-.tree-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
-.tree-node-copy { display: grid; gap: 2px; min-width: 0; }
-.tree-node-copy strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-node-copy small { font-size: 11px; color: var(--muted); }
-.tree-badges { display: flex; flex-wrap: wrap; gap: 4px; }
-.tip-badge, .tag-badge, .origin-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: var(--radius); background: var(--chip-bg); color: var(--chip-ink); }
-.tip-badge.current { background: var(--current); color: var(--paper); }
-.tag-badge { background: var(--bud-bg); color: var(--bud); }
-.tree-more { margin-top: 8px; border: 1px dashed var(--line); background: transparent; border-radius: var(--radius); padding: 6px; width: 100%; }
-.tree-detail dl { display: grid; gap: 4px; font-size: 12px; }
-.tree-detail dl div { display: flex; gap: 8px; }
-.tree-detail dt { color: var(--muted); min-width: 80px; }
-.tree-detail dd { margin: 0; word-break: break-all; }
-.tree-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+/* Sprout map */
+.map-area { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.sprout-map { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.map-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 12px; color: var(--muted); }
+.map-scroll { flex: 1; min-height: 0; overflow: auto; }
+.map-canvas { display: block; margin: 0 auto; }
+.map-empty { margin: auto; text-align: center; color: var(--muted); padding: 48px 16px; }
+.ground { stroke: var(--line); stroke-width: 1.5; }
+.ground-label, .lane-label { fill: var(--muted); font-size: 12px; }
+.stem path { fill: none; stroke: var(--branch); stroke-width: 4; stroke-linecap: round; }
+.stem.main path { stroke: var(--stem); stroke-width: 5; }
+.branch-label text { fill: var(--muted); font-size: 13px; }
+.branch-label line { stroke: var(--line); stroke-width: 2; stroke-dasharray: 2 5; }
+.branch-label.current text { fill: var(--current); font-weight: 700; }
+.leaf { cursor: pointer; outline: none; }
+.leaf-stalk { stroke: var(--branch); stroke-width: 2; }
+.node { fill: var(--stem); }
+.leaf.here .node { fill: var(--current); }
+.leaf-box { fill: var(--empty-leaf); rx: var(--leaf-radius); }
+.leaf-image { clip-path: inset(0 round var(--leaf-radius)); }
+.leaf-frame { fill: none; stroke: var(--line); stroke-width: 1; rx: var(--leaf-radius); }
+.leaf:hover .leaf-frame { stroke: var(--ink-2); }
+.leaf.selected .leaf-frame { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 5 3; }
+.leaf.here .leaf-frame { stroke: var(--current); stroke-width: 3; stroke-dasharray: none; }
+.leaf:focus-visible .leaf-frame { stroke: var(--current); stroke-width: 3; }
+.leaf-placeholder { fill: var(--muted); font-size: 11px; }
+.leaf-message { fill: var(--ink); font-size: 12px; }
+.here-label { fill: var(--current); font-size: 12px; }
+.tag-chip rect { fill: var(--bud-bg); rx: 9px; }
+.tag-chip text { fill: var(--bud); font-size: 11px; }
+
 .message-heading { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
 .message-heading h3 { margin: 0; }
 .message-editor { display: grid; gap: 8px; }
-.message-editor label { display: grid; gap: 6px; font-size: 12px; }
-.detail-empty { color: var(--muted); font-size: 13px; }
-.muted.padded { padding: 8px 0; }
+.detail-list { display: grid; gap: 4px; margin: 0; font-size: 12px; }
+.detail-list div { display: flex; gap: 8px; }
+.detail-list dt { color: var(--muted); min-width: 84px; }
+.detail-list dd { margin: 0; word-break: break-all; }
+.mono { font-family: ui-monospace, "Cascadia Mono", monospace; }
+.panel-actions { display: grid; gap: 8px; }
 
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }

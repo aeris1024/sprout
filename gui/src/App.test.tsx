@@ -291,7 +291,7 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["restore", commitEntry.id, "--discard"], "");
   });
 
-  it("shows the complete tree with thumbnails and selected commit actions", async () => {
+  it("shows the sprout map with thumbnails and selected commit actions", async () => {
     const user = userEvent.setup();
     const rootId = "d".repeat(64);
     const tipId = "e".repeat(64);
@@ -331,7 +331,8 @@ describe("Sprout GUI operations", () => {
     await screen.findByRole("heading", { name: "sprout-project" });
 
     expect(screen.getByText("削除済みブランチ由来: archived")).toBeTruthy();
-    expect(screen.getAllByText("現在の先端")).toHaveLength(2);
+    expect(screen.getByText("main, alternate（現在のブランチ）")).toBeTruthy();
+    expect(screen.getByText("いまここ")).toBeTruthy();
     expect(await screen.findByRole("img", { name: "Tree tipのサムネイル" })).toBeTruthy();
     expect(document.querySelector("video, audio")).toBeNull();
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
@@ -352,7 +353,7 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", tipId, image], "");
   });
 
-  it("edits a selected commit message and refreshes tree and detail", async () => {
+  it("edits a selected commit message and refreshes the map and detail", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
@@ -373,7 +374,8 @@ describe("Sprout GUI operations", () => {
 
     expect(await screen.findByText(/のコミットメッセージを変更しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["message", commitEntry.id, "Renamed snapshot"], "");
-    expect(screen.getAllByText("Renamed snapshot").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("heading", { name: "Renamed snapshot" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Renamed snapshot" })).toBeTruthy();
   });
 
   it("registers a past commit thumbnail after a dialog focus event", async () => {
@@ -433,6 +435,25 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", rootId, image], "");
     expect(await screen.findByRole("img", { name: "Past commitのサムネイル" })).toBeTruthy();
+  });
+
+  it("selects leaves with the keyboard and zooms the map", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    const leaf = screen.getByRole("button", { name: "Initial design" });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    leaf.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["show", commitEntry.id], "");
+
+    const canvas = screen.getByRole("group", { name: "芽のマップ" });
+    const width = Number(canvas.getAttribute("width"));
+    await user.click(screen.getByRole("button", { name: "縮小" }));
+    expect(Number(canvas.getAttribute("width"))).toBeCloseTo(width * 0.75);
+    await user.click(screen.getByRole("button", { name: "詳細を閉じる" }));
+    expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
   });
 
   it("shows a retry action for repository locks", async () => {

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import CommitTree from "./components/CommitTree";
+import CommitPanel from "./components/CommitPanel";
 import FilePanel from "./components/FilePanel";
 import ProjectMenu, { RecentProjectList, projectName } from "./components/ProjectMenu";
 import SavePanel from "./components/SavePanel";
+import SproutMap from "./components/SproutMap";
 import "./App.css";
 import {
   canDiscardChanges,
@@ -21,7 +22,7 @@ import {
 import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } from "./lib/settings";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
-type SidePanel = "save" | "files";
+type SidePanel = "save" | "files" | "commit";
 
 const emptyGraph: CommitGraph = { commits: [], branches: [], tags: [] };
 
@@ -34,6 +35,7 @@ function App() {
   const [status, setStatus] = useState<SproutStatus | null>(null);
   const [graph, setGraph] = useState<CommitGraph>(emptyGraph);
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -77,6 +79,8 @@ function App() {
     setGraph(nextGraph);
     if (commitDetail && !nextGraph.commits.some((entry) => entry.id === commitDetail.id)) {
       setCommitDetail(null);
+      setSelectedId(null);
+      setSidePanel((panel) => (panel === "commit" ? "save" : panel));
     }
   }
 
@@ -101,6 +105,8 @@ function App() {
   async function loadProject(path: string) {
     setInitCandidate("");
     setCommitDetail(null);
+    setSelectedId(null);
+    setSidePanel("save");
     try {
       await fetchWorkspace(path);
       await rememberProject(path);
@@ -262,9 +268,17 @@ function App() {
 
   function selectCommit(commitId: string) {
     if (!projectDir) return;
+    setSelectedId(commitId);
+    setSidePanel("commit");
     void execute(async () => {
       setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
     });
+  }
+
+  function closeCommitPanel() {
+    setSelectedId(null);
+    setCommitDetail(null);
+    setSidePanel("save");
   }
 
   function setCommitThumbnail(commitId: string) {
@@ -425,10 +439,14 @@ function App() {
         <main className="workspace">
           <section className="map-area" aria-label="スナップショット">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
-            <CommitTree graph={graph} selectedId={commitDetail?.id ?? null} detail={commitDetail} projectDir={projectDir} sproutProgram={sproutProgram} busy={busy} onSelect={selectCommit} onRestore={restoreCommit} onSwitch={switchBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} />
+            <SproutMap graph={graph} selectedId={selectedId} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} />
           </section>
           <aside className="detail-panel">
-            {sidePanel === "files" ? (
+            {sidePanel === "commit" && commitDetail && commitDetail.id === selectedId ? (
+              <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={(graph.current_commit ?? graph.branches.find((branch) => branch.current)?.commit_id) === commitDetail.id} busy={busy} onRestore={restoreCommit} onSwitch={switchBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onClose={closeCommitPanel} />
+            ) : sidePanel === "commit" ? (
+              <p className="muted">読み込み中…</p>
+            ) : sidePanel === "files" ? (
               <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} onClose={() => setSidePanel("save")} />
             ) : (
               <SavePanel changes={changes} message={commitMessage} thumbnailPath={thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => setThumbnailPath("")} onSave={commitChanges} />
