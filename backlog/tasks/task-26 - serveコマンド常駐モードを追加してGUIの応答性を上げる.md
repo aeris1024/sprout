@@ -1,10 +1,11 @@
 ---
 id: TASK-26
 title: serveコマンド(常駐モード)を追加してGUIの応答性を上げる
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-15 16:38'
-updated_date: '2026-10-27 15:16'
+updated_date: '2026-10-27 15:57'
 labels: []
 dependencies:
   - TASK-19
@@ -41,13 +42,13 @@ discover時のリカバリ確認は起動時に1回だけ行われる。常駐�
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `sprout serve`が標準入出力のJSONで要求を受け付け応答する
-- [ ] #2 読み取り系・書き込み系の主要コマンドがserve経由で実行できる
-- [ ] #3 エラー時もプロセスが落ちず、エラーレスポンスが返る
-- [ ] #4 常駐中に別プロセスのCLI実行と安全に共存できる(ロックが機能する)
-- [ ] #5 プロトコル仕様がドキュメント化されている
-- [ ] #6 リクエスト・レスポンスの往復がテストで検証されている
-- [ ] #7 TASK-52〜55で追加・変更した現在位置、つぼみ、go、自動ブランチ作成付きcommitもserve経由で実行でき、通常CLIと同じJSONを返す
+- [x] #1 `sprout serve`が標準入出力のJSONで要求を受け付け応答する
+- [x] #2 読み取り系・書き込み系の主要コマンドがserve経由で実行できる
+- [x] #3 エラー時もプロセスが落ちず、エラーレスポンスが返る
+- [x] #4 常駐中に別プロセスのCLI実行と安全に共存できる(ロックが機能する)
+- [x] #5 プロトコル仕様がドキュメント化されている
+- [x] #6 リクエスト・レスポンスの往復がテストで検証されている
+- [x] #7 TASK-52〜55で追加・変更した現在位置、つぼみ、go、自動ブランチ作成付きcommitもserve経由で実行でき、通常CLIと同じJSONを返す
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -56,4 +57,12 @@ discover時のリカバリ確認は起動時に1回だけ行われる。常駐�
 TASK-51のGUI刷新設計（doc-1）で、新GUI実装（TASK-57）の前提として本タスクを先に行うと決定した。優先度をMediumへ上げ、新しいCLI操作もserveで扱えるようTASK-54・55への依存を追加した。
 
 既存の`sprout move`（追跡ファイルの移動）と名前が重なるため、スナップショット間を移動する新コマンドの名前をgoに決定した（2026-10-28 ユーザー決定）。
+
+sprout serveを追加（src/sprout/serve.py）。要求{id,args,cwd?}を同一プロセス内でTyperアプリとして実行し、--jsonの出力を通常CLIと同じJSONで返す。エラーはcode/message/detailsで返しプロセスは継続。quitかEOFで終了。tests/test_serve.pyで往復・新コマンド（go/bud/自動ブランチcommit/現在位置）・エラー・cwd・別プロセスCLIとの共存とrepository_lockedを検証。pytest 262 passed, 19 skipped。GUIのserve切り替えはTASK-57で行う。
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+JSON Linesで要求を受け付ける常駐モードsprout serveを追加し、通常CLIと同じJSONを1プロセスで返せるようにした。エラー時も継続し、リポジトリロックで別プロセスと共存する。READMEにプロトコルを記載し、全262テスト成功で確認した。
+<!-- SECTION:FINAL_SUMMARY:END -->
