@@ -781,7 +781,7 @@ class Repository:
 
     def status(self) -> list[StatusEntry]:
         tracked = self.tracked()
-        head = self.manifest(self.head_commit())
+        head = self.manifest(self.current_commit())
         result: list[StatusEntry] = []
         for relative in sorted(tracked | set(head)):
             path = self.root / Path(relative)
@@ -830,7 +830,7 @@ class Repository:
         self, commit_a: str | None = None, commit_b: str | None = None
     ) -> list[DiffEntry]:
         if commit_a is None and commit_b is None:
-            before = self.manifest(self.head_commit())
+            before = self.manifest(self.current_commit())
             after = self._working_tree_manifest()
         elif commit_b is None:
             before = self.manifest(self.resolve_commit(commit_a))
@@ -2119,7 +2119,7 @@ class Repository:
         return files
 
     def _validate_restore_inputs(self, target: dict[str, FileState], *, partial: bool = False) -> None:
-        paths = set(target) if partial else set(target) | self.tracked() | set(self.manifest(self.head_commit()))
+        paths = set(target) if partial else set(target) | self.tracked() | set(self.manifest(self.current_commit()))
         for relative in paths:
             self._safe_restore_path(relative)
         self._restore_internal(self.tmp)
@@ -2498,7 +2498,7 @@ class Repository:
 
     def _has_unsaved_changes(self, paths: set[str] | None = None) -> bool:
         tracked = self.tracked()
-        head = self.manifest(self.head_commit())
+        head = self.manifest(self.current_commit())
         if paths is None:
             hash_paths = tracked
             status_paths = tracked | set(head)

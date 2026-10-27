@@ -85,7 +85,7 @@ def test_commit_multiple_files_restore_and_deduplicate(tmp_path: Path, monkeypat
     assert illustration.read_bytes() == b"pixels-v1"
     assert illustration.stat().st_mtime_ns == first_mtime_ns
     assert reference.read_bytes() == b"reference"
-    assert {entry.path for entry in repo.status()} == {"作品/絵.psd"}
+    assert repo.status() == []
 
     repo.restore(second)
     assert illustration.read_bytes() == b"pixels-v2"
@@ -2711,3 +2711,83 @@ def test_deleting_branch_keeps_current_snapshot(
     assert repo.resolve_commit(side) == side
     assert repo.current_position() == (side, False)
     assert repo.doctor().ok
+
+
+def test_change_detection_compares_with_current_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    kept = write(repo.root, "kept.bin", b"v1")
+    gone = write(repo.root, "gone.bin", b"gone")
+    repo.track([kept, gone])
+    first = repo.commit("first").commit_id
+    kept.write_bytes(b"v2")
+    gone.unlink()
+    second = repo.commit("second").commit_id
+
+    repo.restore(first)
+    assert repo.current_position() == (first, False)
+    assert repo.status() == []
+    assert repo.diff() == []
+
+    kept.write_bytes(b"edited")
+    gone.unlink()
+    added = write(repo.root, "added.bin", b"new")
+    repo.track([added])
+    assert [(entry.state, entry.path) for entry in repo.status()] == [
+        ("added", "added.bin"),
+        ("deleted", "gone.bin"),
+        ("modified", "kept.bin"),
+    ]
+    assert [(entry.state, entry.path) for entry in repo.diff()] == [
+        ("added", "added.bin"),
+        ("deleted", "gone.bin"),
+        ("modified", "kept.bin"),
+    ]
+    with pytest.raises(SproutError) as exc:
+        repo.restore(second)
+    assert exc.value.code == "uncommitted_changes"
+
+
+def test_unchanged_old_snapshot_moves_without_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    repo.create_branch("side", start_point=first)
+
+    repo.restore(first)
+    repo.switch("side")
+    assert repo.current_position() == (first, True)
+    repo.switch("main")
+    assert asset.read_bytes() == b"v2"
+    assert repo.status() == []
+
+
+def test_change_detection_without_recorded_position_uses_branch_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("first")
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    with repo.connect() as db:
+        db.execute("DELETE FROM meta WHERE key='current_commit'")
+
+    assert repo.status() == []
+    asset.write_bytes(b"edited")
+    assert [(entry.state, entry.path) for entry in repo.status()] == [
+        ("modified", "asset.bin")
+    ]
+    assert [(entry.state, entry.path) for entry in repo.diff()] == [
+        ("modified", "asset.bin")
+    ]

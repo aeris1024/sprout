@@ -248,7 +248,7 @@ sprout restore <commit-id>
 復元や切り替えの前に、ファイル単位の差分だけ確認したい場合は`diff`を使います。
 
 ```powershell
-# HEAD と作業ツリー
+# 現在位置と作業ツリー
 sprout diff
 
 # 指定コミットと作業ツリー
@@ -289,7 +289,7 @@ sprout switch main --discard
 sprout restore main
 ```
 
-Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置の記録がない既存のリポジトリは、現在のブランチ先端にいるものとして扱います。
+Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。`status`の変更一覧、引数なしの`diff`、移動前の未保存変更の判定は、ブランチ先端ではなく現在位置と作業ツリーを比べます。そのため、過去のスナップショットへ移動した直後は変更なしと表示され、編集しなければ`--discard`なしで別のスナップショットへ移動できます。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置の記録がない既存のリポジトリは、現在のブランチ先端にいるものとして扱います。
 
 ## コミットからファイルを取り出す
 
