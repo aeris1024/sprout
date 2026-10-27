@@ -1563,3 +1563,35 @@ def test_commit_reports_auto_created_branch(tmp_path: Path, monkeypatch) -> None
     assert lines[0].startswith("Created branch branch-")
     assert lines[0].endswith(" from a snapshot that is not a branch tip")
     assert lines[1].startswith("[branch-")
+
+
+def test_go_command_moves_and_reports_state(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+    asset.write_bytes(b"v2")
+    second = json.loads(
+        invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout
+    )["id"]
+    asset.write_bytes(b"draft")
+
+    moved = invoke(["go", first, "--json"], project, monkeypatch)
+    assert moved.exit_code == 0
+    assert moved.stderr == ""
+    payload = json.loads(moved.stdout)
+    assert payload["current_commit"] == first
+    assert payload["branch"] == "main"
+    assert payload["at_branch_tip"] is False
+    assert payload["changes"] == []
+    assert payload["bud"]["base_commit_id"] == second
+    assert asset.read_bytes() == b"v1"
+
+    text = invoke(["go", "main"], project, monkeypatch)
+    assert text.exit_code == 0
+    assert text.stdout == f"Moved to branch tip {second[:12]} on main\n"
+    assert asset.read_bytes() == b"v2"

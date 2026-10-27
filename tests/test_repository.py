@@ -3094,3 +3094,96 @@ def test_failed_auto_branch_commit_leaves_no_branch(
     assert repo.head_branch() == "main"
     assert repo.current_position() == (first, False)
     assert [commit.id for commit in repo.commit_graph().commits] == [second, first]
+
+
+def go_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Repository, Path, str, str, str]:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    repo.create_branch("side", start_point=first, switch=True)
+    asset.write_bytes(b"side")
+    side = repo.commit("side").commit_id
+    repo.switch("main")
+    return repo, asset, first, second, side
+
+
+def test_go_to_past_snapshot_keeps_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, _second, _side = go_repo(tmp_path, monkeypatch)
+
+    result = repo.go(first[:8])
+
+    assert (result.commit_id, result.branch, result.at_branch_tip) == (first, "main", False)
+    assert result.bud is None
+    assert result.changes == ()
+    assert asset.read_bytes() == b"v1"
+    assert repo.head_branch() == "main"
+    assert repo.current_position() == (first, False)
+
+
+def test_go_to_other_branch_tip_switches_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, second, side = go_repo(tmp_path, monkeypatch)
+
+    by_commit = repo.go(side)
+    assert (by_commit.branch, by_commit.at_branch_tip) == ("side", True)
+    assert asset.read_bytes() == b"side"
+
+    back = repo.go(second)
+    assert (back.branch, back.at_branch_tip) == ("main", True)
+
+    repo.create_branch("also-side", start_point=side)
+    assert repo.go("side").branch == "side"
+    repo.switch("main")
+    assert repo.go(side).branch == "also-side"
+
+
+def test_go_with_unsaved_changes_keeps_them_as_bud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second, _side = go_repo(tmp_path, monkeypatch)
+    asset.write_bytes(b"draft")
+
+    result = repo.go(first)
+
+    assert result.bud is not None
+    assert result.bud.base_commit_id == second
+    assert [(entry.state, entry.path) for entry in result.bud.changes] == [
+        ("modified", "asset.bin")
+    ]
+    assert asset.read_bytes() == b"v1"
+    assert result.changes == ()
+
+    repo.restore_bud(result.bud.id)
+    assert asset.read_bytes() == b"draft"
+    assert repo.current_position() == (second, True)
+
+
+def test_go_refuses_untracked_conflict_before_keeping_bud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second, _side = go_repo(tmp_path, monkeypatch)
+    repo.untrack([asset])
+    asset.write_bytes(b"untracked work")
+
+    with pytest.raises(SproutError):
+        repo.go(first)
+
+    assert asset.read_bytes() == b"untracked work"
+    assert repo.buds() == []
+    assert repo.current_position() == (second, True)
+
+
+def test_move_command_still_moves_tracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, _second, _side = go_repo(tmp_path, monkeypatch)
+    assert repo.move(asset, repo.root / "renamed.bin") == ("asset.bin", "renamed.bin")
+    assert (repo.root / "renamed.bin").read_bytes() == b"v2"
+    assert "renamed.bin" in repo.tracked()

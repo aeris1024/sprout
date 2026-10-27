@@ -1211,6 +1211,42 @@ def bud(
         typer.echo(_bud_summary(item))
 
 
+@app.command()
+def go(
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag to move to",
+            autocompletion=_complete_references,
+        ),
+    ],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """Move to a snapshot, keeping unsaved changes as a bud."""
+    repository = repo()
+    with _show_progress(repository, enabled=not json_output):
+        result = repository.go(target)
+    if json_output:
+        _echo_json(
+            {
+                "current_commit": result.commit_id,
+                "branch": result.branch,
+                "at_branch_tip": result.at_branch_tip,
+                "bud": _bud_json(result.bud) if result.bud is not None else None,
+                "changes": [
+                    {"state": entry.state, "path": entry.path} for entry in result.changes
+                ],
+            }
+        )
+        return
+    if result.bud is not None:
+        typer.echo(f"Saved bud {_bud_summary(result.bud)}")
+    where = "branch tip" if result.at_branch_tip else "saved snapshot"
+    typer.echo(f"Moved to {where} {result.commit_id[:12]} on {result.branch}")
+
+
 @app.command(name="switch")
 def switch_command(
     branch_name: Annotated[
