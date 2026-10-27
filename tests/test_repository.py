@@ -2332,7 +2332,30 @@ def test_prune_dry_run_reports_gc_space_and_keeps_attachment_references(
     assert repo.thumbnail(last).original_name == "kept.png"
 
 
-def test_prune_rejects_working_tree_restored_to_removed_commit(
+def test_prune_keeps_the_current_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"first")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_tag("start", first)
+    asset.write_bytes(b"temporary")
+    current = repo.commit("temporary").commit_id
+    asset.write_bytes(b"last")
+    last = repo.commit("last").commit_id
+    repo.create_tag("end", last)
+    repo.restore(current)
+
+    assert repo.prune("start", "end", dry_run=True).commits == ()
+    assert repo.prune("start", "end").commits == ()
+    assert repo.resolve_commit(current) == current
+    assert repo.current_commit() == current
+    assert repo.doctor().ok
+
+
+def test_prune_rejects_working_tree_matching_removed_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = create_repo(tmp_path)
@@ -2346,8 +2369,10 @@ def test_prune_rejects_working_tree_restored_to_removed_commit(
     asset.write_bytes(b"last")
     last = repo.commit("last").commit_id
     repo.create_tag("end", last)
-    repo.restore(removed)
+    # Partial restore reproduces the old content without moving the current position.
+    repo.restore(removed, [asset])
 
+    assert repo.current_commit() == last
     assert [commit.id for commit in repo.prune("start", "end", dry_run=True).commits] == [
         removed
     ]
@@ -2547,3 +2572,142 @@ def test_connect_closes_database_connection(tmp_path: Path) -> None:
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         db.execute("SELECT 1")
+
+
+def test_current_position_follows_full_restore_switch_and_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    assert repo.current_position() == (None, True)
+
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    assert repo.current_position() == (first, True)
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    assert repo.current_position() == (second, True)
+
+    repo.restore(first)
+    assert repo.current_position() == (first, False)
+    assert repo.commit_graph().current_commit == first
+
+    repo.create_branch("side", start_point=first, switch=True)
+    assert repo.head_branch() == "side"
+    assert repo.current_position() == (first, True)
+    asset.write_bytes(b"side")
+    side = repo.commit("side").commit_id
+    assert repo.current_position() == (side, True)
+
+    repo.switch("main")
+    assert repo.current_position() == (second, True)
+    repo.restore("side")
+    assert repo.current_position() == (side, False)
+    repo.restore("main")
+    assert repo.current_position() == (second, True)
+
+
+def test_partial_and_failed_restore_keep_current_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+
+    repo.restore(first, [asset])
+    assert asset.read_bytes() == b"v1"
+    assert repo.current_position() == (second, True)
+
+    asset.write_bytes(b"unsaved")
+    with pytest.raises(SproutError) as exc:
+        repo.restore(first)
+    assert exc.value.code == "uncommitted_changes"
+    assert repo.current_position() == (second, True)
+
+    with pytest.raises(SproutError) as exc:
+        repo.switch("missing")
+    assert repo.current_position() == (second, True)
+
+
+def test_repository_without_recorded_position_sits_at_branch_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    with repo.connect() as db:
+        db.execute("DELETE FROM meta WHERE key='current_commit'")
+
+    reopened = Repository.discover(repo.root)
+    assert reopened.current_position() == (second, True)
+    assert reopened.doctor().ok
+
+    reopened.restore(first)
+    assert reopened.current_position() == (first, False)
+
+
+def test_create_branch_uses_recorded_position_for_omitted_start_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    repo.restore(first)
+    # Edits after moving keep the recorded position, unlike content matching.
+    asset.write_bytes(b"edited")
+
+    with pytest.raises(SproutError, match=rf"sprout branch NAME {first[:12]}\)"):
+        repo.create_branch("rethink")
+    assert all(name != "rethink" for name, _, _ in repo.branches())
+
+
+def test_doctor_reports_missing_current_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    repo.commit("first")
+    with repo.connect() as db:
+        db.execute("UPDATE meta SET value='0123456789abcdef' WHERE key='current_commit'")
+
+    result = repo.doctor()
+    assert not result.ok
+    assert [(issue.kind, issue.detail) for issue in result.issues] == [
+        ("missing_current_commit", "0123456789abcdef")
+    ]
+
+
+def test_deleting_branch_keeps_current_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    repo.create_branch("side", start_point=first, switch=True)
+    asset.write_bytes(b"side")
+    side = repo.commit("side").commit_id
+    repo.switch("main")
+    repo.restore(side)
+
+    repo.delete_branch("side")
+
+    assert repo.resolve_commit(side) == side
+    assert repo.current_position() == (side, False)
+    assert repo.doctor().ok

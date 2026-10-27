@@ -1219,6 +1219,8 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
     assert invoke(["tree"], project, monkeypatch).stdout == "No commits yet\n"
     payload = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
     assert payload == {
+        "current_commit": None,
+        "at_branch_tip": True,
         "commits": [],
         "branches": [
             {"name": "main", "commit_id": None, "comment": "", "current": True}
@@ -1245,6 +1247,8 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert "On branch" not in status_result.stdout
     assert json.loads(status_result.stdout) == {
         "branch": "main",
+        "current_commit": None,
+        "at_branch_tip": True,
         "changes": [{"state": "added", "path": "作品/絵.psd"}],
         "tracked": ["作品/絵.psd"],
         "untracked": [],
@@ -1254,6 +1258,8 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert path_status.exit_code == 0
     assert json.loads(path_status.stdout) == {
         "branch": "main",
+        "current_commit": None,
+        "at_branch_tip": True,
         "paths": [{"path": "作品/絵.psd", "tracked": True}],
     }
 
@@ -1424,3 +1430,41 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     assert untracked.exit_code == 0
     assert json.loads(untracked.stdout) == {"paths": ["作品/絵.psd"]}
     assert untracked.stderr == ""
+
+
+def test_status_and_tree_report_current_position(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+    asset.write_bytes(b"v2")
+    second = json.loads(
+        invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout
+    )["id"]
+
+    at_tip = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)
+    assert (at_tip["current_commit"], at_tip["at_branch_tip"]) == (second, True)
+    assert "Viewing saved snapshot" not in invoke(["status"], project, monkeypatch).stdout
+
+    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    viewing = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)
+    assert (viewing["current_commit"], viewing["at_branch_tip"]) == (first, False)
+    path_status = json.loads(
+        invoke(["status", "asset.bin", "--json"], project, monkeypatch).stdout
+    )
+    assert (path_status["current_commit"], path_status["at_branch_tip"]) == (first, False)
+    assert invoke(["status"], project, monkeypatch).stdout.splitlines()[:2] == [
+        "On branch main",
+        f"Viewing saved snapshot {first[:12]} (not the branch tip)",
+    ]
+
+    graph = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    assert (graph["current_commit"], graph["at_branch_tip"]) == (first, False)
+    tree_lines = invoke(["tree"], project, monkeypatch).stdout.splitlines()
+    assert [line for line in tree_lines if "current" in line] == [
+        line for line in tree_lines if first[:12] in line
+    ]

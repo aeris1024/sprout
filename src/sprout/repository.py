@@ -224,6 +224,7 @@ class CommitGraph:
     commits: tuple[GraphCommit, ...]
     branches: tuple[BranchReference, ...]
     tags: tuple[TagReference, ...]
+    current_commit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +329,7 @@ class Repository:
                 )
                 db.execute("INSERT INTO meta(key, value) VALUES('head_branch', 'main')")
                 db.execute("INSERT INTO meta(key, value) VALUES('active_operation', '')")
+                db.execute("INSERT INTO meta(key, value) VALUES('current_commit', '')")
                 db.execute(
                     "INSERT INTO meta(key, value) VALUES('repository_id', ?)",
                     (str(uuid.uuid4()),),
@@ -730,6 +732,40 @@ class Repository:
             ).fetchone()
             return row[0] if row else None
 
+    @staticmethod
+    def _current_commit_from_db(db: sqlite3.Connection) -> str | None:
+        # Repositories created before the position was recorded sit at the branch tip.
+        row = db.execute("SELECT value FROM meta WHERE key='current_commit'").fetchone()
+        if row is not None and row[0]:
+            return row[0]
+        tip = db.execute(
+            "SELECT b.commit_id FROM branches b JOIN meta m ON m.value=b.name WHERE m.key='head_branch'"
+        ).fetchone()
+        return tip[0] if tip else None
+
+    @staticmethod
+    def _set_current_commit(db: sqlite3.Connection, commit_id: str | None) -> None:
+        db.execute(
+            "INSERT INTO meta(key, value) VALUES('current_commit', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (commit_id or "",),
+        )
+
+    def current_commit(self) -> str | None:
+        """Return the snapshot the working tree is based on."""
+        with self.connect() as db:
+            return self._current_commit_from_db(db)
+
+    def current_position(self) -> tuple[str | None, bool]:
+        """Return the current snapshot and whether it is the current branch tip."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            current = self._current_commit_from_db(db)
+            tip = db.execute(
+                "SELECT b.commit_id FROM branches b JOIN meta m ON m.value=b.name WHERE m.key='head_branch'"
+            ).fetchone()
+        return current, current == (tip[0] if tip else None)
+
     def manifest(self, commit_id: str | None) -> dict[str, FileState]:
         if commit_id is None:
             return {}
@@ -1043,6 +1079,7 @@ class Repository:
                     ),
                 )
             db.execute("UPDATE branches SET commit_id=? WHERE name=?", (commit_id, branch))
+            self._set_current_commit(db, commit_id)
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
         return CommitResult(commit_id, tuple(missing))
 
@@ -1170,6 +1207,7 @@ class Repository:
             current_branch = db.execute(
                 "SELECT value FROM meta WHERE key='head_branch'"
             ).fetchone()[0]
+            current_commit = self._current_commit_from_db(db)
             branch_rows = list(
                 db.execute(
                     "SELECT name, commit_id, comment FROM branches ORDER BY name"
@@ -1214,7 +1252,9 @@ class Repository:
             )
             for row in tag_rows
         )
-        return CommitGraph(commits=commits, branches=branches, tags=tags)
+        return CommitGraph(
+            commits=commits, branches=branches, tags=tags, current_commit=current_commit
+        )
 
     @staticmethod
     def _normalize_label(label: str) -> str:
@@ -1484,6 +1524,11 @@ class Repository:
                 issues.append(
                     DoctorIssue("active_operation", f"interrupted operation recorded: {active[0]}")
                 )
+            current = self._current_commit_from_db(db)
+            if current is not None and db.execute(
+                "SELECT 1 FROM commits WHERE id=?", (current,)
+            ).fetchone() is None:
+                issues.append(DoctorIssue("missing_current_commit", current))
 
         for object_hash in hashes:
             path = self.objects / object_hash[:2] / object_hash
@@ -1677,6 +1722,9 @@ class Repository:
                     )
                 }
                 protected = set(tags.values()) | branch_tips
+                current = self._current_commit_from_db(db)
+                if current is not None:
+                    protected.add(current)
 
                 if all_history:
                     candidates = set(parents) - protected
@@ -1881,22 +1929,13 @@ class Repository:
 
     def _reject_omitted_start_point_on_restored_snapshot(self, head: str) -> None:
         """Refuse tip-based branching when a different saved snapshot is checked out."""
-        signature = self._working_content_signature()
-        if signature is None:
-            return
-        head_manifest = self.manifest(head)
-        head_signature = {
-            path: (state.object_hash, state.size) for path, state in head_manifest.items()
-        }
-        if signature == head_signature:
-            return
-        matched = self._matching_saved_snapshot_commit(signature)
-        if matched is None:
+        current = self.current_commit()
+        if current is None or current == head:
             return
         raise SproutError(
-            "working tree matches a saved snapshot that differs from the current "
+            "working tree is based on a saved snapshot that differs from the current "
             "branch tip; specify the start point explicitly "
-            f"(example: sprout branch NAME {matched[:12]})"
+            f"(example: sprout branch NAME {current[:12]})"
         )
 
     @locked
@@ -1940,7 +1979,9 @@ class Repository:
             raise SproutError(f"branch already exists: {name}") from exc
         if switch:
             try:
-                self._materialize(self.manifest(commit_id), head_branch=name)
+                self._materialize(
+                    self.manifest(commit_id), head_branch=name, current_commit=commit_id
+                )
             except Exception:
                 with self.connect() as db:
                     db.execute(
@@ -2323,7 +2364,12 @@ class Repository:
         return plan
 
     def _finalize_materialization(
-        self, target: dict[str, FileState], head_branch: str | None, *, partial: bool = False
+        self,
+        target: dict[str, FileState],
+        head_branch: str | None,
+        *,
+        partial: bool = False,
+        current_commit: str | None = None,
     ) -> None:
         with self.connect() as db:
             if partial:
@@ -2338,6 +2384,8 @@ class Repository:
                 )
             if head_branch is not None:
                 db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (head_branch,))
+            if current_commit is not None:
+                self._set_current_commit(db, current_commit)
             db.execute("UPDATE meta SET value='' WHERE key='active_operation'")
 
     def _remove_empty_parents(self, paths: set[str]) -> None:
@@ -2361,6 +2409,7 @@ class Repository:
         *,
         head_branch: str | None = None,
         partial: bool = False,
+        current_commit: str | None = None,
     ) -> None:
         current = self.tracked()
         plan = self._restore_plan(target, partial=partial)
@@ -2387,7 +2436,9 @@ class Repository:
                 plan["attempted"] = index + 1
                 self._write_restore_progress(operation_dir, plan)
                 self._apply_restore_action(operation_dir, action)
-            self._finalize_materialization(target, head_branch, partial=partial)
+            self._finalize_materialization(
+                target, head_branch, partial=partial, current_commit=current_commit
+            )
             operation_complete = True  # DB commit is the commit point; never undo it.
             if not partial:
                 self._remove_empty_parents(current - set(target))
@@ -2420,16 +2471,6 @@ class Repository:
             if operation_complete or not active_registered:
                 self._restore_tree_files(operation_dir)
                 shutil.rmtree(operation_dir, ignore_errors=True)
-
-    def _working_content_signature(self) -> dict[str, tuple[str, int]] | None:
-        signature: dict[str, tuple[str, int]] = {}
-        for relative in sorted(self.tracked()):
-            path = self.root / Path(relative)
-            if not path.is_file():
-                return None
-            object_hash, size = self.hash_file(path, self.progress, relative)
-            signature[relative] = (object_hash, size)
-        return signature
 
     def _is_saved_snapshot(
         self, signature: dict[str, tuple[str, int]], *, exact: bool = True
@@ -2666,7 +2707,7 @@ class Repository:
                     code="uncommitted_changes",
                     details={"can_discard": True},
                 )
-            self._materialize(commit_manifest)
+            self._materialize(commit_manifest, current_commit=commit_id)
         return commit_id
 
     @locked
@@ -2683,5 +2724,5 @@ class Repository:
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
-        self._materialize(target, head_branch=name)
+        self._materialize(target, head_branch=name, current_commit=row[0] or "")
         return row[0]
