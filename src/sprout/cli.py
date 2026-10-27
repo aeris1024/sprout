@@ -1451,6 +1451,18 @@ def gc(
 
 
 @app.command()
+def serve() -> None:
+    """Answer JSON Lines requests on stdin without restarting (for the GUI)."""
+    from .serve import serve as serve_requests
+
+    for stream in (sys.stdin, sys.stdout):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
+    serve_requests(app, __version__)
+
+
+@app.command()
 def doctor() -> None:
     """Inspect repository integrity without changing files."""
     result = repo().doctor()

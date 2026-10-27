@@ -326,6 +326,22 @@ sprout bud --drop <bud-id> --yes
 
 `--restore`は、作業フォルダをつぼみを残したときの内容に戻し、現在位置をつぼみの元のスナップショットへ移します。そのとき別の未保存の変更があれば、先にそれを新しいつぼみとして残してから戻します。戻したつぼみは、書き戻しが完了した後に一覧から消えます。未追跡ファイルは削除も上書きもせず、戻す先と衝突する場合やリンクがある場合は何も変更せずに中止します。つぼみの元になっているコミットは`prune`で削除されず、つぼみが参照するオブジェクトは`gc`で削除されません。`doctor`はつぼみのオブジェクトも検査し、`stats`はつぼみの数を表示します。
 
+## 常駐モード（serve）
+
+GUIなどから多数のコマンドを続けて実行する場合は、`sprout serve`で1つのプロセスを常駐させ、Pythonの起動コストを省けます。標準入力へ1行1件のJSON要求を送り、標準出力から1行1件のJSON応答を受け取ります（JSON Lines、UTF-8）。
+
+起動直後に`{"ready": true, "version": string, "protocol": 1}`を1行出力します。要求と応答の形式は次のとおりです。`args`は通常のCLI引数と同じで、`--json`を付けたコマンドは通常のCLIと同じJSONを`result`に返します。JSONではない出力は`{"text": string}`になります。`cwd`を指定すると、その要求だけそのフォルダで実行します。
+
+```text
+要求: {"id": any, "args": [string], "cwd"?: string}
+成功: {"id": any, "ok": true, "exit_code": 0, "result": any}
+失敗: {"id": any, "ok": false, "exit_code"?: number, "result"?: any,
+       "error": {"code": string, "message": string, "details": object}}
+終了: {"id": any, "command": "quit"} または標準入力のEOF
+```
+
+エラーが起きてもプロセスは終了せず、エラー応答を返して次の要求を待ちます。要求は1件ずつ順に処理し、書き込み系のコマンドは通常のCLIと同じリポジトリロックを使うため、常駐中に別プロセスのCLIを実行しても安全です。ロック中に書き込みを要求した場合は`repository_locked`エラーが返ります。`serve`の入れ子は実行できません。
+
 ## コミットからファイルを取り出す
 
 作業フォルダや追跡状態を変えずにコミット内のファイルを書き出す場合は`export`を使います。パスを省略すると全ファイル、ファイルやディレクトリを指定すると該当するファイルだけを書き出します。相対パスの構造と更新日時はコミット時の状態が保たれます。
@@ -466,6 +482,7 @@ sprout commit -m "ファイルを移動"
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
 | `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
 | `switch BRANCH [--json]` | 別のブランチへ切り替える |
+| `serve` | JSON Linesで要求を受け付ける常駐モードを起動する |
 | `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元・破棄する |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
