@@ -1468,3 +1468,25 @@ def test_status_and_tree_report_current_position(tmp_path: Path, monkeypatch) ->
     assert [line for line in tree_lines if "current" in line] == [
         line for line in tree_lines if first[:12] in line
     ]
+
+
+def test_status_is_clean_after_moving_to_an_old_snapshot(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    asset = project / "asset.bin"
+    asset.write_bytes(b"v1")
+    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(
+        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+    )["id"]
+    asset.write_bytes(b"v2")
+    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+
+    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    assert "Working tree clean" in invoke(["status"], project, monkeypatch).stdout
+    assert json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)["changes"] == []
+    assert invoke(["diff"], project, monkeypatch).stdout == "No differences\n"
+
+    asset.write_bytes(b"edited")
+    changes = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)["changes"]
+    assert changes == [{"state": "modified", "path": "asset.bin"}]
