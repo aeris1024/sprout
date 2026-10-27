@@ -552,3 +552,28 @@ def test_interrupted_restore_keeps_current_position(repo, monkeypatch):
     recovered = Repository.discover(repo.root)
     assert not active(recovered)
     assert recovered.current_position() == before
+
+
+def test_interrupted_bud_restore_keeps_work_and_bud(repo, monkeypatch):
+    asset = write(repo.root, "asset", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    repo.restore(first)
+    asset.write_bytes(b"kept in bud")
+    bud = repo.save_bud()
+    repo.restore("main", discard=True)
+    asset.write_bytes(b"current work")
+    before = repo.current_position()
+    def interrupt(*args, **kwargs):
+        raise Interrupted()
+    monkeypatch.setattr(repo, "_finalize_materialization", interrupt)
+    with pytest.raises(Interrupted):
+        repo.restore_bud(bud.id)
+    monkeypatch.undo()
+    recovered = Repository.discover(repo.root)
+    assert not active(recovered)
+    assert asset.read_bytes() == b"current work"
+    assert recovered.current_position() == before
+    assert [item.id for item in recovered.buds()] == [bud.id]

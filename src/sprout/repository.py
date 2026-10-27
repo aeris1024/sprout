@@ -79,6 +79,26 @@ def locked(method: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
+# Buds were added after Version 1 shipped, so existing repositories create them on open.
+BUD_SCHEMA = """
+CREATE TABLE IF NOT EXISTS buds (
+    id TEXT PRIMARY KEY,
+    base_commit_id TEXT REFERENCES commits(id),
+    branch_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bud_files (
+    bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    object_hash TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    PRIMARY KEY (bud_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_buds_base ON buds(base_commit_id);
+CREATE INDEX IF NOT EXISTS idx_bud_files_object_hash ON bud_files(object_hash);
+"""
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE meta (
@@ -139,7 +159,8 @@ CREATE INDEX idx_commits_parent ON commits(parent_id);
 CREATE INDEX idx_commit_attachments_object_hash
     ON commit_attachments(object_hash);
 CREATE INDEX idx_commit_labels_label ON commit_labels(label);
-"""
+""" + BUD_SCHEMA
+
 
 
 @dataclass(frozen=True)
@@ -225,6 +246,7 @@ class CommitGraph:
     branches: tuple[BranchReference, ...]
     tags: tuple[TagReference, ...]
     current_commit: str | None = None
+    buds: tuple[Bud, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,6 +259,16 @@ class ExportResult:
 class IgnoreRule:
     pattern: str
     directory_only: bool
+
+
+@dataclass(frozen=True)
+class Bud:
+    id: str
+    base_commit_id: str | None
+    branch_name: str
+    created_at: str
+    files: tuple[FileState, ...]
+    changes: tuple[StatusEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -289,6 +321,7 @@ class RepoStats:
     objects_bytes: int
     logical_bytes: int
     unique_bytes: int
+    buds: int = 0
 
     @property
     def dedup_saved_bytes(self) -> int:
@@ -358,6 +391,8 @@ class Repository:
                 repo = cls(candidate, progress)
                 repo._restore_internal(repo.db_path)
                 repo.check_schema()
+                with repo.connect() as db:
+                    db.executescript(BUD_SCHEMA)
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
                 # operation is recorded; re-check under the lock inside recover.
@@ -989,14 +1024,11 @@ class Repository:
             updated_at=row["updated_at"],
         )
 
-    @locked
-    def commit(self, message: str, thumbnail: Path | None = None) -> CommitResult:
-        if not message.strip():
-            raise SproutError("commit message cannot be empty")
-        tracked = self.tracked()
+    def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
+        """Store every present tracked file and list tracked paths that are missing."""
         files: list[FileState] = []
         missing: list[str] = []
-        for relative in sorted(tracked):
+        for relative in sorted(self.tracked()):
             path = self.root / Path(relative)
             if not path.is_file():
                 missing.append(relative)
@@ -1005,8 +1037,15 @@ class Repository:
             object_hash, size = self._store_object(path)
             after = path.stat()
             if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
-                raise SproutError(f"file changed while committing: {relative}")
+                raise SproutError(f"file changed while {action}: {relative}")
             files.append(FileState(relative, object_hash, size, after.st_mtime_ns))
+        return files, missing
+
+    @locked
+    def commit(self, message: str, thumbnail: Path | None = None) -> CommitResult:
+        if not message.strip():
+            raise SproutError("commit message cannot be empty")
+        files, missing = self._store_tracked_files("committing")
 
         # Modification time is canonical per content object, not versioned metadata.
         # Existing objects keep the time chosen by their first commit. If duplicate
@@ -1208,6 +1247,7 @@ class Repository:
                 "SELECT value FROM meta WHERE key='head_branch'"
             ).fetchone()[0]
             current_commit = self._current_commit_from_db(db)
+            buds = tuple(self._buds_from_db(db))
             branch_rows = list(
                 db.execute(
                     "SELECT name, commit_id, comment FROM branches ORDER BY name"
@@ -1253,7 +1293,11 @@ class Repository:
             for row in tag_rows
         )
         return CommitGraph(
-            commits=commits, branches=branches, tags=tags, current_commit=current_commit
+            commits=commits,
+            branches=branches,
+            tags=tags,
+            current_commit=current_commit,
+            buds=buds,
         )
 
     @staticmethod
@@ -1504,7 +1548,8 @@ class Repository:
                 row[0]
                 for row in db.execute(
                     "SELECT object_hash FROM commit_files "
-                    "UNION SELECT object_hash FROM commit_attachments"
+                    "UNION SELECT object_hash FROM commit_attachments "
+                    "UNION SELECT object_hash FROM bud_files"
                 )
             }
 
@@ -1516,7 +1561,8 @@ class Repository:
                 row[0]
                 for row in db.execute(
                     "SELECT object_hash FROM commit_files "
-                    "UNION SELECT object_hash FROM commit_attachments ORDER BY 1"
+                    "UNION SELECT object_hash FROM commit_attachments "
+                    "UNION SELECT object_hash FROM bud_files ORDER BY 1"
                 )
             ]
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
@@ -1529,6 +1575,11 @@ class Repository:
                 "SELECT 1 FROM commits WHERE id=?", (current,)
             ).fetchone() is None:
                 issues.append(DoctorIssue("missing_current_commit", current))
+            for row in db.execute(
+                "SELECT b.id FROM buds b LEFT JOIN commits c ON c.id = b.base_commit_id "
+                "WHERE b.base_commit_id IS NOT NULL AND c.id IS NULL ORDER BY b.id"
+            ):
+                issues.append(DoctorIssue("missing_bud_base", row[0]))
 
         for object_hash in hashes:
             path = self.objects / object_hash[:2] / object_hash
@@ -1558,6 +1609,7 @@ class Repository:
             commits = db.execute("SELECT COUNT(*) FROM commits").fetchone()[0]
             branches = db.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
             tracked_paths = db.execute("SELECT COUNT(*) FROM tracked_paths").fetchone()[0]
+            buds = db.execute("SELECT COUNT(*) FROM buds").fetchone()[0]
             logical_bytes = db.execute(
                 "SELECT COALESCE(SUM(size), 0) FROM commit_files"
             ).fetchone()[0]
@@ -1586,6 +1638,7 @@ class Repository:
             objects_bytes=objects_bytes,
             logical_bytes=logical_bytes,
             unique_bytes=unique_bytes,
+            buds=buds,
         )
 
     @locked
@@ -1725,6 +1778,12 @@ class Repository:
                 current = self._current_commit_from_db(db)
                 if current is not None:
                     protected.add(current)
+                protected |= {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT base_commit_id FROM buds WHERE base_commit_id IS NOT NULL"
+                    )
+                }
 
                 if all_history:
                     candidates = set(parents) - protected
@@ -2726,3 +2785,134 @@ class Repository:
             )
         self._materialize(target, head_branch=name, current_commit=row[0] or "")
         return row[0]
+
+    def _buds_from_db(self, db: sqlite3.Connection, bud_ids: list[str] | None = None) -> list[Bud]:
+        query = "SELECT id, base_commit_id, branch_name, created_at FROM buds"
+        params: tuple[str, ...] = ()
+        if bud_ids is not None:
+            query += f" WHERE id IN ({','.join('?' for _ in bud_ids)})"
+            params = tuple(bud_ids)
+        rows = list(db.execute(query + " ORDER BY created_at DESC, rowid DESC", params))
+        files: dict[str, list[FileState]] = {row["id"]: [] for row in rows}
+        for row in db.execute(
+            "SELECT bud_id, path, object_hash, size, mtime_ns FROM bud_files ORDER BY path"
+        ):
+            if row["bud_id"] in files:
+                files[row["bud_id"]].append(
+                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"])
+                )
+        buds: list[Bud] = []
+        for row in rows:
+            base = {
+                item["path"]: FileState(
+                    item["path"], item["object_hash"], item["size"], item["mtime_ns"]
+                )
+                for item in db.execute(
+                    "SELECT path, object_hash, size, mtime_ns FROM commit_files WHERE commit_id=?",
+                    (row["base_commit_id"],),
+                )
+            }
+            changes = self.diff_manifests(base, {item.path: item for item in files[row["id"]]})
+            buds.append(
+                Bud(
+                    id=row["id"],
+                    base_commit_id=row["base_commit_id"],
+                    branch_name=row["branch_name"],
+                    created_at=row["created_at"],
+                    files=tuple(files[row["id"]]),
+                    changes=tuple(StatusEntry(entry.state, entry.path) for entry in changes),
+                )
+            )
+        return buds
+
+    def buds(self) -> list[Bud]:
+        """Return saved buds, newest first."""
+        with self.connect() as db:
+            return self._buds_from_db(db)
+
+    def resolve_bud(self, value: str) -> str:
+        if not HEX_COMMIT_REFERENCE.fullmatch(value):
+            raise SproutError(f"unknown bud: {value}", code="unknown_bud")
+        with self.connect() as db:
+            matches = [
+                row[0]
+                for row in db.execute(
+                    "SELECT id FROM buds WHERE substr(id, 1, ?) = ?", (len(value), value)
+                )
+            ]
+        if not matches:
+            raise SproutError(f"unknown bud: {value}", code="unknown_bud")
+        if len(matches) > 1:
+            raise SproutError(f"ambiguous bud: {value}", code="ambiguous_bud")
+        return matches[0]
+
+    def _save_bud(self) -> Bud:
+        base = self.current_commit()
+        files, _ = self._store_tracked_files("saving a bud")
+        base_signature = {
+            path: (state.object_hash, state.size) for path, state in self.manifest(base).items()
+        }
+        if {item.path: (item.object_hash, item.size) for item in files} == base_signature:
+            raise SproutError("no unsaved changes to keep in a bud", code="nothing_to_save")
+        bud_id = uuid.uuid4().hex
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO buds(id, base_commit_id, branch_name, created_at) VALUES(?,?,?,?)",
+                (bud_id, base, self.head_branch(), created_at),
+            )
+            db.executemany(
+                "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
+                ((bud_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
+            )
+            return self._buds_from_db(db, [bud_id])[0]
+
+    @locked
+    def save_bud(self) -> Bud:
+        """Keep the unsaved tracked changes as a bud on the current snapshot."""
+        return self._save_bud()
+
+    @locked
+    def restore_bud(self, value: str) -> tuple[Bud, Bud | None]:
+        """Bring a bud back into the working tree, keeping any newer changes as a bud."""
+        bud_id = self.resolve_bud(value)
+        with self.connect() as db:
+            bud = self._buds_from_db(db, [bud_id])[0]
+            branch_exists = db.execute(
+                "SELECT 1 FROM branches WHERE name=?", (bud.branch_name,)
+            ).fetchone() is not None
+            position_before = db.execute(
+                "SELECT value FROM meta WHERE key='current_commit'"
+            ).fetchone()
+        target = {item.path: item for item in bud.files}
+        self._validate_restore_inputs(target)
+        self._restore_plan(target, partial=False)
+        stashed = self._save_bud() if self._has_unsaved_changes() else None
+        try:
+            self._materialize(
+                target,
+                head_branch=bud.branch_name if branch_exists else None,
+                current_commit=bud.base_commit_id or "",
+            )
+        except BaseException:
+            if stashed is not None:
+                with self.connect() as db:
+                    position_after = db.execute(
+                        "SELECT value FROM meta WHERE key='current_commit'"
+                    ).fetchone()
+                    # Keep the new bud if the working tree was already replaced.
+                    if position_after == position_before:
+                        db.execute("DELETE FROM buds WHERE id=?", (stashed.id,))
+            raise
+        with self.connect() as db:
+            db.execute("DELETE FROM buds WHERE id=?", (bud.id,))
+        return bud, stashed
+
+    @locked
+    def drop_bud(self, value: str) -> Bud:
+        """Permanently delete a bud."""
+        bud_id = self.resolve_bud(value)
+        with self.connect() as db:
+            bud = self._buds_from_db(db, [bud_id])[0]
+            db.execute("DELETE FROM buds WHERE id=?", (bud_id,))
+        return bud
