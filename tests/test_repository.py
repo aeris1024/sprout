@@ -2979,3 +2979,118 @@ def test_repository_without_bud_tables_creates_them_on_open(
     assert reopened.buds() == []
     asset.write_bytes(b"draft")
     assert reopened.save_bud().base_commit_id is not None
+
+
+def test_commit_at_branch_tip_keeps_the_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first")
+    assert (first.branch, first.created_branch) == ("main", False)
+    asset.write_bytes(b"v2")
+    second = repo.commit("second")
+    assert (second.branch, second.created_branch) == ("main", False)
+    assert repo.commit_info(second.commit_id)[0]["parent_id"] == first.commit_id
+
+
+def test_commit_from_old_snapshot_grows_a_new_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    repo.restore(first)
+    asset.write_bytes(b"alternative")
+
+    result = repo.commit("alternative")
+
+    assert result.created_branch
+    assert result.branch.startswith("branch-")
+    assert repo.head_branch() == result.branch
+    assert (result.branch, result.commit_id, "") in repo.branches()
+    assert ("main", second, "") in repo.branches()
+    row = repo.commit_info(result.commit_id)[0]
+    assert (row["parent_id"], row["branch_name"]) == (first, result.branch)
+    assert repo.current_position() == (result.commit_id, True)
+
+    repo.rename_branch(result.branch, "alternative")
+    assert repo.head_branch() == "alternative"
+
+
+def test_commit_from_old_snapshot_without_changes_creates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    repo.restore(first)
+
+    with pytest.raises(SproutError, match="nothing to commit"):
+        repo.commit("same as before")
+    assert [name for name, _, _ in repo.branches()] == ["main"]
+    assert repo.current_position() == (first, False)
+
+
+def test_auto_branch_names_do_not_collide(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    repo.commit("second")
+    fixed = datetime(2026, 10, 28, 6, 30, tzinfo=timezone.utc)
+    base = "branch-" + fixed.astimezone().strftime("%Y%m%d-%H%M%S")
+    repo.create_branch(base, start_point=first)
+    repo.create_tag(base + "-2", first)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr("sprout.repository.datetime", FixedDatetime)
+    repo.restore(first)
+    asset.write_bytes(b"alternative")
+
+    assert repo.commit("alternative").branch == base + "-3"
+
+
+def test_failed_auto_branch_commit_leaves_no_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    asset.write_bytes(b"v2")
+    second = repo.commit("second").commit_id
+    repo.restore(first)
+    asset.write_bytes(b"alternative")
+
+    def fail(db, commit_id):
+        raise sqlite3.OperationalError("disk full")
+
+    monkeypatch.setattr(Repository, "_set_current_commit", staticmethod(fail))
+    with pytest.raises(sqlite3.OperationalError):
+        repo.commit("alternative")
+    monkeypatch.undo()
+
+    assert repo.branches() == [("main", second, "")]
+    assert repo.head_branch() == "main"
+    assert repo.current_position() == (first, False)
+    assert [commit.id for commit in repo.commit_graph().commits] == [second, first]

@@ -614,7 +614,8 @@ def commit_command(
         _echo_json(
             {
                 "id": result.commit_id,
-                "branch": repository.head_branch(),
+                "branch": result.branch,
+                "created_branch": result.created_branch,
                 "message": message.strip(),
                 "removed_paths": list(result.removed_paths),
             }
@@ -622,7 +623,9 @@ def commit_command(
         return
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
-    typer.echo(f"[{repository.head_branch()} {result.commit_id[:12]}] {message.strip()}")
+    if result.created_branch:
+        typer.echo(f"Created branch {result.branch} from a snapshot that is not a branch tip")
+    typer.echo(f"[{result.branch} {result.commit_id[:12]}] {message.strip()}")
 
 
 @app.command(name="log")
