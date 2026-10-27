@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import type { BranchInfo, CommitGraph, CommitLogEntry, SproutStatus } from "./lib/sprout";
@@ -69,7 +69,7 @@ function mockWorkspace(
     branches,
     tags: [],
   };
-  mocks.runSprout.mockResolvedValueOnce(status).mockResolvedValueOnce(history).mockResolvedValueOnce(branches).mockResolvedValueOnce(graph);
+  mocks.runSprout.mockResolvedValueOnce(status).mockResolvedValueOnce(graph);
 }
 
 async function openWorkspace(user: ReturnType<typeof userEvent.setup>) {
@@ -95,6 +95,22 @@ describe("Sprout GUI operations", () => {
 
   afterEach(cleanup);
 
+  it("shows one screen with a top bar, map area, and side panel", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+
+    expect(screen.queryByRole("navigation", { name: "プロジェクト操作" })).toBeNull();
+    expect(screen.getByRole("region", { name: "スナップショット" })).toBeTruthy();
+    expect(screen.getByLabelText("現在のブランチ").textContent).toBe("main");
+    expect(screen.getByLabelText("保存状態").textContent).toBe("保存済み");
+    for (const name of ["ファイル", "保存", "設定", "プロジェクトを切り替え"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
+    expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree"]);
+  });
+
   it("offers init, loads the workspace, and remembers the project", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue(project);
@@ -113,7 +129,7 @@ describe("Sprout GUI operations", () => {
     await waitFor(() => expect(mocks.saveSettings).toHaveBeenCalled());
   });
 
-  it("removes a recent project without closing it and adds it again when reopened", async () => {
+  it("opens and forgets recent projects from the welcome screen and project menu", async () => {
     const user = userEvent.setup();
     mocks.loadSettings.mockResolvedValue({ recentProjects: [project], sproutProgram: "" });
     render(<App />);
@@ -123,6 +139,7 @@ describe("Sprout GUI operations", () => {
     await user.click(recentProject);
     expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();
 
+    await user.click(screen.getByRole("button", { name: "プロジェクトを切り替え" }));
     await user.click(screen.getByRole("button", { name: removeName }));
     await waitFor(() => expect(screen.queryByRole("button", { name: removeName })).toBeNull());
     expect(screen.getByRole("heading", { name: "sprout-project" })).toBeTruthy();
@@ -130,19 +147,33 @@ describe("Sprout GUI operations", () => {
 
     mocks.open.mockResolvedValueOnce(project);
     mockWorkspace();
-    await user.click(screen.getByRole("button", { name: "フォルダを開く" }));
+    await user.click(screen.getByRole("button", { name: "フォルダを開く…" }));
+    await waitFor(() => expect(mocks.saveSettings).toHaveBeenLastCalledWith({ recentProjects: [project], sproutProgram: "" }));
+    await user.click(screen.getByRole("button", { name: "プロジェクトを切り替え" }));
     expect(await screen.findByRole("button", { name: removeName })).toBeTruthy();
-    expect(mocks.saveSettings).toHaveBeenLastCalledWith({ recentProjects: [project], sproutProgram: "" });
   });
 
-  it("tracks an untracked file and refreshes status", async () => {
+  it("saves the CLI path from the settings gear", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "設定" }));
+    const settings = screen.getByRole("region", { name: "CLI設定" });
+    await user.type(within(settings).getByLabelText("Sprout CLIのパス"), "C:\\Tools\\sprout.exe");
+    await user.click(within(settings).getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("CLI設定を保存しました")).toBeTruthy();
+    expect(mocks.saveSettings).toHaveBeenLastCalledWith({ recentProjects: [], sproutProgram: "C:\\Tools\\sprout.exe" });
+  });
+
+  it("tracks and untracks files from the file panel", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
+    await user.click(screen.getByRole("button", { name: "ファイル" }));
+    const panel = screen.getByRole("region", { name: "追跡ファイル" });
     mocks.runSprout.mockResolvedValueOnce({ paths: ["notes.txt"] });
     mockWorkspace({ ...cleanStatus, tracked: ["design/main.psd", "notes.txt"], untracked: [] });
 
-    await user.click(screen.getByRole("button", { name: /notes.txt/ }));
+    await user.click(within(panel).getByRole("button", { name: "追跡する" }));
 
     expect(await screen.findByText("1件を追跡対象に追加しました")).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["track", "notes.txt"], "");
@@ -181,12 +212,12 @@ describe("Sprout GUI operations", () => {
     ] });
 
     window.dispatchEvent(new Event("focus"));
-    window.dispatchEvent(new Event("focus"));
     expect(mocks.runSprout).toHaveBeenCalledTimes(initialCalls);
 
     await user.click(screen.getByRole("button", { name: "更新" }));
 
-    await waitFor(() => expect(screen.getByText("2", { selector: ".summary-grid strong" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 2"));
+    expect(screen.getByRole("heading", { name: "未保存の変更 2件" })).toBeTruthy();
   });
 
   it("commits with a selected thumbnail and reports the new id", async () => {
@@ -194,25 +225,34 @@ describe("Sprout GUI operations", () => {
     const image = "C:\\work\\preview.png";
     render(<App />);
     await openWorkspace(user);
-    await user.click(screen.getByRole("button", { name: "コミット" }));
-    await user.type(screen.getByLabelText("コミットメッセージ"), "Save design");
+    await user.type(screen.getByLabelText("メッセージ"), "Save design");
     mocks.open.mockResolvedValueOnce(image);
     await user.click(screen.getByRole("button", { name: "選択" }));
-    mocks.runSprout.mockResolvedValueOnce({ id: "b".repeat(64), branch: "main", message: "Save design", removed_paths: [] });
+    mocks.runSprout.mockResolvedValueOnce({ id: "b".repeat(64), branch: "main", created_branch: false, message: "Save design", removed_paths: [] });
     mockWorkspace(cleanStatus, [{ ...commitEntry, id: "b".repeat(64), message: "Save design" }, commitEntry]);
 
-    await user.click(screen.getByRole("button", { name: "コミットを作成" }));
+    await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
 
     expect(await screen.findByText(/コミット bbbbbbbbbbbb を作成しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["commit", "-m", "Save design", "--thumbnail", image], "");
+  });
+
+  it("reports a branch grown from a past snapshot", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    await user.type(screen.getByLabelText("メッセージ"), "Alternative");
+    mocks.runSprout.mockResolvedValueOnce({ id: "b".repeat(64), branch: "branch-20261028-120000", created_branch: true, message: "Alternative", removed_paths: [] });
+    mockWorkspace();
+    await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
+    expect(await screen.findByText("新しい枝 branch-20261028-120000 を作り、bbbbbbbbbbbb を保存しました")).toBeTruthy();
   });
 
   it("blocks overlapping commands while a commit is running", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    await user.click(screen.getByRole("button", { name: "コミット" }));
-    await user.type(screen.getByLabelText("コミットメッセージ"), "Long snapshot");
+    await user.type(screen.getByLabelText("メッセージ"), "Long snapshot");
     let finishCommit: (value: unknown) => void = () => undefined;
     const pendingCommit = new Promise((resolve) => {
       finishCommit = resolve;
@@ -220,7 +260,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockImplementationOnce(() => pendingCommit);
     mockWorkspace();
 
-    const commitButton = screen.getByRole("button", { name: "コミットを作成" }) as HTMLButtonElement;
+    const commitButton = screen.getByRole("button", { name: "保存して葉にする" }) as HTMLButtonElement;
     await user.click(commitButton);
     expect(commitButton.disabled).toBe(true);
     commitButton.click();
@@ -236,10 +276,9 @@ describe("Sprout GUI operations", () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    await user.click(screen.getByRole("button", { name: "履歴" }));
     mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [{ path: "design/main.psd", object_hash: "f".repeat(64), size: 42, mtime_ns: 0 }] });
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
-    expect(await screen.findByText("42 bytes")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "このコミットを復元" })).toBeTruthy();
 
     mocks.runSprout
       .mockRejectedValueOnce({ code: "uncommitted_changes", message: "working tree has uncommitted changes", details: { can_discard: true } })
@@ -290,7 +329,6 @@ describe("Sprout GUI operations", () => {
     mockWorkspace(cleanStatus, [commitEntry], treeGraph.branches, treeGraph);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     await screen.findByRole("heading", { name: "sprout-project" });
-    await user.click(screen.getByRole("button", { name: "ツリー" }));
 
     expect(screen.getByText("削除済みブランチ由来: archived")).toBeTruthy();
     expect(screen.getAllByText("現在の先端")).toHaveLength(2);
@@ -314,11 +352,10 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", tipId, image], "");
   });
 
-  it("edits a selected commit message and refreshes tree, history, and detail", async () => {
+  it("edits a selected commit message and refreshes tree and detail", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    await user.click(screen.getByRole("button", { name: "ツリー" }));
     const detail = { ...commitEntry, branch_name: "main", thumbnail: null, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
@@ -332,13 +369,11 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, message: "Renamed snapshot" });
     mockWorkspace(cleanStatus, [updatedEntry]);
     mocks.runSprout.mockResolvedValueOnce({ ...detail, message: "Renamed snapshot" });
-    await user.click(screen.getByRole("button", { name: "保存" }));
+    await user.click(within(editor.closest("form") as HTMLElement).getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/のコミットメッセージを変更しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["message", commitEntry.id, "Renamed snapshot"], "");
     expect(screen.getAllByText("Renamed snapshot").length).toBeGreaterThanOrEqual(2);
-    await user.click(screen.getByRole("button", { name: "履歴" }));
-    expect(screen.getByRole("button", { name: /Renamed snapshot/ })).toBeTruthy();
   });
 
   it("registers a past commit thumbnail after a dialog focus event", async () => {
@@ -360,7 +395,6 @@ describe("Sprout GUI operations", () => {
     mockWorkspace(cleanStatus, [tipEntry, rootEntry], graph.branches, graph);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     await screen.findByRole("heading", { name: "sprout-project" });
-    await user.click(screen.getByRole("button", { name: "ツリー" }));
 
     const detail = { ...rootEntry, branch_name: "main", thumbnail: null, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
@@ -399,25 +433,6 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", rootId, image], "");
     expect(await screen.findByRole("img", { name: "Past commitのサムネイル" })).toBeTruthy();
-  });
-
-  it("creates and switches branches", async () => {
-    const user = userEvent.setup();
-    render(<App />);
-    await openWorkspace(user);
-    await user.click(screen.getByRole("button", { name: "ブランチ" }));
-    await user.type(screen.getByLabelText("ブランチ名"), "alternate");
-    await user.type(screen.getByLabelText("コメント（任意）"), "別案");
-    mocks.runSprout.mockResolvedValueOnce({ name: "alternate", commit_id: commitEntry.id, comment: "別案", current: false });
-    const twoBranches = [...mainBranch, { name: "alternate", commit_id: commitEntry.id, comment: "別案", current: false }];
-    mockWorkspace(cleanStatus, [commitEntry], twoBranches);
-    await user.click(screen.getByRole("button", { name: "作成" }));
-    expect(await screen.findByText("ブランチ alternate を作成しました")).toBeTruthy();
-
-    mocks.runSprout.mockResolvedValueOnce({ branch: "alternate", commit_id: commitEntry.id });
-    mockWorkspace({ ...cleanStatus, branch: "alternate" }, [commitEntry], twoBranches.map((branch) => ({ ...branch, current: branch.name === "alternate" })));
-    await user.click(screen.getByRole("button", { name: "切り替え" }));
-    expect(await screen.findByText("alternate に切り替えました")).toBeTruthy();
   });
 
   it("shows a retry action for repository locks", async () => {

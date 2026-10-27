@@ -1,0 +1,74 @@
+interface FilePanelProps {
+  tracked: string[];
+  untracked: string[];
+  busy: boolean;
+  onAddFiles: () => void;
+  onAddFolder: () => void;
+  onTrack: (path: string) => void;
+  onUntrack: (path: string) => void;
+  onClose: () => void;
+}
+
+export default function FilePanel({
+  tracked,
+  untracked,
+  busy,
+  onAddFiles,
+  onAddFolder,
+  onTrack,
+  onUntrack,
+  onClose,
+}: FilePanelProps) {
+  return (
+    <section className="panel-section" aria-label="追跡ファイル">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">FILES</p>
+          <h3>追跡ファイル</h3>
+        </div>
+        <button className="icon-button" onClick={onClose} aria-label="ファイルパネルを閉じる">
+          ×
+        </button>
+      </div>
+      <p className="panel-copy">ファイルやフォルダをウィンドウへドロップしても追加できます。</p>
+      <div className="action-row">
+        <button className="button secondary" onClick={onAddFiles} disabled={busy}>
+          ファイルを追加
+        </button>
+        <button className="button secondary" onClick={onAddFolder} disabled={busy}>
+          フォルダを追加
+        </button>
+      </div>
+      <h4 className="list-title">追跡中（{tracked.length}件）</h4>
+      <div className="file-list">
+        {tracked.length === 0 ? (
+          <p className="muted">追跡中のファイルはありません。</p>
+        ) : (
+          tracked.map((path) => (
+            <div className="file-row" key={path}>
+              <span title={path}>{path}</span>
+              <button onClick={() => onUntrack(path)} disabled={busy}>
+                追跡解除
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+      <h4 className="list-title">未追跡（{untracked.length}件）</h4>
+      <div className="file-list">
+        {untracked.length === 0 ? (
+          <p className="muted">未追跡のファイルはありません。</p>
+        ) : (
+          untracked.map((path) => (
+            <div className="file-row" key={path}>
+              <span title={path}>{path}</span>
+              <button onClick={() => onTrack(path)} disabled={busy}>
+                追跡する
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
