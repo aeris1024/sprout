@@ -8,6 +8,7 @@ const stateLabels: Record<string, string> = {
 
 interface SavePanelProps {
   changes: StatusChange[];
+  growsBranch: boolean;
   message: string;
   thumbnailPath: string;
   busy: boolean;
@@ -19,6 +20,7 @@ interface SavePanelProps {
 
 export default function SavePanel({
   changes,
+  growsBranch,
   message,
   thumbnailPath,
   busy,
@@ -29,7 +31,7 @@ export default function SavePanel({
 }: SavePanelProps) {
   return (
     <section className="panel-section" aria-label="未保存の変更">
-      <p className="eyebrow">UNSAVED</p>
+      <p className="eyebrow">未保存の芽</p>
       <h3>{changes.length === 0 ? "変更はありません" : `未保存の変更 ${changes.length}件`}</h3>
       {changes.length === 0 ? (
         <div className="clean-state">作業フォルダは保存済みの状態です</div>
@@ -66,6 +68,9 @@ export default function SavePanel({
           )}
         </div>
       </label>
+      {growsBranch && changes.length > 0 && (
+        <p className="panel-copy grow-note">途中の芽から保存するため、新しい枝が自動で作られます。</p>
+      )}
       <button className="button primary wide" onClick={onSave} disabled={busy || !message.trim()}>
         保存して葉にする
       </button>

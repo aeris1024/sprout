@@ -2235,7 +2235,11 @@ class Repository:
                     code="restore_scope_conflict",
                     details={"path": relative, "reason": "unselected tracked path blocks restoration"},
                 )
-            raise SproutError(f"untracked path would be overwritten: {relative}")
+            raise SproutError(
+                f"untracked path would be overwritten: {relative}",
+                code="untracked_conflict",
+                details={"path": relative, "reason": "untracked path would be overwritten"},
+            )
 
         def removable_directory(relative: str) -> None:
             directory = self._safe_restore_path(relative)
@@ -2982,12 +2986,13 @@ class Repository:
             current_commit=commit_id,
         )
         _, at_tip = self.current_position()
+        # The tracked files now match the target exactly, so there is nothing to re-hash.
         return GoResult(
             commit_id=commit_id,
             branch=self.head_branch(),
             at_branch_tip=at_tip,
             bud=stashed,
-            changes=tuple(self.status()),
+            changes=(),
         )
 
     @locked
