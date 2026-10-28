@@ -1,5 +1,20 @@
 import { useEffect, useState } from "react";
-import type { BranchInfo, CommitDetail, GraphTag } from "../lib/sprout";
+import { branchIdentity, branchIdentityLabel, type BranchInfo, type CommitAttachment, type CommitDetail, type GraphTag } from "../lib/sprout";
+
+const roleLabels: Record<string, string> = {
+  thumbnail: "サムネイル",
+  preview: "プレビュー",
+};
+
+function formatSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function attachmentLabel(attachment: CommitAttachment): string {
+  return `${roleLabels[attachment.role] ?? attachment.role}: ${attachment.original_name}（${attachment.media_type}・${formatSize(attachment.size)}）`;
+}
 
 interface CommitPanelProps {
   detail: CommitDetail;
@@ -75,10 +90,19 @@ export default function CommitPanel({
       )}
       <dl className="detail-list">
         <div><dt>日時</dt><dd>{new Date(detail.created_at).toLocaleString("ja-JP")}</dd></div>
-        <div><dt>作成ブランチ</dt><dd>{detail.branch_name}</dd></div>
+        <div><dt>ブランチ</dt><dd>{branchIdentityLabel(branchIdentity(detail.branch_id, detail.branch_name, branches))}</dd></div>
         {tips.length > 0 && <div><dt>枝先</dt><dd>{tips.map((branch) => branch.name).join(", ")}</dd></div>}
         {commitTags.length > 0 && <div><dt>タグ</dt><dd>{commitTags.map((tag) => `#${tag}`).join(" ")}</dd></div>}
-        <div><dt>サムネイル</dt><dd>{detail.thumbnail?.original_name ?? "なし"}</dd></div>
+        <div>
+          <dt>添付</dt>
+          <dd>
+            {detail.attachments.length === 0 ? "なし" : (
+              <ul className="attachment-list" aria-label="添付">
+                {detail.attachments.map((attachment) => <li key={attachment.id}>{attachmentLabel(attachment)}</li>)}
+              </ul>
+            )}
+          </dd>
+        </div>
         <div><dt>ファイル</dt><dd>{detail.files.length}件</dd></div>
         <div><dt>ID</dt><dd className="mono">{detail.id.slice(0, 12)}</dd></div>
       </dl>

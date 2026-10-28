@@ -196,6 +196,11 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .bud rect { fill: var(--bud-bg); stroke: var(--bud); stroke-width: 1.2; rx: 11px; }
 .bud text, .unsaved-bud text { fill: var(--bud); font-size: 12px; }
 .bud.selected rect, .bud:focus-visible rect { stroke: var(--ink); stroke-width: 2; }
+.root-bud-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+.bud-button { border: 1.2px solid var(--bud); border-radius: 11px; background: var(--bud-bg); color: var(--bud); font: inherit; font-size: 12px; padding: 3px 14px; cursor: pointer; }
+.bud-button.selected, .bud-button:focus-visible { border-color: var(--ink); outline: none; }
+.attachment-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.attachment-list li { display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .unsaved-bud rect { fill: var(--paper); stroke: var(--bud); stroke-width: 2; stroke-dasharray: 5 4; rx: 14px; }
 .unsaved-bud.selected rect, .unsaved-bud:focus-visible rect { fill: var(--bud-bg); }
 .grow-note { color: var(--bud); }

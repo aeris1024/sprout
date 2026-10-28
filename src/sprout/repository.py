@@ -211,7 +211,8 @@ class DiffEntry:
 class CommitResult:
     commit_id: str
     removed_paths: tuple[str, ...]
-    branch: str = "main"
+    branch: str
+    branch_id: str
     created_branch: bool = False
 
 
@@ -261,6 +262,14 @@ class BranchReference:
 
 
 @dataclass(frozen=True)
+class HeadPosition:
+    branch_id: str
+    branch: str
+    current_commit: str | None
+    at_branch_tip: bool
+
+
+@dataclass(frozen=True)
 class TagReference:
     name: str
     commit_id: str
@@ -304,6 +313,7 @@ class Bud:
 class GoResult:
     commit_id: str
     branch: str
+    branch_id: str
     at_branch_tip: bool
     bud: Bud | None
     changes: tuple[StatusEntry, ...]
@@ -862,6 +872,17 @@ class Repository:
             ).fetchone()[0]
             return current, current == tip
 
+    def head_position(self) -> HeadPosition:
+        """Read the current branch and snapshot from one SQLite snapshot."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            current = self._current_commit_from_db(db)
+            row = db.execute(
+                "SELECT b.id, b.name, b.commit_id FROM branches b "
+                "JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
+            ).fetchone()
+            return HeadPosition(row["id"], row["name"], current, current == row["commit_id"])
+
     def manifest(self, commit_id: str | None) -> dict[str, FileState]:
         if commit_id is None:
             return {}
@@ -1196,7 +1217,8 @@ class Repository:
             db.execute("UPDATE branches SET commit_id=? WHERE name=? AND deleted=0", (commit_id, branch))
             self._set_current_commit(db, commit_id)
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
-        return CommitResult(commit_id, tuple(missing), branch, created_branch)
+            branch_id = self._branch_id_from_db(db, branch)
+        return CommitResult(commit_id, tuple(missing), branch, branch_id, created_branch)
 
     @staticmethod
     def _auto_branch_name(db: sqlite3.Connection, now: datetime) -> str:
@@ -2157,9 +2179,10 @@ class Repository:
         return commit_id
 
     @locked
-    def delete_branch(self, name: str) -> None:
+    def delete_branch(self, name: str) -> str:
+        """Delete a live branch and return its identity."""
         with self.connect() as db:
-            branch = db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
+            branch = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
             if branch is None:
                 raise SproutError(f"unknown branch: {name}")
             current = db.execute(
@@ -2167,13 +2190,15 @@ class Repository:
             ).fetchone()[0]
             if name == current:
                 raise SproutError(f"cannot delete current branch: {name}")
-            db.execute("UPDATE branches SET deleted=1, commit_id=NULL WHERE name=? AND deleted=0", (name,))
+            db.execute("UPDATE branches SET deleted=1, commit_id=NULL WHERE id=?", (branch[0],))
+        return branch[0]
 
     @locked
-    def rename_branch(self, old_name: str, new_name: str) -> None:
+    def rename_branch(self, old_name: str, new_name: str) -> str:
+        """Rename a live branch and return its identity."""
         self._validate_reference_name(new_name, "branch")
         with self.connect() as db:
-            branch = db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (old_name,)).fetchone()
+            branch = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (old_name,)).fetchone()
             if branch is None:
                 raise SproutError(f"unknown branch: {old_name}")
             duplicate = db.execute(
@@ -2186,7 +2211,8 @@ class Repository:
                 is not None
             ):
                 raise SproutError(f"name already used by tag: {new_name}")
-            db.execute("UPDATE branches SET name=? WHERE name=? AND deleted=0", (new_name, old_name))
+            db.execute("UPDATE branches SET name=? WHERE id=?", (new_name, branch[0]))
+        return branch[0]
 
     @locked
     def create_tag(
@@ -2220,11 +2246,12 @@ class Repository:
                 raise SproutError(f"unknown tag: {name}")
 
     @locked
-    def set_branch_comment(self, name: str, comment: str) -> None:
+    def set_branch_comment(self, name: str, comment: str) -> str:
+        """Replace a live branch comment and return the branch identity."""
         with self.connect() as db:
-            cursor = db.execute("UPDATE branches SET comment=? WHERE name=? AND deleted=0", (comment.strip(), name))
-            if cursor.rowcount == 0:
-                raise SproutError(f"unknown branch: {name}")
+            branch_id = self._branch_id_from_db(db, name)
+            db.execute("UPDATE branches SET comment=? WHERE id=?", (comment.strip(), branch_id))
+        return branch_id
 
     def _verify_manifest(self, target: dict[str, FileState]) -> None:
         for item in target.values():
@@ -3062,12 +3089,13 @@ class Repository:
             head_branch=branch if branch != current_branch else None,
             current_commit=commit_id,
         )
-        _, at_tip = self.current_position()
+        head = self.head_position()
         # The tracked files now match the target exactly, so there is nothing to re-hash.
         return GoResult(
             commit_id=commit_id,
-            branch=self.head_branch(),
-            at_branch_tip=at_tip,
+            branch=head.branch,
+            branch_id=head.branch_id,
+            at_branch_tip=head.at_branch_tip,
             bud=stashed,
             changes=(),
         )

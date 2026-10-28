@@ -9,6 +9,10 @@ export const MAP = {
   top: 120,
   bottom: 64,
   left: 160,
+  budWidth: 84,
+  budHeight: 22,
+  /** Left edge of the first bud kept before the first commit, right of the ground label. */
+  rootBudLeft: 120,
 };
 
 export interface MapLeaf {
@@ -34,6 +38,13 @@ export interface MapLane {
   live: boolean;
 }
 
+/** A bud kept before the first commit, placed on the ground because it has no leaf. */
+export interface MapRootBud {
+  bud: Bud;
+  x: number;
+  y: number;
+}
+
 export interface MapLabel {
   x: number;
   y: number;
@@ -55,6 +66,7 @@ export interface SproutMapLayout {
   leaves: MapLeaf[];
   lanes: MapLane[];
   labels: MapLabel[];
+  rootBuds: MapRootBud[];
   width: number;
   height: number;
   groundY: number;
@@ -99,8 +111,10 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
   const tagsByCommit = new Map<string, string[]>();
   for (const tag of graph.tags) tagsByCommit.set(tag.commit_id, [...(tagsByCommit.get(tag.commit_id) ?? []), tag.name]);
   const budsByCommit = new Map<string, Bud[]>();
-  for (const bud of graph.buds ?? []) {
+  const rootBuds: MapRootBud[] = [];
+  for (const bud of graph.buds) {
     if (bud.base_commit_id) budsByCommit.set(bud.base_commit_id, [...(budsByCommit.get(bud.base_commit_id) ?? []), bud]);
+    else rootBuds.push({ bud, x: MAP.rootBudLeft + rootBuds.length * (MAP.budWidth + 8), y: groundY + 16 });
   }
 
   const perLane = new Map<number, number>();
@@ -150,16 +164,17 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     labelsByCommit.set(leaf.commit.id, label);
   }
 
-  const currentTip = graph.branches.find((branch) => branch.current)?.commit_id ?? null;
-  const currentId = graph.current_commit !== undefined ? graph.current_commit : currentTip;
   const width = MAP.left + (laneIds.length - 1) * MAP.lane + MAP.gap + MAP.leafWidth + 48;
+  const rootBudsRight = rootBuds.length ? rootBuds[rootBuds.length - 1].x + MAP.budWidth + 24 : 0;
   return {
     leaves,
     lanes,
     labels: [...labelsByCommit.values()],
-    width: Math.max(width, MAP.left * 2),
+    rootBuds,
+    width: Math.max(width, MAP.left * 2, rootBudsRight),
     height,
     groundY,
-    currentId: currentId ?? null,
+    // The CLI records the position explicitly; a missing one is never guessed from a branch tip.
+    currentId: graph.current_commit,
   };
 }

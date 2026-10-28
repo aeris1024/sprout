@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAP, lanePath, layoutSproutMap } from "./sproutMap";
-import type { CommitGraph, GraphCommit } from "./sprout";
+import type { BranchInfo, CommitGraph, GraphCommit, GraphTag } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {
   return {
@@ -17,8 +17,14 @@ function commit(id: string, parent: string | null, branch: string, minute: numbe
   };
 }
 
+/** A graph as the CLI reports it, with no recorded position unless one is given. */
+function tree(commits: GraphCommit[], branches: BranchInfo[] = [], tags: GraphTag[] = []): CommitGraph {
+  return { current_commit: null, at_branch_tip: true, commits, branches, tags, buds: [] };
+}
+
 const graph: CommitGraph = {
   current_commit: "b",
+  at_branch_tip: false,
   commits: [
     commit("d", "c", "main", 4),
     commit("x", "b", "side", 3),
@@ -41,14 +47,10 @@ describe("layoutSproutMap", () => {
     const root = { ...commit("root", null, "original-id", 1), branch_name: "old-name" };
     const renamed = { ...commit("renamed", "root", "original-id", 2), branch_name: "new-name" };
     const reused = { ...commit("reused", "root", "new-id", 3), branch_name: "old-name" };
-    const layout = layoutSproutMap({
-      commits: [reused, renamed, root],
-      branches: [
-        { id: "original-id", name: "new-name", commit_id: "renamed", comment: "", current: true },
-        { id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: false },
-      ],
-      tags: [],
-    });
+    const layout = layoutSproutMap(tree([reused, renamed, root], [
+      { id: "original-id", name: "new-name", commit_id: "renamed", comment: "", current: true },
+      { id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: false },
+    ]));
     expect(layout.lanes.map((lane) => [lane.id, lane.name])).toEqual([
       ["original-id", "new-name"], ["new-id", "old-name"],
     ]);
@@ -56,11 +58,9 @@ describe("layoutSproutMap", () => {
     expect(leaves.root.lane).toBe(leaves.renamed.lane);
     expect(leaves.reused.lane).not.toBe(leaves.root.lane);
 
-    const deleted = layoutSproutMap({
-      commits: [reused, root],
-      branches: [{ id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: true }],
-      tags: [],
-    });
+    const deleted = layoutSproutMap(tree([reused, root], [
+      { id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: true },
+    ]));
     expect(deleted.lanes.map((lane) => [lane.id, lane.live])).toEqual([
       ["original-id", false], ["new-id", true],
     ]);
@@ -113,16 +113,29 @@ describe("layoutSproutMap", () => {
     ]);
   });
 
-  it("falls back to the current branch tip without a recorded position", () => {
-    expect(layoutSproutMap({ ...graph, current_commit: undefined }).currentId).toBe("d");
-    expect(layoutSproutMap({ commits: [], branches: [], tags: [] }).leaves).toEqual([]);
+  it("uses the recorded position without guessing it from the current branch tip", () => {
+    expect(layoutSproutMap({ ...graph, current_commit: null }).currentId).toBeNull();
+    expect(layoutSproutMap(tree([], [])).leaves).toEqual([]);
+  });
+
+  it("places buds kept before the first commit on the ground", () => {
+    const rootBud = (id: string) => ({ id, base_commit_id: null, branch_id: "main", branch_name: "main", created_at: "", changes: [], files: [] });
+    const layout = layoutSproutMap({ ...graph, buds: [...graph.buds, rootBud("r1"), rootBud("r2")] });
+    expect(layout.rootBuds.map((item) => item.bud.id)).toEqual(["r1", "r2"]);
+    expect(layout.rootBuds.every((item) => item.y > layout.groundY)).toBe(true);
+    expect(layout.rootBuds[1].x - layout.rootBuds[0].x).toBeGreaterThanOrEqual(MAP.budWidth);
+    expect(layout.leaves.flatMap((leaf) => leaf.buds.map((bud) => bud.id))).toEqual(["bud"]);
+
+    const empty = layoutSproutMap({ ...tree([]), buds: Array.from({ length: 6 }, (_, index) => rootBud(`e${index}`)) });
+    expect(empty.rootBuds).toHaveLength(6);
+    expect(empty.width).toBeGreaterThanOrEqual(empty.rootBuds[5].x + MAP.budWidth);
   });
 
   it("keeps parents below children made within the same second", () => {
     const sameSecond = [commit("child", "parent", "main", 1), commit("parent", "root", "main", 1), commit("root", null, "main", 0)];
-    const layout = layoutSproutMap({ commits: sameSecond, branches: [], tags: [] });
+    const layout = layoutSproutMap(tree(sameSecond, []));
     expect(layout.leaves.map((leaf) => leaf.commit.id)).toEqual(["root", "parent", "child"]);
-    const reversed = layoutSproutMap({ commits: [...sameSecond].reverse(), branches: [], tags: [] });
+    const reversed = layoutSproutMap(tree([...sameSecond].reverse(), []));
     expect(reversed.leaves.map((leaf) => leaf.commit.id)).toEqual(["root", "parent", "child"]);
   });
 
@@ -131,7 +144,7 @@ describe("layoutSproutMap", () => {
       commit(`c${index}`, index ? `c${index - 1}` : null, "main", index % 60),
     ).map((item, index) => ({ ...item, created_at: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString() }));
     const started = performance.now();
-    const layout = layoutSproutMap({ commits: many, branches: [{ id: "main", name: "main", commit_id: "c499", comment: "", current: true }], tags: [] });
+    const layout = layoutSproutMap(tree(many, [{ id: "main", name: "main", commit_id: "c499", comment: "", current: true }]));
     expect(performance.now() - started).toBeLessThan(200);
     expect(layout.leaves).toHaveLength(500);
     expect(layout.height).toBe(MAP.top + MAP.bottom + 500 * MAP.row);
