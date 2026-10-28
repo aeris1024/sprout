@@ -945,4 +945,43 @@ describe("Sprout GUI operations", () => {
       expect(screen.getByText("削除済みブランチ由来: side")).toBeTruthy();
     });
   });
+
+  it("selects branch names placed beside a stem by click and keyboard", async () => {
+    const user = userEvent.setup();
+    const rootId = "d".repeat(64);
+    const midId = "e".repeat(64);
+    const tipId = "f".repeat(64);
+    const graph: CommitGraph = {
+      current_commit: midId,
+      at_branch_tip: true,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: midId, branch_id: "main-id", branch_name: "main", message: "Top", attachments: [] },
+        { ...commitEntry, id: midId, parent_id: rootId, branch_id: "main-id", branch_name: "main", message: "Middle", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "main-id", branch_name: "main", message: "Root", attachments: [] },
+      ],
+      branches: [
+        { id: "main-id", name: "main", commit_id: tipId, comment: "", current: false },
+        { id: "fork-id", name: "分岐2", commit_id: midId, comment: "", current: true },
+        { id: "copy-id", name: "copy", commit_id: midId, comment: "", current: false },
+      ],
+      tags: [],
+      buds: [],
+    };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace({ ...cleanStatus, branch: "分岐2", branch_id: "fork-id", current_commit: midId }, [], graph.branches, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+
+    const fork = screen.getByRole("button", { name: "ブランチ 分岐2" });
+    expect(fork.closest(".branch-label")?.classList.contains("side")).toBe(true);
+    expect(fork.textContent).toBe("分岐2（現在のブランチ）");
+    expect(screen.getByRole("button", { name: "ブランチ main" }).closest(".branch-label")?.classList.contains("top")).toBe(true);
+
+    await user.click(fork);
+    expect(within(screen.getByRole("region", { name: "選択中のブランチ" })).getByRole("heading", { name: "分岐2" })).toBeTruthy();
+    screen.getByRole("button", { name: "ブランチ copy" }).focus();
+    await user.keyboard("{Enter}");
+    expect(within(screen.getByRole("region", { name: "選択中のブランチ" })).getByRole("heading", { name: "copy" })).toBeTruthy();
+  });
 });

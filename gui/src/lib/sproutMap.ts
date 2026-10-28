@@ -45,16 +45,31 @@ export interface MapRootBud {
   y: number;
 }
 
-/** Names of the live branches whose tip is one leaf, stacked above it. */
-export interface MapLabel {
-  x: number;
-  y: number;
-  branches: BranchInfo[];
-  current: boolean;
-}
+/**
+ * Names of the live branches whose tip is one leaf. On the top leaf of a stem they stand above it;
+ * on a leaf partway up a stem they sit at the end of a short sprout on the side away from the leaf,
+ * so they do not cover the stem.
+ */
+export type MapLabel =
+  | { placement: "top"; x: number; y: number; branches: BranchInfo[]; current: boolean }
+  | { placement: "side"; x: number; y: number; direction: -1 | 1; branches: BranchInfo[]; current: boolean };
 
 /** Vertical distance between stacked branch names on one tip. */
 export const LABEL_LINE = 18;
+
+/** Geometry of the sprout drawn for names placed beside a stem. */
+export const SIDE_LABEL = { stubStart: 9, stubEnd: 36, textGap: 8, fontScale: 13 / 11, margin: 12 };
+
+export function branchLabelText(branch: BranchInfo): string {
+  return branch.current ? `${branch.name}（現在のブランチ）` : branch.name;
+}
+
+/** Horizontal extent of a side label, used to keep it inside the map. */
+function sideLabelExtent(label: Extract<MapLabel, { placement: "side" }>): { left: number; right: number } {
+  const start = label.x + label.direction * (SIDE_LABEL.stubEnd + SIDE_LABEL.textGap);
+  const width = Math.max(...label.branches.map((branch) => estimateChipText(branchLabelText(branch)) * SIDE_LABEL.fontScale));
+  return label.direction < 0 ? { left: start - width, right: label.x } : { left: label.x, right: start + width };
+}
 
 /** Approximate advance widths of the 11px tag chip font, wide enough for Yu Gothic UI and fallbacks. */
 const CHIP_FONT = { narrow: 7, wide: 11.5, padding: 12 };
@@ -129,6 +144,14 @@ function oldestFirst(commits: GraphCommit[]): GraphCommit[] {
 
 /** Lay out commits oldest-at-bottom, one lane per branch the commits were created on. */
 export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
+  const layout = layoutFrom(graph, MAP.left);
+  // Names beside the first stem may need more room on the left than the default margin.
+  const minLeft = Math.min(Infinity, ...layout.labels.filter((label) => label.placement === "side").map((label) => sideLabelExtent(label).left));
+  const shift = Number.isFinite(minLeft) ? Math.max(0, Math.ceil(SIDE_LABEL.margin - minLeft)) : 0;
+  return shift ? layoutFrom(graph, MAP.left + shift) : layout;
+}
+
+function layoutFrom(graph: CommitGraph, left: number): SproutMapLayout {
   const ordered = oldestFirst(graph.commits);
   const ids = new Set(ordered.map((commit) => commit.id));
   const laneIds: string[] = [];
@@ -152,7 +175,7 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     const count = perLane.get(lane) ?? 0;
     perLane.set(lane, count + 1);
     const side: -1 | 1 = count % 2 === 0 ? -1 : 1;
-    const x = MAP.left + lane * MAP.lane;
+    const x = left + lane * MAP.lane;
     const y = groundY - MAP.row / 2 - row * MAP.row;
     return {
       commit,
@@ -175,7 +198,7 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     return {
       id,
       name: graph.branches.find((branch) => branch.id === id)?.name ?? first.commit.branch_name,
-      x: MAP.left + index * MAP.lane,
+      x: left + index * MAP.lane,
       fork: parent && parent.lane !== index ? { x: parent.x, y: parent.y, side: parent.side } : null,
       bottomY: first.y,
       topY: members[members.length - 1].y,
@@ -183,24 +206,30 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     };
   });
 
+  // A lane's last leaf is the top of its stem; names there stand above it as before.
+  const topLeafIds = new Set(leaves.filter((leaf) => leaf.y === lanes[leaf.lane].topY).map((leaf) => leaf.commit.id));
   const labelsByCommit = new Map<string, MapLabel>();
   for (const branch of graph.branches) {
     const leaf = branch.commit_id ? byId.get(branch.commit_id) : undefined;
     if (!leaf) continue;
-    const label = labelsByCommit.get(leaf.commit.id) ?? { x: leaf.x, y: leaf.y - MAP.row - 4, branches: [], current: false };
+    const label: MapLabel = labelsByCommit.get(leaf.commit.id) ?? (topLeafIds.has(leaf.commit.id)
+      ? { placement: "top", x: leaf.x, y: leaf.y - MAP.row - 4, branches: [], current: false }
+      : { placement: "side", x: leaf.x, y: leaf.y, direction: leaf.side < 0 ? 1 : -1, branches: [], current: false });
     label.branches.push(branch);
     label.current ||= branch.current;
     labelsByCommit.set(leaf.commit.id, label);
   }
+  const labels = [...labelsByCommit.values()];
 
-  const width = MAP.left + (laneIds.length - 1) * MAP.lane + MAP.gap + MAP.leafWidth + 48;
+  const width = left + (laneIds.length - 1) * MAP.lane + MAP.gap + MAP.leafWidth + 48;
   const rootBudsRight = rootBuds.length ? rootBuds[rootBuds.length - 1].x + MAP.budWidth + 24 : 0;
+  const labelsRight = Math.max(0, ...labels.filter((label) => label.placement === "side").map((label) => sideLabelExtent(label).right + SIDE_LABEL.margin));
   return {
     leaves,
     lanes,
-    labels: [...labelsByCommit.values()],
+    labels,
     rootBuds,
-    width: Math.max(width, MAP.left * 2, rootBudsRight),
+    width: Math.max(width, left * 2, rootBudsRight, labelsRight),
     height,
     groundY,
     // The CLI records the position explicitly; a missing one is never guessed from a branch tip.
