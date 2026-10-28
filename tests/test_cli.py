@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from sprout.cli import app
 from sprout import cli
 from sprout.errors import SproutError
-from sprout.repository import Repository
+from sprout.repository import Repository, utc_timestamp
 
 runner = CliRunner()
 
@@ -1689,8 +1689,8 @@ def test_json_exposes_branch_identity_and_ordered_attachments(tmp_path, monkeypa
         for attachment_id, position in [("second", 8), ("first", 1)]:
             db.execute(
                 "INSERT INTO commit_attachments(id,commit_id,role,position,original_name,media_type,object_hash,size,created_at,updated_at) "
-                "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,7,'now','now')",
-                (attachment_id, commit, position, digest),
+                "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,7,?,?)",
+                (attachment_id, commit, position, digest, utc_timestamp(), utc_timestamp()),
             )
     detail = json.loads(invoke(["show", commit, "--json"], repo.root, monkeypatch).stdout)
     graph = json.loads(invoke(["tree", "--json"], repo.root, monkeypatch).stdout)

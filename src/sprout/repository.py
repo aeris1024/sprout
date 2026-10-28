@@ -50,6 +50,7 @@ UNCHANGED = object()
 
 REQUIRED_SCHEMA_TABLES = {
     "meta",
+    "objects",
     "commits",
     "commit_files",
     "commit_attachments",
@@ -58,6 +59,7 @@ REQUIRED_SCHEMA_TABLES = {
     "branches",
     "tags",
     "tracked_paths",
+    "worktree_cache",
     "repository_state",
     "buds",
     "bud_files",
@@ -82,11 +84,38 @@ def locked(method: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
-SCHEMA = """
+TIMESTAMP_GLOB = (
+    "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]"
+    ".[0-9][0-9][0-9][0-9][0-9][0-9]+00:00"
+)
+TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00")
+OBJECT_HASH_CHECK = "length({0}) = 64 AND {0} NOT GLOB '*[^0-9a-f]*'"
+# Candidate commits containing one exact file; indexed by idx_commit_files_object.
+SAVED_FILE_COMMITS_SQL = (
+    "SELECT commit_id FROM commit_files WHERE object_hash=? AND size=? AND path=?"
+)
+
+
+def utc_timestamp(moment: datetime | None = None) -> str:
+    """Format every stored time identically: UTC with microsecond precision."""
+    moment = datetime.now(timezone.utc) if moment is None else moment.astimezone(timezone.utc)
+    return moment.isoformat(timespec="microseconds")
+
+
+SCHEMA = f"""
 PRAGMA foreign_keys = ON;
 CREATE TABLE meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
+);
+CREATE TABLE objects (
+    hash TEXT PRIMARY KEY NOT NULL CHECK ({OBJECT_HASH_CHECK.format("hash")}),
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
+    stored_size INTEGER NOT NULL CHECK (typeof(stored_size) = 'integer' AND stored_size >= 0),
+    encoding TEXT NOT NULL CHECK (encoding <> ''),
+    file_mtime_ns INTEGER CHECK (file_mtime_ns IS NULL OR typeof(file_mtime_ns) = 'integer'),
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
+    UNIQUE (hash, size)
 );
 CREATE TABLE branches (
     id TEXT PRIMARY KEY NOT NULL,
@@ -99,10 +128,11 @@ CREATE TABLE branches (
 CREATE UNIQUE INDEX idx_branches_live_name ON branches(name) WHERE deleted = 0;
 CREATE TABLE commits (
     id TEXT PRIMARY KEY NOT NULL,
+    seq INTEGER NOT NULL UNIQUE CHECK (typeof(seq) = 'integer' AND seq > 0),
     parent_id TEXT REFERENCES commits(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     branch_name TEXT NOT NULL,
-    created_at TEXT NOT NULL,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
     message TEXT NOT NULL
 );
 CREATE TABLE repository_state (
@@ -115,8 +145,8 @@ CREATE TABLE commit_files (
     path TEXT NOT NULL,
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
-    mtime_ns INTEGER NOT NULL,
-    PRIMARY KEY (commit_id, path)
+    PRIMARY KEY (commit_id, path),
+    FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
 CREATE TABLE commit_attachments (
     id TEXT PRIMARY KEY NOT NULL,
@@ -127,16 +157,17 @@ CREATE TABLE commit_attachments (
     media_type TEXT NOT NULL,
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE (commit_id, role, position)
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
+    updated_at TEXT NOT NULL CHECK (updated_at GLOB '{TIMESTAMP_GLOB}'),
+    UNIQUE (commit_id, role, position),
+    FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
 CREATE UNIQUE INDEX idx_single_thumbnail ON commit_attachments(commit_id)
     WHERE role = 'thumbnail';
 CREATE TABLE commit_notes (
     commit_id TEXT PRIMARY KEY NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL CHECK (updated_at GLOB '{TIMESTAMP_GLOB}')
 );
 CREATE TABLE commit_labels (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
@@ -147,31 +178,47 @@ CREATE TABLE tags (
     name TEXT PRIMARY KEY NOT NULL,
     commit_id TEXT NOT NULL REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}')
 );
 CREATE TABLE tracked_paths (
     path TEXT PRIMARY KEY NOT NULL
 );
+CREATE TABLE worktree_cache (
+    path TEXT PRIMARY KEY NOT NULL REFERENCES tracked_paths(path) ON DELETE CASCADE,
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
+    mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
+    ctime_ns INTEGER NOT NULL CHECK (typeof(ctime_ns) = 'integer'),
+    file_id TEXT NOT NULL,
+    object_hash TEXT NOT NULL CHECK ({OBJECT_HASH_CHECK.format("object_hash")}),
+    recorded_ns INTEGER NOT NULL CHECK (typeof(recorded_ns) = 'integer')
+);
 CREATE TABLE buds (
     id TEXT PRIMARY KEY NOT NULL,
+    seq INTEGER NOT NULL UNIQUE CHECK (typeof(seq) = 'integer' AND seq > 0),
     base_commit_id TEXT REFERENCES commits(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     branch_name TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}')
 );
 CREATE TABLE bud_files (
     bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
-    mtime_ns INTEGER NOT NULL,
-    PRIMARY KEY (bud_id, path)
+    mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
+    PRIMARY KEY (bud_id, path),
+    FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
 CREATE INDEX idx_commits_parent ON commits(parent_id);
-CREATE INDEX idx_commit_attachments_object_hash ON commit_attachments(object_hash);
+CREATE INDEX idx_commits_branch ON commits(branch_id);
+CREATE INDEX idx_branches_commit ON branches(commit_id);
+CREATE INDEX idx_tags_commit ON tags(commit_id);
+CREATE INDEX idx_commit_files_object ON commit_files(object_hash, size);
+CREATE INDEX idx_commit_attachments_object ON commit_attachments(object_hash, size);
 CREATE INDEX idx_commit_labels_label ON commit_labels(label);
 CREATE INDEX idx_buds_base ON buds(base_commit_id);
-CREATE INDEX idx_bud_files_object_hash ON bud_files(object_hash);
+CREATE INDEX idx_buds_branch ON buds(branch_id);
+CREATE INDEX idx_bud_files_object ON bud_files(object_hash, size);
 """
 
 
@@ -420,7 +467,7 @@ class Repository:
                 )
                 db.execute(
                     "INSERT INTO meta(key, value) VALUES('repository_created_at', ?)",
-                    (datetime.now(timezone.utc).isoformat(),),
+                    (utc_timestamp(),),
                 )
                 branch_id = uuid.uuid4().hex
                 db.execute("INSERT INTO branches(id, name) VALUES(?, 'main')", (branch_id,))
@@ -541,13 +588,10 @@ class Repository:
         except (ValueError, AttributeError) as exc:
             raise SproutError("repository has an invalid repository_id") from exc
         try:
-            created_at = datetime.fromisoformat(metadata["repository_created_at"])
+            datetime.fromisoformat(metadata["repository_created_at"])
         except ValueError as exc:
             raise SproutError("repository has an invalid repository_created_at") from exc
-        if (
-            created_at.tzinfo is None
-            or created_at.utcoffset() != timezone.utc.utcoffset(None)
-        ):
+        if TIMESTAMP_PATTERN.fullmatch(metadata["repository_created_at"]) is None:
             raise SproutError("repository_created_at must be a UTC datetime")
 
     @contextmanager
@@ -740,6 +784,7 @@ class Repository:
         os.replace(source_absolute, destination_absolute)
         try:
             with self.connect() as db:
+                db.execute("DELETE FROM worktree_cache WHERE path=?", (source_relative,))
                 db.execute(
                     "UPDATE tracked_paths SET path=? WHERE path=?",
                     (destination_relative, source_relative),
@@ -883,18 +928,26 @@ class Repository:
             ).fetchone()
             return HeadPosition(row["id"], row["name"], current, current == row["commit_id"])
 
-    def manifest(self, commit_id: str | None) -> dict[str, FileState]:
+    @staticmethod
+    def _manifest_from_db(db: sqlite3.Connection, commit_id: str | None) -> dict[str, FileState]:
         if commit_id is None:
             return {}
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT path, object_hash, size, mtime_ns FROM commit_files WHERE commit_id=? ORDER BY path",
-                (commit_id,),
+        result: dict[str, FileState] = {}
+        for row in db.execute(
+            "SELECT f.path, f.object_hash, f.size, o.file_mtime_ns FROM commit_files f "
+            "JOIN objects o ON o.hash=f.object_hash WHERE f.commit_id=? ORDER BY f.path",
+            (commit_id,),
+        ):
+            if row["file_mtime_ns"] is None:
+                raise SproutError(f"object has no file time: {row['object_hash']}")
+            result[row["path"]] = FileState(
+                row["path"], row["object_hash"], row["size"], row["file_mtime_ns"]
             )
-            return {
-                row["path"]: FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"])
-                for row in rows
-            }
+        return result
+
+    def manifest(self, commit_id: str | None) -> dict[str, FileState]:
+        with self.connect() as db:
+            return self._manifest_from_db(db, commit_id)
 
     def status(self) -> list[StatusEntry]:
         tracked = self.tracked()
@@ -997,6 +1050,28 @@ class Repository:
         except Exception:
             Path(temp_name).unlink(missing_ok=True)
             raise
+
+    def _object_path(self, object_hash: str) -> Path:
+        return self.objects / object_hash[:2] / object_hash
+
+    def _register_objects(
+        self, db: sqlite3.Connection, objects: dict[str, int], created_at: str
+    ) -> None:
+        """Record stored object files in the same transaction that references them."""
+        db.executemany(
+            "INSERT INTO objects(hash, size, stored_size, encoding, file_mtime_ns, created_at) "
+            "VALUES(?, ?, ?, ?, NULL, ?) ON CONFLICT(hash) DO NOTHING",
+            (
+                (
+                    object_hash,
+                    size,
+                    self._object_path(object_hash).stat().st_size,
+                    OBJECT_COMPRESSION,
+                    created_at,
+                )
+                for object_hash, size in sorted(objects.items())
+            ),
+        )
 
     @staticmethod
     def _read_object(
@@ -1132,33 +1207,13 @@ class Repository:
         files, missing = self._store_tracked_files("committing")
 
         # Modification time is canonical per content object, not versioned metadata.
-        # Existing objects keep the time chosen by their first commit. If duplicate
-        # content first appears at multiple paths together, use the oldest time.
-        hashes = {item.object_hash for item in files}
-        existing_times: dict[str, int] = {}
-        if hashes:
-            placeholders = ",".join("?" for _ in hashes)
-            with self.connect() as db:
-                rows = db.execute(
-                    f"SELECT object_hash, MIN(mtime_ns) FROM commit_files "
-                    f"WHERE object_hash IN ({placeholders}) GROUP BY object_hash",
-                    tuple(hashes),
-                )
-                existing_times = {row[0]: row[1] for row in rows}
+        # objects.file_mtime_ns keeps the time chosen when the content was first
+        # committed. If it first appears at multiple paths together, use the oldest.
         first_times: dict[str, int] = {}
         for item in files:
             first_times[item.object_hash] = min(
                 first_times.get(item.object_hash, item.mtime_ns), item.mtime_ns
             )
-        files = [
-            FileState(
-                item.path,
-                item.object_hash,
-                item.size,
-                existing_times.get(item.object_hash, first_times[item.object_hash]),
-            )
-            for item in files
-        ]
         parent = self.current_commit()
         previous = self.manifest(parent)
         current = {item.path: item for item in files}
@@ -1175,9 +1230,17 @@ class Repository:
         commit_id = uuid.uuid4().hex
         branch = self.head_branch()
         now = datetime.now(timezone.utc)
-        created_at = now.isoformat(timespec="seconds")
+        created_at = utc_timestamp(now)
+        stored = {item.object_hash: item.size for item in files}
+        if prepared_thumbnail is not None:
+            stored[prepared_thumbnail[2]] = prepared_thumbnail[3]
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._register_objects(db, stored, created_at)
+            db.executemany(
+                "UPDATE objects SET file_mtime_ns=? WHERE hash=? AND file_mtime_ns IS NULL",
+                ((mtime_ns, object_hash) for object_hash, mtime_ns in sorted(first_times.items())),
+            )
             tip = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (branch,)).fetchone()
             # Saving on top of a non-tip snapshot grows a new branch from it.
             created_branch = tip is None or tip[0] != parent
@@ -1189,12 +1252,13 @@ class Repository:
                 )
                 db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, branch),))
             db.execute(
-                "INSERT INTO commits(id, parent_id, branch_id, branch_name, created_at, message) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO commits(id, seq, parent_id, branch_id, branch_name, created_at, message) "
+                "VALUES(?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM commits), ?, ?, ?, ?, ?)",
                 (commit_id, parent, self._branch_id_from_db(db, branch), branch, created_at, message.strip()),
             )
             db.executemany(
-                "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
-                ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
+                "INSERT INTO commit_files(commit_id, path, object_hash, size) VALUES(?,?,?,?)",
+                ((commit_id, item.path, item.object_hash, item.size) for item in files),
             )
             if prepared_thumbnail is not None:
                 original_name, media_type, object_hash, size = prepared_thumbnail
@@ -1347,7 +1411,7 @@ class Repository:
             db.execute("BEGIN")
             commit_rows = list(
                 db.execute(
-                    "SELECT * FROM commits ORDER BY created_at DESC, rowid DESC"
+                    "SELECT * FROM commits ORDER BY seq DESC"
                 )
             )
             commit_ids = [row["id"] for row in commit_rows]
@@ -1446,7 +1510,7 @@ class Repository:
             if not normalized:
                 db.execute("DELETE FROM commit_notes WHERE commit_id=?", (commit_id,))
             else:
-                updated_at = datetime.now(timezone.utc).isoformat()
+                updated_at = utc_timestamp()
                 db.execute(
                     "INSERT INTO commit_notes(commit_id, note, updated_at) "
                     "VALUES(?, ?, ?) ON CONFLICT(commit_id) DO UPDATE SET "
@@ -1503,8 +1567,9 @@ class Repository:
     def set_thumbnail(self, value: str, source: Path) -> CommitAttachment:
         commit_id = self.resolve_commit(value)
         original_name, media_type, object_hash, size = self._prepare_thumbnail(source)
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = utc_timestamp()
         with self.connect() as db:
+            self._register_objects(db, {object_hash: size}, updated_at)
             db.execute(
                 "INSERT INTO commit_attachments("
                 "id, commit_id, role, original_name, media_type, object_hash, size, "
@@ -1670,14 +1735,21 @@ class Repository:
         """Inspect repository integrity without changing the working tree."""
         issues: list[DoctorIssue] = []
         with self.connect() as db:
-            hashes = [
-                row[0]
-                for row in db.execute(
-                    "SELECT object_hash FROM commit_files "
-                    "UNION SELECT object_hash FROM commit_attachments "
-                    "UNION SELECT object_hash FROM bud_files ORDER BY 1"
-                )
-            ]
+            objects = list(
+                db.execute("SELECT hash, size, stored_size, encoding FROM objects ORDER BY hash")
+            )
+            for row in db.execute(
+                "SELECT object_hash FROM commit_files "
+                "UNION SELECT object_hash FROM commit_attachments "
+                "UNION SELECT object_hash FROM bud_files "
+                "EXCEPT SELECT hash FROM objects ORDER BY 1"
+            ):
+                issues.append(DoctorIssue("missing_object", row[0]))
+            for row in db.execute(
+                "SELECT DISTINCT f.object_hash FROM commit_files f "
+                "JOIN objects o ON o.hash=f.object_hash WHERE o.file_mtime_ns IS NULL ORDER BY 1"
+            ):
+                issues.append(DoctorIssue("missing_object_file_time", row[0]))
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:
                 issues.append(
@@ -1694,17 +1766,31 @@ class Repository:
             ):
                 issues.append(DoctorIssue("missing_bud_base", row[0]))
 
-        for object_hash in hashes:
-            path = self.objects / object_hash[:2] / object_hash
+        registered = set()
+        for row in objects:
+            object_hash = row["hash"]
+            registered.add(object_hash)
+            path = self._object_path(object_hash)
             if not path.is_file():
                 issues.append(DoctorIssue("missing_object", object_hash))
                 continue
+            if row["encoding"] != OBJECT_COMPRESSION:
+                issues.append(DoctorIssue("unsupported_object_encoding", object_hash))
+                continue
             try:
-                digest, _ = self._read_object(path)
+                digest, size = self._read_object(path)
             except SproutError:
-                digest = ""
+                digest, size = "", -1
             if digest != object_hash:
                 issues.append(DoctorIssue("corrupt_object", object_hash))
+            elif size != row["size"] or path.stat().st_size != row["stored_size"]:
+                issues.append(DoctorIssue("object_size_mismatch", object_hash))
+
+        if self.objects.is_dir():
+            for shard in sorted(path for path in self.objects.iterdir() if path.is_dir()):
+                for path in sorted(path for path in shard.iterdir() if path.is_file()):
+                    if path.name not in registered:
+                        issues.append(DoctorIssue("unregistered_object", path.name))
 
         if self.tmp.is_dir():
             for path in sorted(path for path in self.tmp.glob("object-*") if path.is_file()):
@@ -1712,7 +1798,7 @@ class Repository:
 
         return DoctorResult(
             ok=not issues,
-            checked_objects=len(hashes),
+            checked_objects=len(objects),
             issues=tuple(issues),
         )
 
@@ -1727,21 +1813,12 @@ class Repository:
                 "SELECT COALESCE(SUM(size), 0) FROM commit_files"
             ).fetchone()[0]
             unique_bytes = db.execute(
-                "SELECT COALESCE(SUM(size), 0) FROM ("
-                "SELECT object_hash, MAX(size) AS size FROM commit_files GROUP BY object_hash"
-                ")"
+                "SELECT COALESCE(SUM(o.size), 0) FROM objects o WHERE EXISTS "
+                "(SELECT 1 FROM commit_files f WHERE f.object_hash=o.hash AND f.size=o.size)"
             ).fetchone()[0]
-
-        objects = 0
-        objects_bytes = 0
-        if self.objects.is_dir():
-            for shard in self.objects.iterdir():
-                if not shard.is_dir():
-                    continue
-                for path in shard.iterdir():
-                    if path.is_file():
-                        objects += 1
-                        objects_bytes += path.stat().st_size
+            objects, objects_bytes = db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(stored_size), 0) FROM objects"
+            ).fetchone()
 
         return RepoStats(
             commits=commits,
@@ -1758,6 +1835,17 @@ class Repository:
     def gc(self, *, dry_run: bool = False) -> GcResult:
         """Delete unreferenced objects and leftover object temp files."""
         referenced = self.referenced_object_hashes()
+        with self.connect() as db:
+            unreferenced_rows = [
+                row[0]
+                for row in db.execute(
+                    "SELECT hash FROM objects o WHERE "
+                    "NOT EXISTS (SELECT 1 FROM commit_files f WHERE f.object_hash=o.hash AND f.size=o.size) "
+                    "AND NOT EXISTS (SELECT 1 FROM commit_attachments a WHERE a.object_hash=o.hash AND a.size=o.size) "
+                    "AND NOT EXISTS (SELECT 1 FROM bud_files b WHERE b.object_hash=o.hash AND b.size=o.size) "
+                    "ORDER BY hash"
+                )
+            ]
         object_targets: list[tuple[Path, int]] = []
         if self.objects.is_dir():
             for shard in sorted(path for path in self.objects.iterdir() if path.is_dir()):
@@ -1772,6 +1860,12 @@ class Repository:
 
         freed_bytes = sum(size for _, size in object_targets) + sum(size for _, size in temp_targets)
         if not dry_run:
+            # Forget rows before files: an interrupted gc leaves only unregistered
+            # files, which the next gc collects.
+            with self.connect() as db:
+                db.executemany(
+                    "DELETE FROM objects WHERE hash=?", ((object_hash,) for object_hash in unreferenced_rows)
+                )
             for path, _ in object_targets:
                 path.unlink()
             if self.objects.is_dir():
@@ -1875,7 +1969,7 @@ class Repository:
                 commit_rows = list(
                     db.execute(
                         "SELECT id, parent_id, created_at, message FROM commits "
-                        "ORDER BY created_at, rowid"
+                        "ORDER BY seq"
                     )
                 )
                 parents = {row["id"]: row["parent_id"] for row in commit_rows}
@@ -1938,17 +2032,18 @@ class Repository:
                         else retained_references
                     )
                     target.add(row["object_hash"])
+                stored_sizes = {
+                    row["hash"]: row["stored_size"]
+                    for row in db.execute("SELECT hash, stored_size FROM objects")
+                }
                 reclaimable = tuple(
                     sorted(
                         object_hash
                         for object_hash in removed_references - retained_references
-                        if (self.objects / object_hash[:2] / object_hash).is_file()
+                        if object_hash in stored_sizes and self._object_path(object_hash).is_file()
                     )
                 )
-                reclaimable_bytes = sum(
-                    (self.objects / object_hash[:2] / object_hash).stat().st_size
-                    for object_hash in reclaimable
-                )
+                reclaimable_bytes = sum(stored_sizes[object_hash] for object_hash in reclaimable)
                 removed_commits = tuple(
                     PruneCommit(row["id"], row["created_at"], row["message"])
                     for row in commit_rows
@@ -2070,44 +2165,36 @@ class Repository:
         self, signature: dict[str, tuple[str, int]]
     ) -> str | None:
         """Return a commit id whose manifest exactly matches signature, if any."""
-        file_count = len(signature)
         with self.connect() as db:
-            if file_count == 0:
+            if not signature:
                 row = db.execute(
-                    """
-                    SELECT c.id
-                    FROM commits c
-                    LEFT JOIN commit_files f ON f.commit_id = c.id
-                    GROUP BY c.id
-                    HAVING COUNT(f.path) = 0
-                    LIMIT 1
-                    """
+                    "SELECT c.id FROM commits c WHERE NOT EXISTS "
+                    "(SELECT 1 FROM commit_files f WHERE f.commit_id = c.id) "
+                    "ORDER BY c.seq LIMIT 1"
                 ).fetchone()
                 return row[0] if row is not None else None
-
-            candidates = [
-                row[0]
-                for row in db.execute(
-                    """
-                    SELECT commit_id
-                    FROM commit_files
-                    GROUP BY commit_id
-                    HAVING COUNT(*) = ?
-                    """,
-                    (file_count,),
-                )
-            ]
-            for commit_id in candidates:
-                rows = db.execute(
-                    "SELECT path, object_hash, size FROM commit_files WHERE commit_id=?",
-                    (commit_id,),
-                )
-                manifest = {
-                    row["path"]: (row["object_hash"], row["size"]) for row in rows
-                }
-                if manifest == signature:
+            # Every candidate already contains all signature files, so an equal
+            # file count means the manifests are identical.
+            for commit_id in sorted(self._commits_containing_from_db(db, signature)):
+                count = db.execute(
+                    "SELECT COUNT(*) FROM commit_files WHERE commit_id=?", (commit_id,)
+                ).fetchone()[0]
+                if count == len(signature):
                     return commit_id
         return None
+
+    @staticmethod
+    def _commits_containing_from_db(
+        db: sqlite3.Connection, signature: dict[str, tuple[str, int]]
+    ) -> set[str]:
+        """Return commits that contain every file in signature, using the object index."""
+        matching: set[str] | None = None
+        for path, (object_hash, size) in sorted(signature.items()):
+            rows = {row[0] for row in db.execute(SAVED_FILE_COMMITS_SQL, (object_hash, size, path))}
+            matching = rows if matching is None else matching & rows
+            if not matching:
+                return set()
+        return matching or set()
 
     def _reject_omitted_start_point_on_restored_snapshot(self, head: str) -> None:
         """Refuse tip-based branching when a different saved snapshot is checked out."""
@@ -2222,7 +2309,7 @@ class Repository:
         commit_id = self.resolve_commit(commit) if commit is not None else self.head_commit()
         if commit_id is None:
             raise SproutError("cannot create tag before first commit")
-        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        created_at = utc_timestamp()
         try:
             with self.connect() as db:
                 if (
@@ -2575,6 +2662,9 @@ class Repository:
                     "INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)",
                     ((path,) for path in target),
                 )
+                db.executemany(
+                    "DELETE FROM worktree_cache WHERE path=?", ((path,) for path in target)
+                )
             else:
                 db.execute("DELETE FROM tracked_paths")
                 db.executemany(
@@ -2691,20 +2781,7 @@ class Repository:
             if not signature:
                 return True
             with self.connect() as db:
-                matching: set[str] | None = None
-                for path, (object_hash, size) in signature.items():
-                    rows = {
-                        row[0]
-                        for row in db.execute(
-                            "SELECT commit_id FROM commit_files "
-                            "WHERE path=? AND object_hash=? AND size=?",
-                            (path, object_hash, size),
-                        )
-                    }
-                    matching = rows if matching is None else matching & rows
-                    if not matching:
-                        return False
-                return True
+                return bool(self._commits_containing_from_db(db, signature))
 
         return self._matching_saved_snapshot_commit(signature) is not None
 
@@ -2945,7 +3022,7 @@ class Repository:
         if bud_ids is not None:
             query += f" WHERE id IN ({','.join('?' for _ in bud_ids)})"
             params = tuple(bud_ids)
-        rows = list(db.execute(query + " ORDER BY created_at DESC, rowid DESC", params))
+        rows = list(db.execute(query + " ORDER BY seq DESC", params))
         files: dict[str, list[FileState]] = {row["id"]: [] for row in rows}
         for row in db.execute(
             "SELECT bud_id, path, object_hash, size, mtime_ns FROM bud_files ORDER BY path"
@@ -2956,15 +3033,7 @@ class Repository:
                 )
         buds: list[Bud] = []
         for row in rows:
-            base = {
-                item["path"]: FileState(
-                    item["path"], item["object_hash"], item["size"], item["mtime_ns"]
-                )
-                for item in db.execute(
-                    "SELECT path, object_hash, size, mtime_ns FROM commit_files WHERE commit_id=?",
-                    (row["base_commit_id"],),
-                )
-            }
+            base = self._manifest_from_db(db, row["base_commit_id"])
             changes = self.diff_manifests(base, {item.path: item for item in files[row["id"]]})
             buds.append(
                 Bud(
@@ -3009,11 +3078,14 @@ class Repository:
         if {item.path: (item.object_hash, item.size) for item in files} == base_signature:
             raise SproutError("no unsaved changes to keep in a bud", code="nothing_to_save")
         bud_id = uuid.uuid4().hex
-        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        created_at = utc_timestamp()
+        branch_id, branch_name = self.branch_id(), self.head_branch()
         with self.connect() as db:
+            self._register_objects(db, {item.object_hash: item.size for item in files}, created_at)
             db.execute(
-                "INSERT INTO buds(id, base_commit_id, branch_id, branch_name, created_at) VALUES(?,?,?,?,?)",
-                (bud_id, base, self.branch_id(), self.head_branch(), created_at),
+                "INSERT INTO buds(id, seq, base_commit_id, branch_id, branch_name, created_at) "
+                "VALUES(?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM buds), ?, ?, ?, ?)",
+                (bud_id, base, branch_id, branch_name, created_at),
             )
             db.executemany(
                 "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",

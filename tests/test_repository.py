@@ -12,7 +12,7 @@ import zstandard
 from PIL import Image
 
 from sprout.errors import SproutError
-from sprout.repository import Repository
+from sprout.repository import SAVED_FILE_COMMITS_SQL, Repository, utc_timestamp
 
 
 def create_repo(tmp_path: Path) -> Repository:
@@ -219,8 +219,9 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
 
     assert metadata["schema_version"] == "1"
     assert tables == {
-        "meta", "commits", "commit_files", "commit_attachments", "commit_notes",
-        "commit_labels", "branches", "tags", "tracked_paths", "buds", "bud_files", "repository_state",
+        "meta", "objects", "commits", "commit_files", "commit_attachments", "commit_notes",
+        "commit_labels", "branches", "tags", "tracked_paths", "worktree_cache", "buds",
+        "bud_files", "repository_state",
     }
     assert metadata["object_compression"] == "zstd"
     assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
@@ -228,8 +229,9 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
     created_at = datetime.fromisoformat(metadata["repository_created_at"])
     assert created_at.utcoffset() == timezone.utc.utcoffset(None)
     assert {
-        "idx_commits_parent", "idx_commit_labels_label", "idx_commit_attachments_object_hash",
-        "idx_buds_base", "idx_bud_files_object_hash",
+        "idx_commits_parent", "idx_commits_branch", "idx_branches_commit", "idx_tags_commit",
+        "idx_commit_files_object", "idx_commit_attachments_object", "idx_commit_labels_label",
+        "idx_buds_base", "idx_buds_branch", "idx_bud_files_object",
     } <= indexes
 
     discovered = Repository.discover(first.root)
@@ -240,12 +242,18 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
 def test_schema_version_1_attachment_note_and_label_constraints(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
     commit_id = "a" * 64
-    timestamp = "2026-08-09T00:00:00+00:00"
+    timestamp = "2026-08-09T00:00:00.000000+00:00"
 
     with repo.connect() as db:
+        for object_hash, size in (("b" * 64, 10**12), ("c" * 64, 1)):
+            db.execute(
+                "INSERT INTO objects(hash, size, stored_size, encoding, created_at) "
+                "VALUES(?, ?, 1, 'zstd', ?)",
+                (object_hash, size, timestamp),
+            )
         db.execute(
-            "INSERT INTO commits(id, parent_id, branch_id, branch_name, created_at, message) "
-            "VALUES(?, NULL, ?, 'main', ?, 'schema fixture')",
+            "INSERT INTO commits(id, seq, parent_id, branch_id, branch_name, created_at, message) "
+            "VALUES(?, 1, NULL, ?, 'main', ?, 'schema fixture')",
             (commit_id, repo.branch_id(), timestamp),
         )
         db.execute(
@@ -848,7 +856,8 @@ def test_is_saved_snapshot_does_not_load_all_commit_files(
 
     monkeypatch.setattr(repo, "connect", guarded_connect)
     assert repo._is_saved_snapshot(signature) is True
-    assert any("GROUP BY commit_id" in sql and "HAVING COUNT(*)" in sql for sql in queries)
+    assert SAVED_FILE_COMMITS_SQL in queries
+    assert not any("GROUP BY" in sql for sql in queries)
     assert any("WHERE commit_id=?" in sql for sql in queries)
     assert not any(
         "FROM commit_files" in sql
@@ -2868,7 +2877,7 @@ def test_buds_on_one_snapshot_are_listed_newest_first(
     asset.write_bytes(b"two")
     two = repo.save_bud()
     with repo.connect() as db:
-        db.execute("UPDATE buds SET created_at='2000-01-01T00:00:00+00:00' WHERE id=?", (one.id,))
+        db.execute("UPDATE buds SET created_at='2099-01-01T00:00:00.000000+00:00' WHERE id=?", (one.id,))
 
     assert [item.id for item in repo.buds()] == [two.id, one.id]
     assert {item.base_commit_id for item in repo.buds()} == {second}
