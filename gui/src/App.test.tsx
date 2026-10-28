@@ -494,7 +494,8 @@ describe("Sprout GUI operations", () => {
     await screen.findByRole("heading", { name: "sprout-project" });
 
     expect(screen.getByText("削除済みブランチ由来: archived")).toBeTruthy();
-    expect(screen.getByText("main, alternate（現在のブランチ）")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ブランチ main" }).textContent).toBe("main（現在のブランチ）");
+    expect(screen.getByRole("button", { name: "ブランチ alternate" }).textContent).toBe("alternate");
     expect(screen.getByText("いまここ")).toBeTruthy();
     expect(await screen.findByRole("img", { name: "Tree tipのサムネイル" })).toBeTruthy();
     expect(document.querySelector("video, audio")).toBeNull();
@@ -841,6 +842,107 @@ describe("Sprout GUI operations", () => {
       expect(await screen.findByText("タグ 提出版 を削除しました")).toBeTruthy();
       expect(sentArgs()).toContainEqual(["tag", "--delete", "提出版"]);
       expect(tagRegion().getByText("タグはありません")).toBeTruthy();
+    });
+  });
+
+  describe("branch panel", () => {
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const branchGraph = (side: Partial<BranchInfo> | null): CommitGraph => ({
+      current_commit: tipId,
+      at_branch_tip: true,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main-id", branch_name: "main", message: "Main tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "side-id", branch_name: "side", message: "Side root", attachments: [] },
+      ],
+      branches: [
+        { id: "main-id", name: "main", commit_id: tipId, comment: "", current: true },
+        ...(side ? [{ id: "side-id", name: "side", commit_id: rootId, comment: "別案", current: false, ...side }] : []),
+      ],
+      tags: [],
+      buds: [],
+    });
+    const status = { ...cleanStatus, branch_id: "main-id", current_commit: tipId };
+    const sentArgs = () => mocks.runSprout.mock.calls.map((call) => call[1]);
+
+    async function openMap(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      mocks.open.mockResolvedValueOnce(project);
+      const graph = branchGraph({});
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+      await screen.findByRole("heading", { name: "sprout-project" });
+    }
+
+    it("renames and comments on a branch chosen from the map and keeps it selected by ID", async () => {
+      const user = userEvent.setup();
+      await openMap(user);
+      await user.click(screen.getByRole("button", { name: "ブランチ side" }));
+      const panel = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(panel.getByRole("heading", { name: "side" })).toBeTruthy();
+      expect(panel.getByText("別案")).toBeTruthy();
+      expect(panel.getByRole("button", { name: `Side root（${rootId.slice(0, 12)}）` })).toBeTruthy();
+
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      const nameInput = panel.getByRole("textbox", { name: "新しい名前" });
+      await user.clear(nameInput);
+      await user.type(nameInput, "main");
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "branch already exists: main", details: {} });
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      expect(await screen.findByText("branch already exists: main")).toBeTruthy();
+      expect((panel.getByRole("textbox", { name: "新しい名前" }) as HTMLInputElement).value).toBe("main");
+
+      await user.clear(panel.getByRole("textbox", { name: "新しい名前" }));
+      await user.type(panel.getByRole("textbox", { name: "新しい名前" }), "idea");
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "idea", previous_name: "side" });
+      let graph = branchGraph({ name: "idea" });
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      expect(await screen.findByText("ブランチ side の名前を idea に変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "side", "--rename", "idea"]);
+      const renamed = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(renamed.getByRole("heading", { name: "idea" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "ブランチ idea" }).getAttribute("aria-pressed")).toBe("true");
+
+      await user.click(renamed.getByRole("button", { name: "コメントを編集" }));
+      await user.clear(renamed.getByRole("textbox", { name: "ブランチのコメントを編集" }));
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "idea", comment: "" });
+      graph = branchGraph({ name: "idea", comment: "" });
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(renamed.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("ブランチ idea のコメントを変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "idea", "--set-comment", ""]);
+      expect(renamed.getByText("コメントはありません")).toBeTruthy();
+
+      mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_id: "side-id", branch_name: "side", message: "Side root", thumbnail: null, attachments: [], files: [] });
+      await user.click(renamed.getByRole("button", { name: `Side root（${rootId.slice(0, 12)}）` }));
+      expect(await screen.findByText("idea（作成時: side）", { selector: "dd" })).toBeTruthy();
+    });
+
+    it("protects the current branch and deletes another after confirmation", async () => {
+      const user = userEvent.setup();
+      await openMap(user);
+      await user.click(screen.getByRole("button", { name: "現在のブランチ" }));
+      const current = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(current.getByText("現在のブランチ")).toBeTruthy();
+      expect(current.getByRole("button", { name: "ブランチを削除" }).hasAttribute("disabled")).toBe(true);
+      expect(current.getByText(/現在のブランチは削除できません/)).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "ブランチ side" }));
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(screen.getByRole("button", { name: "ブランチを削除" }));
+      expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("「削除済みブランチ由来」として残ります"), expect.objectContaining({ kind: "warning" }));
+      expect(sentArgs().some((args) => args.includes("--delete"))).toBe(false);
+
+      mocks.confirm.mockResolvedValueOnce(true);
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "side", deleted: true });
+      const graph = branchGraph(null);
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(screen.getByRole("button", { name: "ブランチを削除" }));
+      expect(await screen.findByText("ブランチ side を削除しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "--delete", "side"]);
+      expect(screen.queryByRole("region", { name: "選択中のブランチ" })).toBeNull();
+      expect(screen.getByText("削除済みブランチ由来: side")).toBeTruthy();
     });
   });
 });
