@@ -14,7 +14,7 @@ import uuid
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator, TypeVar
 
@@ -46,6 +46,7 @@ HEX_BRANCH_NAME = re.compile(r"^[0-9a-f]{4,}$")
 HEX_COMMIT_REFERENCE = re.compile(r"^[0-9a-f]+$")
 T = TypeVar("T")
 ProgressCallback = Callable[[str, int, int], None]
+UNCHANGED = object()
 
 REQUIRED_SCHEMA_TABLES = {
     "meta",
@@ -57,11 +58,13 @@ REQUIRED_SCHEMA_TABLES = {
     "branches",
     "tags",
     "tracked_paths",
+    "repository_state",
+    "buds",
+    "bud_files",
 }
 REQUIRED_META_KEYS = {
     "schema_version",
     "object_compression",
-    "head_branch",
     "active_operation",
     "repository_id",
     "repository_created_at",
@@ -79,60 +82,59 @@ def locked(method: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
-# Buds were added after Version 1 shipped, so existing repositories create them on open.
-BUD_SCHEMA = """
-CREATE TABLE IF NOT EXISTS buds (
-    id TEXT PRIMARY KEY,
-    base_commit_id TEXT REFERENCES commits(id),
-    branch_name TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS bud_files (
-    bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
-    path TEXT NOT NULL,
-    object_hash TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    mtime_ns INTEGER NOT NULL,
-    PRIMARY KEY (bud_id, path)
-);
-CREATE INDEX IF NOT EXISTS idx_buds_base ON buds(base_commit_id);
-CREATE INDEX IF NOT EXISTS idx_bud_files_object_hash ON bud_files(object_hash);
-"""
-
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE meta (
-    key TEXT PRIMARY KEY,
+    key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
 );
+CREATE TABLE branches (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    commit_id TEXT REFERENCES commits(id),
+    comment TEXT NOT NULL DEFAULT '',
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    CHECK (deleted = 0 OR commit_id IS NULL)
+);
+CREATE UNIQUE INDEX idx_branches_live_name ON branches(name) WHERE deleted = 0;
 CREATE TABLE commits (
-    id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY NOT NULL,
     parent_id TEXT REFERENCES commits(id),
+    branch_id TEXT NOT NULL REFERENCES branches(id),
     branch_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     message TEXT NOT NULL
+);
+CREATE TABLE repository_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    head_branch_id TEXT NOT NULL REFERENCES branches(id),
+    current_commit_id TEXT REFERENCES commits(id)
 );
 CREATE TABLE commit_files (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
     object_hash TEXT NOT NULL,
-    size INTEGER NOT NULL,
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     mtime_ns INTEGER NOT NULL,
     PRIMARY KEY (commit_id, path)
 );
 CREATE TABLE commit_attachments (
+    id TEXT PRIMARY KEY NOT NULL,
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0 CHECK (typeof(position) = 'integer' AND position >= 0),
     original_name TEXT NOT NULL,
     media_type TEXT NOT NULL,
     object_hash TEXT NOT NULL,
-    size INTEGER NOT NULL CHECK (size >= 0),
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (commit_id, role)
+    UNIQUE (commit_id, role, position)
 );
+CREATE UNIQUE INDEX idx_single_thumbnail ON commit_attachments(commit_id)
+    WHERE role = 'thumbnail';
 CREATE TABLE commit_notes (
-    commit_id TEXT PRIMARY KEY REFERENCES commits(id) ON DELETE CASCADE,
+    commit_id TEXT PRIMARY KEY NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -141,26 +143,46 @@ CREATE TABLE commit_labels (
     label TEXT NOT NULL,
     PRIMARY KEY (commit_id, label)
 );
-CREATE TABLE branches (
-    name TEXT PRIMARY KEY,
-    commit_id TEXT REFERENCES commits(id),
-    comment TEXT NOT NULL DEFAULT ''
-);
 CREATE TABLE tags (
-    name TEXT PRIMARY KEY,
+    name TEXT PRIMARY KEY NOT NULL,
     commit_id TEXT NOT NULL REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 CREATE TABLE tracked_paths (
-    path TEXT PRIMARY KEY
+    path TEXT PRIMARY KEY NOT NULL
+);
+CREATE TABLE buds (
+    id TEXT PRIMARY KEY NOT NULL,
+    base_commit_id TEXT REFERENCES commits(id),
+    branch_id TEXT NOT NULL REFERENCES branches(id),
+    branch_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE bud_files (
+    bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    object_hash TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
+    mtime_ns INTEGER NOT NULL,
+    PRIMARY KEY (bud_id, path)
 );
 CREATE INDEX idx_commits_parent ON commits(parent_id);
-CREATE INDEX idx_commit_attachments_object_hash
-    ON commit_attachments(object_hash);
+CREATE INDEX idx_commit_attachments_object_hash ON commit_attachments(object_hash);
 CREATE INDEX idx_commit_labels_label ON commit_labels(label);
-""" + BUD_SCHEMA
+CREATE INDEX idx_buds_base ON buds(base_commit_id);
+CREATE INDEX idx_bud_files_object_hash ON bud_files(object_hash);
+"""
 
+
+@lru_cache(maxsize=1)
+def expected_schema() -> dict[str, str]:
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.executescript(SCHEMA)
+        return {
+            row[0]: row[1]
+            for row in db.execute("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")
+        }
 
 
 @dataclass(frozen=True)
@@ -195,6 +217,8 @@ class CommitResult:
 
 @dataclass(frozen=True)
 class CommitAttachment:
+    id: str
+    position: int
     commit_id: str
     role: str
     original_name: str
@@ -215,6 +239,7 @@ class CommitAnnotations:
 
 @dataclass(frozen=True)
 class GraphCommit:
+    branch_id: str
     id: str
     parent_id: str | None
     branch_name: str
@@ -228,6 +253,7 @@ class GraphCommit:
 
 @dataclass(frozen=True)
 class BranchReference:
+    id: str
     name: str
     commit_id: str | None
     comment: str
@@ -265,6 +291,7 @@ class IgnoreRule:
 
 @dataclass(frozen=True)
 class Bud:
+    branch_id: str
     id: str
     base_commit_id: str | None
     branch_name: str
@@ -339,6 +366,11 @@ class RepoStats:
         return max(0, self.logical_bytes - self.unique_bytes)
 
 
+@dataclass
+class _MaterializationReceipt:
+    committed: bool | None = False
+
+
 class Repository:
     def __init__(self, root: Path, progress: ProgressCallback | None = None):
         self.root = root.resolve()
@@ -371,9 +403,7 @@ class Repository:
                     "INSERT INTO meta(key, value) VALUES('object_compression', ?)",
                     (OBJECT_COMPRESSION,),
                 )
-                db.execute("INSERT INTO meta(key, value) VALUES('head_branch', 'main')")
                 db.execute("INSERT INTO meta(key, value) VALUES('active_operation', '')")
-                db.execute("INSERT INTO meta(key, value) VALUES('current_commit', '')")
                 db.execute(
                     "INSERT INTO meta(key, value) VALUES('repository_id', ?)",
                     (str(uuid.uuid4()),),
@@ -382,7 +412,11 @@ class Repository:
                     "INSERT INTO meta(key, value) VALUES('repository_created_at', ?)",
                     (datetime.now(timezone.utc).isoformat(),),
                 )
-                db.execute("INSERT INTO branches(name, commit_id, comment) VALUES('main', NULL, '')")
+                branch_id = uuid.uuid4().hex
+                db.execute("INSERT INTO branches(id, name) VALUES(?, 'main')", (branch_id,))
+                db.execute(
+                    "INSERT INTO repository_state(id, head_branch_id) VALUES(1, ?)", (branch_id,)
+                )
         except Exception:
             shutil.rmtree(control, ignore_errors=True)
             raise
@@ -402,8 +436,6 @@ class Repository:
                 repo = cls(candidate, progress)
                 repo._restore_internal(repo.db_path)
                 repo.check_schema()
-                with repo.connect() as db:
-                    db.executescript(BUD_SCHEMA)
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
                 # operation is recorded; re-check under the lock inside recover.
@@ -453,6 +485,9 @@ class Repository:
             with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as db:
                 db.row_factory = sqlite3.Row
                 metadata, tables = self._schema_metadata_and_tables(db)
+                actual_schema = dict(
+                    db.execute("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")
+                )
         except sqlite3.Error as exc:
             raise SproutError(f"cannot read repository: {exc}") from exc
         found_version = metadata.get("schema_version", "missing")
@@ -476,6 +511,15 @@ class Repository:
                 + ", ".join(missing_metadata)
                 + "; reinitialize the repository with this Sprout version"
             )
+        if any(actual_schema.get(name) != sql for name, sql in expected_schema().items()):
+            raise SproutError("unsupported or incomplete repository structure; reinitialize the repository")
+        with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as db:
+            state = db.execute(
+                "SELECT s.current_commit_id FROM repository_state s "
+                "JOIN branches b ON b.id=s.head_branch_id WHERE s.id=1 AND b.deleted=0"
+            ).fetchone()
+            if state is None or db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise SproutError("invalid repository state or references; reinitialize the repository")
         found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
             raise SproutError(
@@ -767,38 +811,44 @@ class Repository:
                     progress(label or path.name, size, total)
         return digest.hexdigest(), size
 
+    @staticmethod
+    def _branch_id_from_db(db: sqlite3.Connection, name: str) -> str:
+        row = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
+        if row is None:
+            raise SproutError(f"unknown branch: {name}")
+        return row[0]
+
+    def branch_id(self, name: str | None = None) -> str:
+        with self.connect() as db:
+            if name is not None:
+                return self._branch_id_from_db(db, name)
+            return db.execute("SELECT head_branch_id FROM repository_state WHERE id=1").fetchone()[0]
+
     def head_branch(self) -> str:
         with self.connect() as db:
-            return db.execute("SELECT value FROM meta WHERE key='head_branch'").fetchone()[0]
+            return db.execute(
+                "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
+            ).fetchone()[0]
 
     def head_commit(self) -> str | None:
         with self.connect() as db:
-            row = db.execute(
-                "SELECT b.commit_id FROM branches b JOIN meta m ON m.value=b.name WHERE m.key='head_branch'"
-            ).fetchone()
-            return row[0] if row else None
+            return db.execute(
+                "SELECT b.commit_id FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
+            ).fetchone()[0]
 
     @staticmethod
     def _current_commit_from_db(db: sqlite3.Connection) -> str | None:
-        # Repositories created before the position was recorded sit at the branch tip.
-        row = db.execute("SELECT value FROM meta WHERE key='current_commit'").fetchone()
-        if row is not None and row[0]:
-            return row[0]
-        tip = db.execute(
-            "SELECT b.commit_id FROM branches b JOIN meta m ON m.value=b.name WHERE m.key='head_branch'"
-        ).fetchone()
-        return tip[0] if tip else None
+        row = db.execute("SELECT current_commit_id FROM repository_state WHERE id=1").fetchone()
+        if row is None:
+            raise SproutError("repository is missing current position")
+        return row[0]
 
     @staticmethod
     def _set_current_commit(db: sqlite3.Connection, commit_id: str | None) -> None:
-        db.execute(
-            "INSERT INTO meta(key, value) VALUES('current_commit', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (commit_id or "",),
-        )
+        db.execute("UPDATE repository_state SET current_commit_id=? WHERE id=1", (commit_id,))
 
     def current_commit(self) -> str | None:
-        """Return the snapshot the working tree is based on."""
+        """Return the snapshot the working tree is based on, or its initial empty state."""
         with self.connect() as db:
             return self._current_commit_from_db(db)
 
@@ -808,9 +858,9 @@ class Repository:
             db.execute("BEGIN")
             current = self._current_commit_from_db(db)
             tip = db.execute(
-                "SELECT b.commit_id FROM branches b JOIN meta m ON m.value=b.name WHERE m.key='head_branch'"
-            ).fetchone()
-        return current, current == (tip[0] if tip else None)
+                "SELECT b.commit_id FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
+            ).fetchone()[0]
+            return current, current == tip
 
     def manifest(self, commit_id: str | None) -> dict[str, FileState]:
         if commit_id is None:
@@ -1025,6 +1075,8 @@ class Repository:
     @staticmethod
     def _attachment_from_row(row: sqlite3.Row) -> CommitAttachment:
         return CommitAttachment(
+            id=row["id"],
+            position=row["position"],
             commit_id=row["commit_id"],
             role=row["role"],
             original_name=row["original_name"],
@@ -1105,19 +1157,19 @@ class Repository:
         created_at = now.isoformat(timespec="seconds")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            tip = db.execute("SELECT commit_id FROM branches WHERE name=?", (branch,)).fetchone()
+            tip = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (branch,)).fetchone()
             # Saving on top of a non-tip snapshot grows a new branch from it.
-            created_branch = parent is not None and (tip is None or tip[0] != parent)
+            created_branch = tip is None or tip[0] != parent
             if created_branch:
                 branch = self._auto_branch_name(db, now)
                 db.execute(
-                    "INSERT INTO branches(name, commit_id, comment) VALUES(?, NULL, '')",
-                    (branch,),
+                    "INSERT INTO branches(id, name, commit_id, comment) VALUES(?, ?, NULL, '')",
+                    (uuid.uuid4().hex, branch),
                 )
-                db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (branch,))
+                db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, branch),))
             db.execute(
-                "INSERT INTO commits(id, parent_id, branch_name, created_at, message) VALUES(?,?,?,?,?)",
-                (commit_id, parent, branch, created_at, message.strip()),
+                "INSERT INTO commits(id, parent_id, branch_id, branch_name, created_at, message) VALUES(?,?,?,?,?,?)",
+                (commit_id, parent, self._branch_id_from_db(db, branch), branch, created_at, message.strip()),
             )
             db.executemany(
                 "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
@@ -1127,9 +1179,10 @@ class Repository:
                 original_name, media_type, object_hash, size = prepared_thumbnail
                 db.execute(
                     "INSERT INTO commit_attachments("
-                    "commit_id, role, original_name, media_type, object_hash, size, "
-                    "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    "id, commit_id, role, original_name, media_type, object_hash, size, "
+                    "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
+                        uuid.uuid4().hex,
                         commit_id,
                         THUMBNAIL_ROLE,
                         original_name,
@@ -1140,7 +1193,7 @@ class Repository:
                         created_at,
                     ),
                 )
-            db.execute("UPDATE branches SET commit_id=? WHERE name=?", (commit_id, branch))
+            db.execute("UPDATE branches SET commit_id=? WHERE name=? AND deleted=0", (commit_id, branch))
             self._set_current_commit(db, commit_id)
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
         return CommitResult(commit_id, tuple(missing), branch, created_branch)
@@ -1150,7 +1203,7 @@ class Repository:
         """Return an unused branch name such as branch-20261028-153000."""
         base = "branch-" + now.astimezone().strftime("%Y%m%d-%H%M%S")
         taken = {
-            row[0] for row in db.execute("SELECT name FROM branches UNION SELECT name FROM tags")
+            row[0] for row in db.execute("SELECT name FROM branches WHERE deleted=0 UNION SELECT name FROM tags")
         }
         name, suffix = base, 2
         while name in taken:
@@ -1161,7 +1214,7 @@ class Repository:
         if not value.strip():
             raise SproutError("commit id required")
         with self.connect() as db:
-            branch = db.execute("SELECT commit_id FROM branches WHERE name=?", (value,)).fetchone()
+            branch = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (value,)).fetchone()
             if branch is not None:
                 if branch[0] is None:
                     raise SproutError(f"branch has no commits: {value}")
@@ -1251,7 +1304,7 @@ class Repository:
             placeholders = ",".join("?" for _ in chunk)
             for row in db.execute(
                 f"SELECT * FROM commit_attachments "
-                f"WHERE commit_id IN ({placeholders}) ORDER BY role",
+                f"WHERE commit_id IN ({placeholders}) ORDER BY role, position, id",
                 chunk,
             ):
                 grouped[row["commit_id"]].append(cls._attachment_from_row(row))
@@ -1279,13 +1332,13 @@ class Repository:
             annotations = self._annotations_many_from_db(db, commit_ids)
             attachments = self._attachments_many_from_db(db, commit_ids)
             current_branch = db.execute(
-                "SELECT value FROM meta WHERE key='head_branch'"
+                "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
             ).fetchone()[0]
             current_commit = self._current_commit_from_db(db)
             buds = tuple(self._buds_from_db(db))
             branch_rows = list(
                 db.execute(
-                    "SELECT name, commit_id, comment FROM branches ORDER BY name"
+                    "SELECT id, name, commit_id, comment FROM branches WHERE deleted=0 ORDER BY name"
                 )
             )
             tag_rows = list(
@@ -1299,6 +1352,7 @@ class Repository:
             GraphCommit(
                 id=row["id"],
                 parent_id=row["parent_id"],
+                branch_id=row["branch_id"],
                 branch_name=row["branch_name"],
                 created_at=row["created_at"],
                 message=row["message"],
@@ -1311,6 +1365,7 @@ class Repository:
         )
         branches = tuple(
             BranchReference(
+                id=row["id"],
                 name=row["name"],
                 commit_id=row["commit_id"],
                 comment=row["comment"],
@@ -1430,14 +1485,15 @@ class Repository:
         with self.connect() as db:
             db.execute(
                 "INSERT INTO commit_attachments("
-                "commit_id, role, original_name, media_type, object_hash, size, "
-                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(commit_id, role) DO UPDATE SET "
+                "id, commit_id, role, original_name, media_type, object_hash, size, "
+                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(commit_id) WHERE role='thumbnail' DO UPDATE SET "
                 "original_name=excluded.original_name, "
                 "media_type=excluded.media_type, "
                 "object_hash=excluded.object_hash, size=excluded.size, "
                 "updated_at=excluded.updated_at",
                 (
+                    uuid.uuid4().hex,
                     commit_id,
                     THUMBNAIL_ROLE,
                     original_name,
@@ -1642,7 +1698,7 @@ class Repository:
         """Summarize repository size and basic counts without changing files."""
         with self.connect() as db:
             commits = db.execute("SELECT COUNT(*) FROM commits").fetchone()[0]
-            branches = db.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
+            branches = db.execute("SELECT COUNT(*) FROM branches WHERE deleted=0").fetchone()[0]
             tracked_paths = db.execute("SELECT COUNT(*) FROM tracked_paths").fetchone()[0]
             buds = db.execute("SELECT COUNT(*) FROM buds").fetchone()[0]
             logical_bytes = db.execute(
@@ -1806,7 +1862,7 @@ class Repository:
                 branch_tips = {
                     row[0]
                     for row in db.execute(
-                        "SELECT commit_id FROM branches WHERE commit_id IS NOT NULL"
+                        "SELECT commit_id FROM branches WHERE deleted=0 AND commit_id IS NOT NULL"
                     )
                 }
                 protected = set(tags.values()) | branch_tips
@@ -1893,8 +1949,7 @@ class Repository:
                     if working_signature is not None:
                         current_tip = db.execute(
                             "SELECT b.commit_id FROM branches b "
-                            "JOIN meta m ON m.value=b.name "
-                            "WHERE m.key='head_branch'"
+                            "JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
                         ).fetchone()
                         head_id = current_tip[0] if current_tip is not None else None
                         compared = set(candidates)
@@ -1955,12 +2010,23 @@ class Repository:
                 code="prune_failed",
             ) from exc
 
-    def branches(self) -> list[tuple[str, str | None, str]]:
+    def branch_references(self) -> list[BranchReference]:
+        """Read names, identities and current selection from one SQLite snapshot."""
         with self.connect() as db:
             return [
-                (row[0], row[1], row[2])
-                for row in db.execute("SELECT name, commit_id, comment FROM branches ORDER BY name")
+                BranchReference(
+                    id=row["id"], name=row["name"], commit_id=row["commit_id"],
+                    comment=row["comment"], current=bool(row["current"]),
+                )
+                for row in db.execute(
+                    "SELECT b.id, b.name, b.commit_id, b.comment, "
+                    "b.id=s.head_branch_id AS current FROM branches b "
+                    "CROSS JOIN repository_state s WHERE s.id=1 AND b.deleted=0 ORDER BY b.name"
+                )
             ]
+
+    def branches(self) -> list[tuple[str, str | None, str]]:
+        return [(branch.name, branch.commit_id, branch.comment) for branch in self.branch_references()]
 
     def tags(self) -> list[tuple[str, str, str, str]]:
         with self.connect() as db:
@@ -2024,8 +2090,12 @@ class Repository:
     def _reject_omitted_start_point_on_restored_snapshot(self, head: str) -> None:
         """Refuse tip-based branching when a different saved snapshot is checked out."""
         current = self.current_commit()
-        if current is None or current == head:
+        if current == head:
             return
+        if current is None:
+            raise SproutError(
+                "working tree is based on the state before the first commit; specify the start point explicitly"
+            )
         raise SproutError(
             "working tree is based on a saved snapshot that differs from the current "
             "branch tip; specify the start point explicitly "
@@ -2066,8 +2136,8 @@ class Repository:
                 if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
                     raise SproutError(f"name already used by tag: {name}")
                 db.execute(
-                    "INSERT INTO branches(name, commit_id, comment) VALUES(?,?,?)",
-                    (name, commit_id, comment.strip()),
+                    "INSERT INTO branches(id, name, commit_id, comment) VALUES(?,?,?,?)",
+                    (uuid.uuid4().hex, name, commit_id, comment.strip()),
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
@@ -2079,8 +2149,8 @@ class Repository:
             except Exception:
                 with self.connect() as db:
                     db.execute(
-                        "DELETE FROM branches WHERE name=? "
-                        "AND name != (SELECT value FROM meta WHERE key='head_branch')",
+                        "DELETE FROM branches WHERE name=? AND deleted=0 "
+                        "AND id != (SELECT head_branch_id FROM repository_state WHERE id=1)",
                         (name,),
                     )
                 raise
@@ -2089,25 +2159,25 @@ class Repository:
     @locked
     def delete_branch(self, name: str) -> None:
         with self.connect() as db:
-            branch = db.execute("SELECT 1 FROM branches WHERE name=?", (name,)).fetchone()
+            branch = db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
             if branch is None:
                 raise SproutError(f"unknown branch: {name}")
             current = db.execute(
-                "SELECT value FROM meta WHERE key='head_branch'"
+                "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
             ).fetchone()[0]
             if name == current:
                 raise SproutError(f"cannot delete current branch: {name}")
-            db.execute("DELETE FROM branches WHERE name=?", (name,))
+            db.execute("UPDATE branches SET deleted=1, commit_id=NULL WHERE name=? AND deleted=0", (name,))
 
     @locked
     def rename_branch(self, old_name: str, new_name: str) -> None:
         self._validate_reference_name(new_name, "branch")
         with self.connect() as db:
-            branch = db.execute("SELECT 1 FROM branches WHERE name=?", (old_name,)).fetchone()
+            branch = db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (old_name,)).fetchone()
             if branch is None:
                 raise SproutError(f"unknown branch: {old_name}")
             duplicate = db.execute(
-                "SELECT 1 FROM branches WHERE name=?", (new_name,)
+                "SELECT 1 FROM branches WHERE name=? AND deleted=0", (new_name,)
             ).fetchone()
             if duplicate is not None:
                 raise SproutError(f"branch already exists: {new_name}")
@@ -2116,11 +2186,7 @@ class Repository:
                 is not None
             ):
                 raise SproutError(f"name already used by tag: {new_name}")
-            db.execute("UPDATE branches SET name=? WHERE name=?", (new_name, old_name))
-            db.execute(
-                "UPDATE meta SET value=? WHERE key='head_branch' AND value=?",
-                (new_name, old_name),
-            )
+            db.execute("UPDATE branches SET name=? WHERE name=? AND deleted=0", (new_name, old_name))
 
     @locked
     def create_tag(
@@ -2134,7 +2200,7 @@ class Repository:
         try:
             with self.connect() as db:
                 if (
-                    db.execute("SELECT 1 FROM branches WHERE name=?", (name,)).fetchone()
+                    db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
                     is not None
                 ):
                     raise SproutError(f"name already used by branch: {name}")
@@ -2156,7 +2222,7 @@ class Repository:
     @locked
     def set_branch_comment(self, name: str, comment: str) -> None:
         with self.connect() as db:
-            cursor = db.execute("UPDATE branches SET comment=? WHERE name=?", (comment.strip(), name))
+            cursor = db.execute("UPDATE branches SET comment=? WHERE name=? AND deleted=0", (comment.strip(), name))
             if cursor.rowcount == 0:
                 raise SproutError(f"unknown branch: {name}")
 
@@ -2467,7 +2533,7 @@ class Repository:
         head_branch: str | None,
         *,
         partial: bool = False,
-        current_commit: str | None = None,
+        current_commit: str | None | object = UNCHANGED,
     ) -> None:
         with self.connect() as db:
             if partial:
@@ -2481,8 +2547,8 @@ class Repository:
                     "INSERT INTO tracked_paths(path) VALUES(?)", ((path,) for path in target)
                 )
             if head_branch is not None:
-                db.execute("UPDATE meta SET value=? WHERE key='head_branch'", (head_branch,))
-            if current_commit is not None:
+                db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, head_branch),))
+            if current_commit is not UNCHANGED:
                 self._set_current_commit(db, current_commit)
             db.execute("UPDATE meta SET value='' WHERE key='active_operation'")
 
@@ -2507,7 +2573,8 @@ class Repository:
         *,
         head_branch: str | None = None,
         partial: bool = False,
-        current_commit: str | None = None,
+        current_commit: str | None | object = UNCHANGED,
+        _receipt: _MaterializationReceipt | None = None,
     ) -> None:
         current = self.tracked()
         plan = self._restore_plan(target, partial=partial)
@@ -2566,6 +2633,19 @@ class Repository:
                 ) from rollback_exc
             raise
         finally:
+            if _receipt is not None:
+                _receipt.committed = operation_complete
+                if active_registered and not operation_complete:
+                    # BaseException can interrupt after the DB commit but before
+                    # operation_complete is assigned. Inspect the durable marker.
+                    try:
+                        with self.connect() as db:
+                            active = db.execute(
+                                "SELECT value FROM meta WHERE key='active_operation'"
+                            ).fetchone()[0]
+                        _receipt.committed = active == ""
+                    except (OSError, sqlite3.Error, SproutError):
+                        _receipt.committed = None  # Keep the bud if outcome is unknown.
             if operation_complete or not active_registered:
                 self._restore_tree_files(operation_dir)
                 shutil.rmtree(operation_dir, ignore_errors=True)
@@ -2811,7 +2891,7 @@ class Repository:
     @locked
     def switch(self, name: str, *, discard: bool = False) -> str | None:
         with self.connect() as db:
-            row = db.execute("SELECT commit_id FROM branches WHERE name=?", (name,)).fetchone()
+            row = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
         if row is None:
             raise SproutError(f"unknown branch: {name}")
         target = self.manifest(row[0])
@@ -2822,11 +2902,11 @@ class Repository:
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
-        self._materialize(target, head_branch=name, current_commit=row[0] or "")
+        self._materialize(target, head_branch=name, current_commit=row[0])
         return row[0]
 
     def _buds_from_db(self, db: sqlite3.Connection, bud_ids: list[str] | None = None) -> list[Bud]:
-        query = "SELECT id, base_commit_id, branch_name, created_at FROM buds"
+        query = "SELECT id, base_commit_id, branch_id, branch_name, created_at FROM buds"
         params: tuple[str, ...] = ()
         if bud_ids is not None:
             query += f" WHERE id IN ({','.join('?' for _ in bud_ids)})"
@@ -2855,6 +2935,7 @@ class Repository:
             buds.append(
                 Bud(
                     id=row["id"],
+                    branch_id=row["branch_id"],
                     base_commit_id=row["base_commit_id"],
                     branch_name=row["branch_name"],
                     created_at=row["created_at"],
@@ -2897,8 +2978,8 @@ class Repository:
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with self.connect() as db:
             db.execute(
-                "INSERT INTO buds(id, base_commit_id, branch_name, created_at) VALUES(?,?,?,?)",
-                (bud_id, base, self.head_branch(), created_at),
+                "INSERT INTO buds(id, base_commit_id, branch_id, branch_name, created_at) VALUES(?,?,?,?,?)",
+                (bud_id, base, self.branch_id(), self.head_branch(), created_at),
             )
             db.executemany(
                 "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
@@ -2917,13 +2998,13 @@ class Repository:
         bud_id = self.resolve_bud(value)
         with self.connect() as db:
             bud = self._buds_from_db(db, [bud_id])[0]
-            branch_exists = db.execute(
-                "SELECT 1 FROM branches WHERE name=?", (bud.branch_name,)
-            ).fetchone() is not None
+            branch = db.execute(
+                "SELECT name FROM branches WHERE id=? AND deleted=0", (bud.branch_id,)
+            ).fetchone()
         stashed = self._materialize_keeping_changes(
             {item.path: item for item in bud.files},
-            head_branch=bud.branch_name if branch_exists else None,
-            current_commit=bud.base_commit_id or "",
+            head_branch=branch[0] if branch is not None else None,
+            current_commit=bud.base_commit_id,
         )
         with self.connect() as db:
             db.execute("DELETE FROM buds WHERE id=?", (bud.id,))
@@ -2934,27 +3015,23 @@ class Repository:
         target: dict[str, FileState],
         *,
         head_branch: str | None,
-        current_commit: str,
+        current_commit: str | None,
     ) -> Bud | None:
         """Replace the whole working tree, first keeping unsaved changes as a bud."""
         self._validate_restore_inputs(target)
         self._restore_plan(target, partial=False)
-        with self.connect() as db:
-            position_before = db.execute(
-                "SELECT value FROM meta WHERE key='current_commit'"
-            ).fetchone()
         stashed = self._save_bud() if self._has_unsaved_changes() else None
+        receipt = _MaterializationReceipt()
         try:
-            self._materialize(target, head_branch=head_branch, current_commit=current_commit)
+            self._materialize(
+                target, head_branch=head_branch, current_commit=current_commit, _receipt=receipt
+            )
         except BaseException:
-            if stashed is not None:
+            # Uncommitted restores roll back from their durable backups. Once the
+            # restore committed, the new bud is the only copy of the previous work.
+            if stashed is not None and receipt.committed is False:
                 with self.connect() as db:
-                    position_after = db.execute(
-                        "SELECT value FROM meta WHERE key='current_commit'"
-                    ).fetchone()
-                    # Keep the new bud if the working tree was already replaced.
-                    if position_after == position_before:
-                        db.execute("DELETE FROM buds WHERE id=?", (stashed.id,))
+                    db.execute("DELETE FROM buds WHERE id=?", (stashed.id,))
             raise
         return stashed
 
@@ -2964,12 +3041,12 @@ class Repository:
         commit_id = self.resolve_commit(value)
         with self.connect() as db:
             current_branch = db.execute(
-                "SELECT value FROM meta WHERE key='head_branch'"
+                "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
             ).fetchone()[0]
             tips = [
                 row[0]
                 for row in db.execute(
-                    "SELECT name FROM branches WHERE commit_id=? ORDER BY name", (commit_id,)
+                    "SELECT name FROM branches WHERE deleted=0 AND commit_id=? ORDER BY name", (commit_id,)
                 )
             ]
         if current_branch in tips:

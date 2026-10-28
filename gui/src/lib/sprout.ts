@@ -37,6 +37,8 @@ export interface CommitLogEntry {
 }
 
 export interface CommitAttachment {
+  id: string;
+  position: number;
   commit_id: string;
   role: string;
   original_name: string;
@@ -59,12 +61,15 @@ export interface CommitFile {
 }
 
 export interface CommitDetail extends CommitLogEntry {
+  branch_id: string;
   branch_name: string;
   thumbnail: CommitThumbnail | null;
+  attachments: CommitAttachment[];
   files: CommitFile[];
 }
 
 export interface BranchInfo {
+  id: string;
   name: string;
   commit_id: string | null;
   comment: string;
@@ -72,6 +77,7 @@ export interface BranchInfo {
 }
 
 export interface GraphCommit extends CommitLogEntry {
+  branch_id: string;
   branch_name: string;
   attachments: CommitAttachment[];
 }
@@ -93,6 +99,7 @@ export interface BudFile {
 export interface Bud {
   id: string;
   base_commit_id: string | null;
+  branch_id: string;
   branch_name: string;
   created_at: string;
   changes: StatusChange[];

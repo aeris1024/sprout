@@ -42,7 +42,7 @@ const cleanStatus: SproutStatus = {
   tracked: ["design/main.psd"],
   untracked: ["notes.txt"],
 };
-const mainBranch = [{ name: "main", commit_id: "a".repeat(64), comment: "", current: true }];
+const mainBranch = [{ id: "main", name: "main", commit_id: "a".repeat(64), comment: "", current: true }];
 const commitEntry = {
   id: "a".repeat(64),
   parent_id: null,
@@ -63,7 +63,7 @@ function mockWorkspace(
     commits: history.map((entry, index) => ({
       ...entry,
       parent_id: entry.parent_id ?? (index + 1 < history.length ? history[index + 1].id : null),
-      branch_name: "main",
+      branch_id: "main", branch_name: "main",
       attachments: [],
     })),
     branches,
@@ -279,10 +279,10 @@ describe("Sprout GUI operations", () => {
     const graph: CommitGraph = {
       current_commit: tipId,
       commits: [
-        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
-        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main", branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "main", branch_name: "main", message: "Past commit", attachments: [] },
       ],
-      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      branches: [{ id: "main", name: "main", commit_id: tipId, comment: "", current: true }],
       tags: [],
       buds: [],
     };
@@ -293,12 +293,12 @@ describe("Sprout GUI operations", () => {
     await screen.findByRole("heading", { name: "sprout-project" });
     expect(screen.getByRole("button", { name: "未保存の芽" })).toBeTruthy();
 
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_id: "main", branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
     await user.click(screen.getByRole("button", { name: "Past commit" }));
     expect(screen.getByRole("button", { name: "Past commit" }).getAttribute("aria-pressed")).toBe("true");
     expect(await screen.findByText("移動すると、未保存の変更 1件は今の芽につぼみとして残ります。")).toBeTruthy();
 
-    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_id: "main", branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
     mocks.runSprout.mockResolvedValueOnce({ current_commit: rootId, branch: "main", at_branch_tip: false, bud, changes: [] });
     const callsBefore = mocks.runSprout.mock.calls.length;
     await user.click(screen.getByRole("button", { name: "ここへ移動" }));
@@ -315,7 +315,7 @@ describe("Sprout GUI operations", () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, files: [] });
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await screen.findByRole("region", { name: "選択中のスナップショット" });
     // The fixture graph has no recorded position, so the single commit is the current one.
@@ -329,10 +329,10 @@ describe("Sprout GUI operations", () => {
     const graph: CommitGraph = {
       current_commit: tipId,
       commits: [
-        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
-        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main", branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "main", branch_name: "main", message: "Past commit", attachments: [] },
       ],
-      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      branches: [{ id: "main", name: "main", commit_id: tipId, comment: "", current: true }],
       tags: [],
     };
     render(<App />);
@@ -340,7 +340,7 @@ describe("Sprout GUI operations", () => {
     mockWorkspace(cleanStatus, [], graph.branches, graph);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     await screen.findByRole("heading", { name: "sprout-project" });
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_id: "main", branch_name: "main", message: "Past commit", thumbnail: null, files: [] });
     await user.click(screen.getByRole("button", { name: "Past commit" }));
     mocks.runSprout.mockRejectedValueOnce({ code: "untracked_conflict", message: "untracked path would be overwritten: notes.txt", details: { path: "notes.txt" } });
     await user.click(await screen.findByRole("button", { name: "ここへ移動" }));
@@ -353,10 +353,10 @@ describe("Sprout GUI operations", () => {
   it("restores and drops buds from the bud panel", async () => {
     const user = userEvent.setup();
     const tipId = commitEntry.id;
-    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+    const bud = { id: "f".repeat(32), base_commit_id: tipId, branch_id: "main", branch_name: "main", created_at: "2026-10-28T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
     const graph: CommitGraph = {
       current_commit: tipId,
-      commits: [{ ...commitEntry, branch_name: "main", attachments: [] }],
+      commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [] }],
       branches: mainBranch,
       tags: [],
       buds: [bud],
@@ -391,10 +391,10 @@ describe("Sprout GUI operations", () => {
       current_commit: rootId,
       at_branch_tip: false,
       commits: [
-        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Current tip", attachments: [] },
-        { ...commitEntry, id: rootId, parent_id: null, branch_name: "main", message: "Past commit", attachments: [] },
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main", branch_name: "main", message: "Current tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "main", branch_name: "main", message: "Past commit", attachments: [] },
       ],
-      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      branches: [{ id: "main", name: "main", commit_id: tipId, comment: "", current: true }],
       tags: [],
     };
     render(<App />);
@@ -403,7 +403,7 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     await screen.findByRole("heading", { name: "sprout-project" });
 
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: tipId, branch_name: "main", message: "Current tip", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: tipId, branch_id: "main", branch_name: "main", message: "Current tip", thumbnail: null, files: [] });
     await user.click(screen.getByRole("button", { name: "Current tip" }));
     await screen.findByRole("region", { name: "選択中のスナップショット" });
     await user.keyboard("{Control>}s{/Control}");
@@ -421,13 +421,13 @@ describe("Sprout GUI operations", () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, files: [] });
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await user.click(await screen.findByRole("button", { name: "ここから枝を伸ばす" }));
     await user.type(screen.getByLabelText("新しい枝の名前"), "rethink");
     mocks.runSprout
       .mockResolvedValueOnce({ current_commit: commitEntry.id, branch: "main", at_branch_tip: true, bud: null, changes: [] })
-      .mockResolvedValueOnce({ name: "rethink", commit_id: commitEntry.id, comment: "", current: true });
+      .mockResolvedValueOnce({ id: "rethink", name: "rethink", commit_id: commitEntry.id, comment: "", current: true });
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "枝を作って移動" }));
     expect(await screen.findByText("aaaaaaaaaaaa から枝 rethink を伸ばしました")).toBeTruthy();
@@ -445,6 +445,7 @@ describe("Sprout GUI operations", () => {
     const rootId = "d".repeat(64);
     const tipId = "e".repeat(64);
     const thumbnail = {
+      id: "attachment-fixture", position: 0,
       commit_id: tipId,
       role: "thumbnail",
       original_name: "tree.png",
@@ -464,12 +465,12 @@ describe("Sprout GUI operations", () => {
     };
     const treeGraph: CommitGraph = {
       commits: [
-        { ...commitEntry, id: tipId, parent_id: rootId, branch_name: "main", message: "Tree tip", attachments: [thumbnail] },
-        { ...commitEntry, id: rootId, parent_id: null, branch_name: "archived", message: "Deleted branch root", attachments: [videoPreview] },
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main", branch_name: "main", message: "Tree tip", attachments: [thumbnail] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "archived", branch_name: "archived", message: "Deleted branch root", attachments: [videoPreview] },
       ],
       branches: [
-        { name: "main", commit_id: tipId, comment: "", current: true },
-        { name: "alternate", commit_id: tipId, comment: "別案", current: false },
+        { id: "main", name: "main", commit_id: tipId, comment: "", current: true },
+        { id: "alternate", name: "alternate", commit_id: tipId, comment: "別案", current: false },
       ],
       tags: [],
     };
@@ -486,7 +487,7 @@ describe("Sprout GUI operations", () => {
     expect(document.querySelector("video, audio")).toBeNull();
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
 
-    const detail = { ...commitEntry, id: tipId, branch_name: "main", message: "Tree tip", thumbnail, files: [] };
+    const detail = { ...commitEntry, id: tipId, branch_id: "main", branch_name: "main", message: "Tree tip", thumbnail, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Tree tip/ }));
     expect(await screen.findByRole("button", { name: "この芽にいます" })).toBeTruthy();
@@ -506,7 +507,7 @@ describe("Sprout GUI operations", () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
-    const detail = { ...commitEntry, branch_name: "main", thumbnail: null, files: [] };
+    const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
     expect(await screen.findByRole("button", { name: "メッセージを編集" })).toBeTruthy();
@@ -535,10 +536,10 @@ describe("Sprout GUI operations", () => {
     const tipEntry = { ...commitEntry, id: tipId, parent_id: rootId, message: "Current tip" };
     const graph: CommitGraph = {
       commits: [
-        { ...tipEntry, branch_name: "main", attachments: [] },
-        { ...rootEntry, branch_name: "main", attachments: [] },
+        { ...tipEntry, branch_id: "main", branch_name: "main", attachments: [] },
+        { ...rootEntry, branch_id: "main", branch_name: "main", attachments: [] },
       ],
-      branches: [{ name: "main", commit_id: tipId, comment: "", current: true }],
+      branches: [{ id: "main", name: "main", commit_id: tipId, comment: "", current: true }],
       tags: [],
     };
     render(<App />);
@@ -547,7 +548,7 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
     await screen.findByRole("heading", { name: "sprout-project" });
 
-    const detail = { ...rootEntry, branch_name: "main", thumbnail: null, files: [] };
+    const detail = { ...rootEntry, branch_id: "main", branch_name: "main", thumbnail: null, files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Past commit/ }));
     expect(await screen.findByRole("button", { name: "サムネイルを登録" })).toBeTruthy();
@@ -563,6 +564,7 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledTimes(callsBeforeFocus);
 
     const thumbnail = {
+      id: "attachment-fixture", position: 0,
       commit_id: rootId,
       role: "thumbnail" as const,
       original_name: "past.png",
@@ -591,7 +593,7 @@ describe("Sprout GUI operations", () => {
     render(<App />);
     await openWorkspace(user);
     const leaf = screen.getByRole("button", { name: "Initial design" });
-    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_name: "main", thumbnail: null, files: [] });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, files: [] });
     leaf.focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();

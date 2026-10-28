@@ -24,6 +24,7 @@ export interface MapLeaf {
 }
 
 export interface MapLane {
+  id: string;
   name: string;
   x: number;
   /** Fork point on the parent lane and the side its leaf sits on, or null when the lane grows from the ground. */
@@ -89,9 +90,9 @@ function oldestFirst(commits: GraphCommit[]): GraphCommit[] {
 export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
   const ordered = oldestFirst(graph.commits);
   const ids = new Set(ordered.map((commit) => commit.id));
-  const laneNames: string[] = [];
+  const laneIds: string[] = [];
   for (const commit of ordered) {
-    if (!laneNames.includes(commit.branch_name)) laneNames.push(commit.branch_name);
+    if (!laneIds.includes(commit.branch_id)) laneIds.push(commit.branch_id);
   }
   const height = MAP.top + MAP.bottom + Math.max(ordered.length, 1) * MAP.row;
   const groundY = height - MAP.bottom;
@@ -104,7 +105,7 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
 
   const perLane = new Map<number, number>();
   const leaves: MapLeaf[] = ordered.map((commit, row) => {
-    const lane = laneNames.indexOf(commit.branch_name);
+    const lane = laneIds.indexOf(commit.branch_id);
     const count = perLane.get(lane) ?? 0;
     perLane.set(lane, count + 1);
     const side: -1 | 1 = count % 2 === 0 ? -1 : 1;
@@ -122,19 +123,20 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
     };
   });
   const byId = new Map(leaves.map((leaf) => [leaf.commit.id, leaf]));
-  const liveNames = new Set(graph.branches.map((branch) => branch.name));
+  const liveIds = new Set(graph.branches.map((branch) => branch.id));
 
-  const lanes: MapLane[] = laneNames.map((name, index) => {
+  const lanes: MapLane[] = laneIds.map((id, index) => {
     const members = leaves.filter((leaf) => leaf.lane === index);
     const first = members[0];
     const parent = first.commit.parent_id && ids.has(first.commit.parent_id) ? byId.get(first.commit.parent_id) : undefined;
     return {
-      name,
+      id,
+      name: graph.branches.find((branch) => branch.id === id)?.name ?? first.commit.branch_name,
       x: MAP.left + index * MAP.lane,
       fork: parent && parent.lane !== index ? { x: parent.x, y: parent.y, side: parent.side } : null,
       bottomY: first.y,
       topY: members[members.length - 1].y,
-      live: liveNames.has(name),
+      live: liveIds.has(id),
     };
   });
 
@@ -150,7 +152,7 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
 
   const currentTip = graph.branches.find((branch) => branch.current)?.commit_id ?? null;
   const currentId = graph.current_commit !== undefined ? graph.current_commit : currentTip;
-  const width = MAP.left + (laneNames.length - 1) * MAP.lane + MAP.gap + MAP.leafWidth + 48;
+  const width = MAP.left + (laneIds.length - 1) * MAP.lane + MAP.gap + MAP.leafWidth + 48;
   return {
     leaves,
     lanes,
