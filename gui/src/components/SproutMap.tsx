@@ -1,7 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
+import { LABEL_LINE, MAP, estimateChipText, lanePath, layoutSproutMap, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
+
+/** Measure tag chip text with the page font; falls back to the estimate without a canvas (tests). */
+function chipTextMeasure(): TextMeasure {
+  let context: CanvasRenderingContext2D | null = null;
+  try {
+    context = document.createElement("canvas").getContext("2d");
+  } catch {
+    context = null;
+  }
+  if (!context) return estimateChipText;
+  context.font = `11px ${getComputedStyle(document.body).fontFamily}`;
+  const ctx = context;
+  return (text) => ctx.measureText(text).width;
+}
 
 const STATIC_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -81,7 +95,7 @@ function budLabel(bud: Bud): string {
     : `最初の保存前のつぼみ（${bud.changes.length}件の変更）`;
 }
 
-export type MapSelection = { kind: "commit" | "bud"; id: string } | { kind: "unsaved" } | null;
+export type MapSelection = { kind: "commit" | "bud" | "branch"; id: string } | { kind: "unsaved" } | null;
 
 interface SproutMapProps {
   graph: CommitGraph;
@@ -91,6 +105,7 @@ interface SproutMapProps {
   sproutProgram: string;
   onSelect: (commitId: string) => void;
   onSelectBud: (budId: string) => void;
+  onSelectBranch: (branchId: string) => void;
   onSelectUnsaved: () => void;
 }
 
@@ -102,10 +117,12 @@ export default function SproutMap({
   sproutProgram,
   onSelect,
   onSelectBud,
+  onSelectBranch,
   onSelectUnsaved,
 }: SproutMapProps) {
   const selectedId = selection?.kind === "commit" ? selection.id : null;
   const layout = useMemo(() => layoutSproutMap(graph), [graph]);
+  const measureChip = useMemo(chipTextMeasure, []);
   const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(1));
   const zoom = ZOOM_STEPS[zoomIndex];
   const scroller = useRef<HTMLDivElement>(null);
@@ -216,12 +233,27 @@ export default function SproutMap({
             </g>
           ))}
           {layout.labels.map((label) => (
-            <g key={`${label.x}:${label.y}`} className={label.current ? "branch-label current" : "branch-label"}>
+            <g key={`${label.x}:${label.y}`} className="branch-label">
               <line x1={label.x} x2={label.x} y1={label.y + 8} y2={label.y + MAP.row - 8} />
-              <text x={label.x} y={label.y} textAnchor="middle">
-                {label.names.join(", ")}
-                {label.current ? "（現在のブランチ）" : ""}
-              </text>
+              {label.branches.map((branch, index) => {
+                const selected = selection?.kind === "branch" && selection.id === branch.id;
+                return (
+                  <g
+                    key={branch.id}
+                    className={`branch-name${branch.current ? " current" : ""}${selected ? " selected" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`ブランチ ${branch.name}`}
+                    aria-pressed={selected}
+                    onClick={() => onSelectBranch(branch.id)}
+                    onKeyDown={(event) => onKey(event, () => onSelectBranch(branch.id))}
+                  >
+                    <text x={label.x} y={label.y - index * LABEL_LINE} textAnchor="middle">
+                      {branch.current ? `${branch.name}（現在のブランチ）` : branch.name}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           ))}
           {layout.leaves.map((leaf) => {
@@ -256,12 +288,16 @@ export default function SproutMap({
                 <text className="leaf-message" x={leaf.leafX} y={top + MAP.leafHeight + 15}>
                   {leaf.commit.message.length > 14 ? `${leaf.commit.message.slice(0, 14)}…` : leaf.commit.message}
                 </text>
-                {leaf.tags.map((tag, index) => (
-                  <g key={tag} className="tag-chip">
-                    <rect x={leaf.leafX + 6} y={top + 6 + index * 22} width={Math.min(MAP.leafWidth - 12, 16 + tag.length * 8)} height={18} />
-                    <text x={leaf.leafX + 12} y={top + 19 + index * 22}>{`#${tag}`}</text>
-                  </g>
-                ))}
+                {leaf.tags.map((tag, index) => {
+                  const chip = tagChip(tag, measureChip);
+                  return (
+                    <g key={tag} className="tag-chip">
+                      <title>{`#${tag}`}</title>
+                      <rect x={leaf.leafX + 6} y={top + 6 + index * 22} width={chip.width} height={18} />
+                      <text x={leaf.leafX + 12} y={top + 19 + index * 22}>{chip.text}</text>
+                    </g>
+                  );
+                })}
                 {here && (
                   <text className="here-label" x={leaf.side < 0 ? leaf.leafX : leaf.leafX + MAP.leafWidth} y={top - 8} textAnchor={leaf.side < 0 ? "start" : "end"}>
                     いまここ

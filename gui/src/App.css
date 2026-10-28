@@ -174,7 +174,9 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .stem.main path { stroke: var(--stem); stroke-width: 5; }
 .branch-label text { fill: var(--muted); font-size: 13px; }
 .branch-label line { stroke: var(--line); stroke-width: 2; stroke-dasharray: 2 5; }
-.branch-label.current text { fill: var(--current); font-weight: 700; }
+.branch-name { cursor: pointer; outline: none; }
+.branch-name.current text { fill: var(--current); font-weight: 700; }
+.branch-name:hover text, .branch-name.selected text, .branch-name:focus-visible text { text-decoration: underline; fill: var(--ink); }
 .leaf { cursor: pointer; outline: none; }
 .leaf-stalk { stroke: var(--branch); stroke-width: 2; }
 .node { fill: var(--stem); }
@@ -217,6 +219,28 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .detail-list dd { margin: 0; word-break: break-all; }
 .mono { font-family: ui-monospace, "Cascadia Mono", monospace; }
 .panel-actions { display: grid; gap: 8px; }
+.button.small { padding: 4px 10px; font-size: 12px; }
+.text-button.danger { color: var(--danger); }
+.text-button.inline { padding: 0; text-align: left; font-size: inherit; }
+.chip-button { cursor: pointer; font: inherit; }
+.field-hint { margin: 0; color: var(--muted); font-size: 11px; }
+.message-editor textarea { min-height: 80px; resize: vertical; color: var(--ink); }
+.annotation-section { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.annotation-section h4 { margin: 0; font-size: 13px; }
+.annotation-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.note-text { margin: 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.label-list, .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tag-list { display: grid; }
+.label-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; background: var(--chip-bg); padding: 2px 4px 2px 10px; font-size: 12px; }
+.label-chip button { border: 0; background: transparent; color: var(--muted); padding: 0 4px; }
+.tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+.tag-name { font-weight: 600; }
+.tag-comment { color: var(--muted); flex: 1; word-break: break-word; }
+.inline-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.inline-form input { flex: 1; min-width: 120px; color: var(--ink); }
+.tag-form { display: grid; gap: 6px; }
+.tag-form input { color: var(--ink); }
+.tag-form .button { justify-self: start; }
 
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }

@@ -2246,6 +2246,13 @@ class Repository:
                 raise SproutError(f"unknown tag: {name}")
 
     @locked
+    def set_tag_comment(self, name: str, comment: str) -> None:
+        with self.connect() as db:
+            cursor = db.execute("UPDATE tags SET comment=? WHERE name=?", (comment.strip(), name))
+            if cursor.rowcount == 0:
+                raise SproutError(f"unknown tag: {name}")
+
+    @locked
     def set_branch_comment(self, name: str, comment: str) -> str:
         """Replace a live branch comment and return the branch identity."""
         with self.connect() as db:

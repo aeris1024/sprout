@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAP, lanePath, layoutSproutMap } from "./sproutMap";
+import { MAP, lanePath, layoutSproutMap, tagChip } from "./sproutMap";
 import type { BranchInfo, CommitGraph, GraphCommit, GraphTag } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {
@@ -107,7 +107,7 @@ describe("layoutSproutMap", () => {
     expect(layout.currentId).toBe("b");
     expect(byId.a.tags).toEqual(["draft"]);
     expect(byId.b.buds.map((bud) => bud.id)).toEqual(["bud"]);
-    expect(layout.labels.map((label) => [label.names, label.current])).toEqual([
+    expect(layout.labels.map((label) => [label.branches.map((branch) => branch.name), label.current])).toEqual([
       [["main"], true],
       [["side", "copy"], false],
     ]);
@@ -137,6 +137,35 @@ describe("layoutSproutMap", () => {
     expect(layout.leaves.map((leaf) => leaf.commit.id)).toEqual(["root", "parent", "child"]);
     const reversed = layoutSproutMap(tree([...sameSecond].reverse(), []));
     expect(reversed.leaves.map((leaf) => leaf.commit.id)).toEqual(["root", "parent", "child"]);
+  });
+
+  it("sizes tag chips for full-width names and shortens names that do not fit", () => {
+    const ascii = tagChip("v1");
+    const japanese = tagChip("提出");
+    expect(ascii.text).toBe("#v1");
+    expect(japanese.text).toBe("#提出");
+    // Two full-width characters need clearly more room than two ASCII ones.
+    expect(japanese.width - ascii.width).toBeGreaterThanOrEqual(8);
+    expect(tagChip("線画完成").text).toBe("#線画完成");
+    expect(tagChip("線画完成").width).toBeLessThanOrEqual(MAP.leafWidth - 12);
+
+    const long = tagChip("クライアント最終確認済み版");
+    expect(long.text.endsWith("…")).toBe(true);
+    expect(long.text.startsWith("#クライアント")).toBe(true);
+    expect(long.width).toBeLessThanOrEqual(MAP.leafWidth - 12);
+    expect(tagChip("a".repeat(40)).text).toMatch(/^#a+…$/);
+  });
+
+  it("fits tag chips to measured font widths", () => {
+    // Proportional katakana is narrower than the estimate, so more of the name stays visible.
+    const narrow = (text: string) => [...text].length * 6;
+    const chip = tagChip("クライアント最終確認済み版", narrow);
+    expect(chip.text).toBe("#クライアント最終確認済み版");
+    expect(chip.width).toBe(14 * 6 + 12);
+    const wide = (text: string) => [...text].length * 14;
+    const shortened = tagChip("クライアント最終確認済み版", wide);
+    expect(shortened.text).toBe("#クライア…");
+    expect(shortened.width).toBe(6 * 14 + 12);
   });
 
   it("handles hundreds of snapshots", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import BranchPanel from "./components/BranchPanel";
 import BudPanel from "./components/BudPanel";
 import CommitPanel from "./components/CommitPanel";
 import FilePanel from "./components/FilePanel";
@@ -64,15 +65,18 @@ function App() {
       .catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }));
   }, []);
 
-  async function execute(operation: () => Promise<void>) {
-    if (operationActive.current) return;
+  /** Run one operation at a time; resolves true only when it completed without an error. */
+  async function execute(operation: () => Promise<void>): Promise<boolean> {
+    if (operationActive.current) return false;
     operationActive.current = true;
     setBusy(true);
     setNotice(null);
     try {
       await operation();
+      return true;
     } catch (error) {
       setNotice({ ...normalizeCliError(error), kind: "error" });
+      return false;
     } finally {
       operationActive.current = false;
       setBusy(false);
@@ -88,6 +92,7 @@ function App() {
     setSelection((current) => {
       if (current?.kind === "commit" && !nextGraph.commits.some((entry) => entry.id === current.id)) return null;
       if (current?.kind === "bud" && !nextGraph.buds.some((bud) => bud.id === current.id)) return null;
+      if (current?.kind === "branch" && !nextGraph.branches.some((branch) => branch.id === current.id)) return null;
       return current;
     });
   }
@@ -285,6 +290,43 @@ function App() {
     setFilesOpen(false);
   }
 
+  function selectBranch(branchId: string) {
+    setSelection({ kind: "branch", id: branchId });
+    setFilesOpen(false);
+  }
+
+  /** Run a branch edit by its current name, then refresh; the selection follows the branch ID. */
+  function editBranch(branchId: string, args: (name: string) => string[], message: (name: string) => string): Promise<boolean> {
+    const branch = graph.branches.find((item) => item.id === branchId);
+    if (!projectDir || !branch) return Promise.resolve(false);
+    return execute(async () => {
+      await runSprout(projectDir, args(branch.name), sproutProgram);
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "branch_updated", message: message(branch.name), details: { branch_id: branchId }, kind: "success" });
+    });
+  }
+
+  function renameBranch(branchId: string, name: string) {
+    return editBranch(branchId, (current) => ["branch", current, "--rename", name], (current) => `ブランチ ${current} の名前を ${name} に変更しました`);
+  }
+
+  function setBranchComment(branchId: string, comment: string) {
+    return editBranch(branchId, (current) => ["branch", current, "--set-comment", comment], (current) => `ブランチ ${current} のコメントを変更しました`);
+  }
+
+  function deleteBranch(branchId: string) {
+    const branch = graph.branches.find((item) => item.id === branchId);
+    if (!projectDir || !branch || operationActive.current) return;
+    void confirmDialog(`ブランチ ${branch.name} を削除します。この枝のスナップショットは削除されず、「削除済みブランチ由来」として残ります。続行しますか？`, {
+      title: "ブランチを削除",
+      kind: "warning",
+      okLabel: "削除",
+      cancelLabel: "キャンセル",
+    }).then((accepted) => {
+      if (accepted) void editBranch(branchId, (current) => ["branch", "--delete", current], (current) => `ブランチ ${current} を削除しました`);
+    });
+  }
+
   function selectUnsaved() {
     setSelection({ kind: "unsaved" });
     setFilesOpen(false);
@@ -293,6 +335,56 @@ function App() {
   function closeSelection() {
     setSelection(null);
     setCommitDetail(null);
+  }
+
+  /** Run an edit of one snapshot's annotations, then refresh the map and its detail. */
+  function editCommit(commitId: string, args: string[], message: string): Promise<boolean> {
+    if (!projectDir) return Promise.resolve(false);
+    return execute(async () => {
+      await runSprout(projectDir, args, sproutProgram);
+      await fetchWorkspace(projectDir);
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setNotice({ code: "annotation_updated", message, details: { commit_id: commitId }, kind: "success" });
+    });
+  }
+
+  function saveNote(commitId: string, note: string) {
+    const deleting = !note.trim();
+    return editCommit(
+      commitId,
+      deleting ? ["note", commitId, "--delete"] : ["note", commitId, note],
+      deleting ? `${shortId(commitId)} のメモを削除しました` : `${shortId(commitId)} のメモを保存しました`,
+    );
+  }
+
+  function addLabel(commitId: string, label: string) {
+    return editCommit(commitId, ["label", commitId, label], `ラベル「${label.trim()}」を追加しました`);
+  }
+
+  function removeLabel(commitId: string, label: string) {
+    return editCommit(commitId, ["label", commitId, "--delete", label], `ラベル「${label}」を外しました`);
+  }
+
+  function createTag(commitId: string, name: string, comment: string) {
+    const args = ["tag", name, commitId];
+    if (comment.trim()) args.push("--comment", comment);
+    return editCommit(commitId, args, `タグ ${name} を付けました`);
+  }
+
+  function setTagComment(commitId: string, name: string, comment: string) {
+    return editCommit(commitId, ["tag", name, "--set-comment", comment], `タグ ${name} のコメントを変更しました`);
+  }
+
+  function deleteTag(commitId: string, name: string) {
+    if (!projectDir || operationActive.current) return;
+    void confirmDialog(`タグ ${name} を削除します。スナップショットは削除されません。続行しますか？`, {
+      title: "タグを削除",
+      kind: "warning",
+      okLabel: "削除",
+      cancelLabel: "キャンセル",
+    }).then((accepted) => {
+      if (accepted) void editCommit(commitId, ["tag", "--delete", name], `タグ ${name} を削除しました`);
+    });
   }
 
   function setCommitThumbnail(commitId: string) {
@@ -452,6 +544,7 @@ function App() {
   const changes = status?.changes ?? [];
   const currentCommit = graph.current_commit;
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
+  const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
 
   function sidePanel() {
@@ -460,7 +553,17 @@ function App() {
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onExport={exportFiles} onClose={closeSelection} />;
+      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onExport={exportFiles} onClose={closeSelection} annotations={{
+        onSaveNote: saveNote,
+        onAddLabel: addLabel,
+        onRemoveLabel: removeLabel,
+        onCreateTag: createTag,
+        onSetTagComment: (name, comment) => setTagComment(commitDetail.id, name, comment),
+        onDeleteTag: (name) => deleteTag(commitDetail.id, name),
+      }} />;
+    }
+    if (selectedBranch) {
+      return <BranchPanel branch={selectedBranch} tip={graph.commits.find((commit) => commit.id === selectedBranch.commit_id)} busy={busy} onRename={renameBranch} onSetComment={setBranchComment} onDelete={deleteBranch} onOpenTip={selectCommit} onClose={closeSelection} />;
     }
     if (selectedBud) {
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
@@ -488,7 +591,7 @@ function App() {
           onForget={forgetRecentProject}
           onChoose={chooseProject}
         />
-        {status && <span className="chip" aria-label="現在のブランチ">{status.branch}</span>}
+        {status && <button className={`chip chip-button${selection?.kind === "branch" && selection.id === status.branch_id ? " pressed" : ""}`} aria-label="現在のブランチ" title="ブランチの詳細を開く" onClick={() => selectBranch(status.branch_id)} disabled={busy}>{status.branch}</button>}
         {status && (
           <span className={`chip${changes.length ? " unsaved" : ""}`} aria-label="保存状態">
             {changes.length ? `未保存の変更 ${changes.length}` : "保存済み"}
@@ -559,7 +662,7 @@ function App() {
         <main className="workspace">
           <section className="map-area" aria-label="スナップショット">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
-            <SproutMap graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectUnsaved={selectUnsaved} />
+            <SproutMap graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
           </section>
           <aside className="detail-panel">{sidePanel()}</aside>
         </main>

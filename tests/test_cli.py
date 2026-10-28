@@ -208,6 +208,41 @@ def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch)
     assert "first-draft" not in invoke(["tag"], project, monkeypatch).stdout
 
 
+def test_tag_cli_json_and_comment_editing(tmp_path: Path, monkeypatch) -> None:
+    repo = Repository.init(tmp_path / "project")
+    asset = repo.root / "asset.bin"
+    asset.write_bytes(b"v1")
+    repo.track([asset])
+    commit = repo.commit("first").commit_id
+
+    def run(args: list[str]):
+        return invoke(args, repo.root, monkeypatch)
+
+    created = run(["tag", "提出", commit, "-m", "初稿", "--json"])
+    assert created.exit_code == 0 and created.stderr == ""
+    payload = json.loads(created.stdout)
+    assert payload == {"name": "提出", "commit_id": commit, "comment": "初稿", "created_at": payload["created_at"]}
+    assert json.loads(run(["tag", "--json"]).stdout) == [payload]
+
+    edited = run(["tag", "提出", "--set-comment", "  最終版  ", "--json"])
+    assert edited.exit_code == 0
+    assert json.loads(edited.stdout) == {**payload, "comment": "最終版"}
+    assert run(["tag", "提出", "--set-comment", ""]).stdout == "Updated comment for tag 提出\n"
+    assert repo.tags() == [("提出", commit, "", payload["created_at"])]
+
+    unknown = run(["tag", "missing", "--set-comment", "x", "--json"])
+    assert unknown.exit_code != 0
+    assert isinstance(unknown.exception, SproutError)
+    assert str(unknown.exception) == "unknown tag: missing"
+    for args in (["tag", "--set-comment", "x"], ["tag", "提出", commit, "--set-comment", "x"], ["tag", "--delete", "提出", "--set-comment", "x"]):
+        assert isinstance(run(args).exception, SproutError)
+
+    deleted = run(["tag", "--delete", "提出", "--json"])
+    assert json.loads(deleted.stdout) == {"name": "提出", "deleted": True}
+    assert json.loads(run(["tag", "--json"]).stdout) == []
+    assert repo.manifest(commit)["asset.bin"].size == 2
+
+
 def test_track_and_untrack_warn_when_nothing_matches(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

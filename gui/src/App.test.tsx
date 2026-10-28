@@ -325,7 +325,6 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await screen.findByRole("region", { name: "選択中のスナップショット" });
-    // The fixture graph has no recorded position, so the single commit is the current one.
     expect(screen.getByRole("button", { name: "この芽にいます" })).toBeTruthy();
   });
 
@@ -495,7 +494,8 @@ describe("Sprout GUI operations", () => {
     await screen.findByRole("heading", { name: "sprout-project" });
 
     expect(screen.getByText("削除済みブランチ由来: archived")).toBeTruthy();
-    expect(screen.getByText("main, alternate（現在のブランチ）")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ブランチ main" }).textContent).toBe("main（現在のブランチ）");
+    expect(screen.getByRole("button", { name: "ブランチ alternate" }).textContent).toBe("alternate");
     expect(screen.getByText("いまここ")).toBeTruthy();
     expect(await screen.findByRole("img", { name: "Tree tipのサムネイル" })).toBeTruthy();
     expect(document.querySelector("video, audio")).toBeNull();
@@ -716,5 +716,233 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "このつぼみに戻る" }));
     expect(await screen.findByText("つぼみの変更に戻りました")).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "--restore", rootBud.id], "");
+  });
+
+  describe("snapshot notes, labels, and tags", () => {
+    const detailOf = (overrides: Partial<CommitLogEntry> = {}) => ({ ...commitEntry, ...overrides, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    const graphWith = (overrides: Partial<CommitLogEntry>, tags: CommitGraph["tags"] = []): CommitGraph => ({
+      current_commit: commitEntry.id,
+      at_branch_tip: true,
+      commits: [{ ...commitEntry, ...overrides, branch_id: "main", branch_name: "main", attachments: [] }],
+      branches: mainBranch,
+      tags,
+      buds: [],
+    });
+
+    /** Queue the CLI reply for an edit plus the refreshed workspace and detail. */
+    function mockEdit(reply: unknown, overrides: Partial<CommitLogEntry>, tags: CommitGraph["tags"] = []) {
+      mocks.runSprout.mockResolvedValueOnce(reply);
+      mockWorkspace(cleanStatus, [], mainBranch, graphWith(overrides, tags));
+      mocks.runSprout.mockResolvedValueOnce(detailOf(overrides));
+    }
+
+    async function openDetail(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      await openWorkspace(user);
+      mocks.runSprout.mockResolvedValueOnce(detailOf());
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      await screen.findByRole("region", { name: "選択中のスナップショット" });
+    }
+
+    const id = commitEntry.id;
+    const sentArgs = () => mocks.runSprout.mock.calls.map((call) => call[1]);
+
+    it("writes, keeps on refusal, and deletes a note", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      const memo = within(screen.getByRole("region", { name: "メモ" }));
+      expect(memo.getByText("メモはありません")).toBeTruthy();
+
+      await user.click(memo.getByRole("button", { name: "メモを書く" }));
+      await user.type(memo.getByRole("textbox", { name: "メモを編集" }), "x".repeat(5));
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "note exceeds 20000 character limit", details: {} });
+      await user.click(memo.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("note exceeds 20000 character limit")).toBeTruthy();
+      expect((memo.getByRole("textbox", { name: "メモを編集" }) as HTMLTextAreaElement).value).toBe("xxxxx");
+
+      await user.clear(memo.getByRole("textbox", { name: "メモを編集" }));
+      await user.type(memo.getByRole("textbox", { name: "メモを編集" }), "色味を確認");
+      mockEdit({ commit_id: id, note: "色味を確認", note_updated_at: "now", labels: [] }, { note: "色味を確認", note_updated_at: "now" });
+      await user.click(memo.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText(/のメモを保存しました/)).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["note", id, "色味を確認"]);
+      expect(memo.getByText("色味を確認")).toBeTruthy();
+      expect(memo.queryByRole("textbox")).toBeNull();
+
+      await user.click(memo.getByRole("button", { name: "メモを編集" }));
+      await user.clear(memo.getByRole("textbox", { name: "メモを編集" }));
+      mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: [] }, {});
+      await user.click(memo.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText(/のメモを削除しました/)).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["note", id, "--delete"]);
+      expect(memo.getByText("メモはありません")).toBeTruthy();
+    });
+
+    it("adds and removes labels and keeps a refused label in the input", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      const labels = within(screen.getByRole("region", { name: "ラベル" }));
+      expect(labels.getByRole("button", { name: "追加" }).hasAttribute("disabled")).toBe(true);
+
+      await user.type(labels.getByRole("textbox", { name: "追加するラベル" }), "a".repeat(65));
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "label exceeds 64 character limit", details: {} });
+      await user.click(labels.getByRole("button", { name: "追加" }));
+      expect(await screen.findByText("label exceeds 64 character limit")).toBeTruthy();
+      expect((labels.getByRole("textbox", { name: "追加するラベル" }) as HTMLInputElement).value).toHaveLength(65);
+
+      await user.clear(labels.getByRole("textbox", { name: "追加するラベル" }));
+      await user.type(labels.getByRole("textbox", { name: "追加するラベル" }), "承認済み");
+      mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: ["承認済み"] }, { labels: ["承認済み"] });
+      await user.click(labels.getByRole("button", { name: "追加" }));
+      expect(await screen.findByText("ラベル「承認済み」を追加しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["label", id, "承認済み"]);
+      expect((labels.getByRole("textbox", { name: "追加するラベル" }) as HTMLInputElement).value).toBe("");
+
+      mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: [] }, {});
+      await user.click(labels.getByRole("button", { name: "ラベル「承認済み」を外す" }));
+      expect(await screen.findByText("ラベル「承認済み」を外しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["label", id, "--delete", "承認済み"]);
+      expect(labels.getByText("ラベルはありません")).toBeTruthy();
+    });
+
+    it("creates, comments on, and deletes tags after confirmation", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      const tagRegion = () => within(screen.getByRole("region", { name: "タグ" }));
+      const tag = { name: "提出版", commit_id: id, comment: "初稿", created_at: "2026-10-29T00:00:00+00:00" };
+
+      await user.type(tagRegion().getByRole("textbox", { name: "新しいタグの名前" }), "提出版");
+      await user.type(tagRegion().getByRole("textbox", { name: "新しいタグのコメント" }), "初稿");
+      mockEdit(tag, {}, [tag]);
+      await user.click(tagRegion().getByRole("button", { name: "タグを付ける" }));
+      expect(await screen.findByText("タグ 提出版 を付けました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["tag", "提出版", id, "--comment", "初稿"]);
+      expect(tagRegion().getByText("#提出版")).toBeTruthy();
+      expect(tagRegion().getByText("初稿")).toBeTruthy();
+      expect(screen.getByText("#提出版", { selector: "text" })).toBeTruthy();
+
+      await user.click(tagRegion().getByRole("button", { name: "タグ「提出版」のコメントを編集" }));
+      const comment = tagRegion().getByRole("textbox", { name: "タグ「提出版」のコメント" });
+      await user.clear(comment);
+      await user.type(comment, "最終版");
+      mockEdit({ ...tag, comment: "最終版" }, {}, [{ ...tag, comment: "最終版" }]);
+      await user.click(tagRegion().getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("タグ 提出版 のコメントを変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["tag", "提出版", "--set-comment", "最終版"]);
+      expect(tagRegion().getByText("最終版")).toBeTruthy();
+
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(tagRegion().getByRole("button", { name: "タグ「提出版」を削除" }));
+      expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("スナップショットは削除されません"), expect.objectContaining({ kind: "warning" }));
+      expect(sentArgs().some((args) => args[0] === "tag" && args.includes("--delete"))).toBe(false);
+
+      mocks.confirm.mockResolvedValueOnce(true);
+      mockEdit({ name: "提出版", deleted: true }, {});
+      await user.click(tagRegion().getByRole("button", { name: "タグ「提出版」を削除" }));
+      expect(await screen.findByText("タグ 提出版 を削除しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["tag", "--delete", "提出版"]);
+      expect(tagRegion().getByText("タグはありません")).toBeTruthy();
+    });
+  });
+
+  describe("branch panel", () => {
+    const rootId = "d".repeat(64);
+    const tipId = "e".repeat(64);
+    const branchGraph = (side: Partial<BranchInfo> | null): CommitGraph => ({
+      current_commit: tipId,
+      at_branch_tip: true,
+      commits: [
+        { ...commitEntry, id: tipId, parent_id: rootId, branch_id: "main-id", branch_name: "main", message: "Main tip", attachments: [] },
+        { ...commitEntry, id: rootId, parent_id: null, branch_id: "side-id", branch_name: "side", message: "Side root", attachments: [] },
+      ],
+      branches: [
+        { id: "main-id", name: "main", commit_id: tipId, comment: "", current: true },
+        ...(side ? [{ id: "side-id", name: "side", commit_id: rootId, comment: "別案", current: false, ...side }] : []),
+      ],
+      tags: [],
+      buds: [],
+    });
+    const status = { ...cleanStatus, branch_id: "main-id", current_commit: tipId };
+    const sentArgs = () => mocks.runSprout.mock.calls.map((call) => call[1]);
+
+    async function openMap(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      mocks.open.mockResolvedValueOnce(project);
+      const graph = branchGraph({});
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+      await screen.findByRole("heading", { name: "sprout-project" });
+    }
+
+    it("renames and comments on a branch chosen from the map and keeps it selected by ID", async () => {
+      const user = userEvent.setup();
+      await openMap(user);
+      await user.click(screen.getByRole("button", { name: "ブランチ side" }));
+      const panel = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(panel.getByRole("heading", { name: "side" })).toBeTruthy();
+      expect(panel.getByText("別案")).toBeTruthy();
+      expect(panel.getByRole("button", { name: `Side root（${rootId.slice(0, 12)}）` })).toBeTruthy();
+
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      const nameInput = panel.getByRole("textbox", { name: "新しい名前" });
+      await user.clear(nameInput);
+      await user.type(nameInput, "main");
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "branch already exists: main", details: {} });
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      expect(await screen.findByText("branch already exists: main")).toBeTruthy();
+      expect((panel.getByRole("textbox", { name: "新しい名前" }) as HTMLInputElement).value).toBe("main");
+
+      await user.clear(panel.getByRole("textbox", { name: "新しい名前" }));
+      await user.type(panel.getByRole("textbox", { name: "新しい名前" }), "idea");
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "idea", previous_name: "side" });
+      let graph = branchGraph({ name: "idea" });
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(panel.getByRole("button", { name: "名前を変更" }));
+      expect(await screen.findByText("ブランチ side の名前を idea に変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "side", "--rename", "idea"]);
+      const renamed = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(renamed.getByRole("heading", { name: "idea" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "ブランチ idea" }).getAttribute("aria-pressed")).toBe("true");
+
+      await user.click(renamed.getByRole("button", { name: "コメントを編集" }));
+      await user.clear(renamed.getByRole("textbox", { name: "ブランチのコメントを編集" }));
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "idea", comment: "" });
+      graph = branchGraph({ name: "idea", comment: "" });
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(renamed.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("ブランチ idea のコメントを変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "idea", "--set-comment", ""]);
+      expect(renamed.getByText("コメントはありません")).toBeTruthy();
+
+      mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_id: "side-id", branch_name: "side", message: "Side root", thumbnail: null, attachments: [], files: [] });
+      await user.click(renamed.getByRole("button", { name: `Side root（${rootId.slice(0, 12)}）` }));
+      expect(await screen.findByText("idea（作成時: side）", { selector: "dd" })).toBeTruthy();
+    });
+
+    it("protects the current branch and deletes another after confirmation", async () => {
+      const user = userEvent.setup();
+      await openMap(user);
+      await user.click(screen.getByRole("button", { name: "現在のブランチ" }));
+      const current = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      expect(current.getByText("現在のブランチ")).toBeTruthy();
+      expect(current.getByRole("button", { name: "ブランチを削除" }).hasAttribute("disabled")).toBe(true);
+      expect(current.getByText(/現在のブランチは削除できません/)).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "ブランチ side" }));
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(screen.getByRole("button", { name: "ブランチを削除" }));
+      expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("「削除済みブランチ由来」として残ります"), expect.objectContaining({ kind: "warning" }));
+      expect(sentArgs().some((args) => args.includes("--delete"))).toBe(false);
+
+      mocks.confirm.mockResolvedValueOnce(true);
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "side", deleted: true });
+      const graph = branchGraph(null);
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(screen.getByRole("button", { name: "ブランチを削除" }));
+      expect(await screen.findByText("ブランチ side を削除しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "--delete", "side"]);
+      expect(screen.queryByRole("region", { name: "選択中のブランチ" })).toBeNull();
+      expect(screen.getByText("削除済みブランチ由来: side")).toBeTruthy();
+    });
   });
 });
