@@ -521,16 +521,16 @@ sprout commit -m "first" --json
 sprout switch ideas --json
 ```
 
-更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`name`と`previous_name`、削除は`name`と`deleted`、コメント更新は`name`と`comment`を返します。
+更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。
 
 ```text
 init:       {"root": string}
 track:      {"paths": [string]}
 untrack:    {"paths": [string]}
-commit:     {"id": string, "branch": string, "created_branch": boolean, "message": string, "removed_paths": [string]}
+commit:     {"id": string, "branch": string, "branch_id": string, "created_branch": boolean, "message": string, "removed_paths": [string]}
 message:    {"commit_id": string, "message": string}
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
-switch:     {"branch": string, "commit_id": string | null}
+switch:     {"branch": string, "branch_id": string, "commit_id": string | null}
 export:     {"commit_id": string, "output": string, "paths": [string]}
 restore:    {"commit_id": string, "paths": [string] | null}
 
@@ -552,6 +552,7 @@ prune:
 status:
 {
   "branch": string,
+  "branch_id": string,
   "current_commit": string | null,
   "at_branch_tip": boolean,
   "changes": [{"state": string, "path": string}],
@@ -562,6 +563,7 @@ status:
 status PATH:
 {
   "branch": string,
+  "branch_id": string,
   "current_commit": string | null,
   "at_branch_tip": boolean,
   "paths": [{"path": string, "tracked": boolean}]
@@ -631,6 +633,7 @@ go --json:
 {
   "current_commit": string,
   "branch": string,
+  "branch_id": string,
   "at_branch_tip": boolean,
   "bud": Bud | null,
   "changes": [{"state": string, "path": string}]

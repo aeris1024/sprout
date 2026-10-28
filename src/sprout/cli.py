@@ -545,9 +545,14 @@ def status(
 ) -> None:
     """Show changes or whether specific paths are tracked."""
     repository = repo()
-    branch_name = repository.head_branch()
-    current_commit, at_branch_tip = repository.current_position()
-    position = {"current_commit": current_commit, "at_branch_tip": at_branch_tip}
+    head = repository.head_position()
+    branch_name = head.branch
+    current_commit, at_branch_tip = head.current_commit, head.at_branch_tip
+    position = {
+        "branch_id": head.branch_id,
+        "current_commit": current_commit,
+        "at_branch_tip": at_branch_tip,
+    }
     if paths:
         if tracked or untracked:
             raise SproutError("path status cannot be combined with --tracked or --untracked")
@@ -623,6 +628,7 @@ def commit_command(
             {
                 "id": result.commit_id,
                 "branch": result.branch,
+                "branch_id": result.branch_id,
                 "created_branch": result.created_branch,
                 "message": message.strip(),
                 "removed_paths": list(result.removed_paths),
@@ -1056,9 +1062,9 @@ def branch(
             or switch
         ):
             raise SproutError("--delete cannot be combined with other branch operations")
-        repository.delete_branch(delete)
+        branch_id = repository.delete_branch(delete)
         if json_output:
-            _echo_json({"name": delete, "deleted": True})
+            _echo_json({"id": branch_id, "name": delete, "deleted": True})
             return
         typer.echo(f"Deleted branch {delete}")
         return
@@ -1067,9 +1073,9 @@ def branch(
             raise SproutError("a branch name is required with --rename")
         if start_point is not None or comment or set_comment is not None or switch:
             raise SproutError("--rename cannot be combined with comment options")
-        repository.rename_branch(name, rename)
+        branch_id = repository.rename_branch(name, rename)
         if json_output:
-            _echo_json({"name": rename, "previous_name": name})
+            _echo_json({"id": branch_id, "name": rename, "previous_name": name})
             return
         typer.echo(f"Renamed branch {name} to {rename}")
         return
@@ -1078,9 +1084,9 @@ def branch(
             raise SproutError("a branch name is required with --set-comment")
         if start_point is not None or comment or switch:
             raise SproutError("--comment and --set-comment cannot be used together")
-        repository.set_branch_comment(name, set_comment)
+        branch_id = repository.set_branch_comment(name, set_comment)
         if json_output:
-            _echo_json({"name": name, "comment": set_comment.strip()})
+            _echo_json({"id": branch_id, "name": name, "comment": set_comment.strip()})
             return
         typer.echo(f"Updated comment for branch {name}")
         return
@@ -1092,6 +1098,7 @@ def branch(
         if json_output:
             _echo_json(
                 {
+                    "id": repository.branch_id(name),
                     "name": name,
                     "commit_id": commit_id,
                     "comment": comment.strip(),
@@ -1248,6 +1255,7 @@ def go(
             {
                 "current_commit": result.commit_id,
                 "branch": result.branch,
+                "branch_id": result.branch_id,
                 "at_branch_tip": result.at_branch_tip,
                 "bud": _bud_json(result.bud) if result.bud is not None else None,
                 "changes": [
@@ -1283,7 +1291,13 @@ def switch_command(
     with _show_progress(repository, enabled=not json_output):
         commit_id = repository.switch(branch_name, discard=discard)
     if json_output:
-        _echo_json({"branch": branch_name, "commit_id": commit_id})
+        _echo_json(
+            {
+                "branch": branch_name,
+                "branch_id": repository.branch_id(),
+                "commit_id": commit_id,
+            }
+        )
         return
     typer.echo(f"Switched to branch {branch_name}")
 

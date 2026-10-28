@@ -48,6 +48,7 @@ def test_serve_answers_reads_and_writes_like_the_cli(tmp_path: Path, monkeypatch
     assert (commit["branch"], commit["message"], commit["created_branch"]) == ("main", "最初", False)
     assert responses[4]["result"] == {
         "branch": "main",
+        "branch_id": commit["branch_id"],
         "current_commit": commit["id"],
         "at_branch_tip": True,
         "changes": [],

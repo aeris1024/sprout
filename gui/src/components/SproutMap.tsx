@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
-import type { CommitAttachment, CommitGraph } from "../lib/sprout";
+import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
 
 const STATIC_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -75,6 +75,12 @@ function LeafImage({ leaf, attachment, projectDir, sproutProgram }: LeafImagePro
   );
 }
 
+function budLabel(bud: Bud): string {
+  return bud.base_commit_id
+    ? `つぼみ（${bud.changes.length}件の変更）`
+    : `最初の保存前のつぼみ（${bud.changes.length}件の変更）`;
+}
+
 export type MapSelection = { kind: "commit" | "bud"; id: string } | { kind: "unsaved" } | null;
 
 interface SproutMapProps {
@@ -87,8 +93,6 @@ interface SproutMapProps {
   onSelectBud: (budId: string) => void;
   onSelectUnsaved: () => void;
 }
-
-const BUD_WIDTH = 84;
 
 export default function SproutMap({
   graph,
@@ -138,6 +142,21 @@ export default function SproutMap({
       <div className="map-empty">
         <p className="eyebrow">NO SNAPSHOTS YET</p>
         <p>最初の保存をすると、ここに芽が出ます。</p>
+        {layout.rootBuds.length > 0 && (
+          <div className="root-bud-list" aria-label="最初の保存前のつぼみ">
+            {layout.rootBuds.map(({ bud }) => (
+              <button
+                key={bud.id}
+                className={`bud-button${selection?.kind === "bud" && selection.id === bud.id ? " selected" : ""}`}
+                aria-label={budLabel(bud)}
+                aria-pressed={selection?.kind === "bud" && selection.id === bud.id}
+                onClick={() => onSelectBud(bud.id)}
+              >
+                {`つぼみ ${bud.changes.length}`}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -147,6 +166,25 @@ export default function SproutMap({
       event.preventDefault();
       action();
     }
+  }
+
+  function budNode(bud: Bud, x: number, y: number) {
+    const selected = selection?.kind === "bud" && selection.id === bud.id;
+    return (
+      <g
+        key={bud.id}
+        className={`bud${selected ? " selected" : ""}`}
+        role="button"
+        tabIndex={0}
+        aria-label={budLabel(bud)}
+        aria-pressed={selected}
+        onClick={() => onSelectBud(bud.id)}
+        onKeyDown={(event) => onKey(event, () => onSelectBud(bud.id))}
+      >
+        <rect x={x} y={y} width={MAP.budWidth} height={MAP.budHeight} />
+        <text x={x + MAP.budWidth / 2} y={y + 15} textAnchor="middle">{`つぼみ ${bud.changes.length}`}</text>
+      </g>
+    );
   }
 
   return (
@@ -233,27 +271,11 @@ export default function SproutMap({
             );
           })}
           {layout.leaves.flatMap((leaf) =>
-            leaf.buds.map((bud, index) => {
-              const x = leaf.side < 0 ? leaf.leafX + MAP.leafWidth - BUD_WIDTH : leaf.leafX;
-              const y = leaf.y + MAP.leafHeight / 2 + 24 + index * 28;
-              const selected = selection?.kind === "bud" && selection.id === bud.id;
-              return (
-                <g
-                  key={bud.id}
-                  className={`bud${selected ? " selected" : ""}`}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`つぼみ（${bud.changes.length}件の変更）`}
-                  aria-pressed={selected}
-                  onClick={() => onSelectBud(bud.id)}
-                  onKeyDown={(event) => onKey(event, () => onSelectBud(bud.id))}
-                >
-                  <rect x={x} y={y} width={BUD_WIDTH} height={22} />
-                  <text x={x + BUD_WIDTH / 2} y={y + 15} textAnchor="middle">{`つぼみ ${bud.changes.length}`}</text>
-                </g>
-              );
-            }),
+            leaf.buds.map((bud, index) =>
+              budNode(bud, leaf.side < 0 ? leaf.leafX + MAP.leafWidth - MAP.budWidth : leaf.leafX, leaf.y + MAP.leafHeight / 2 + 24 + index * 28),
+            ),
           )}
+          {layout.rootBuds.map(({ bud, x, y }) => budNode(bud, x, y))}
           {currentLeaf && unsavedCount > 0 && (
             <g
               className={`unsaved-bud${selection?.kind === "unsaved" ? " selected" : ""}`}

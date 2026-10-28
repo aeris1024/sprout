@@ -25,16 +25,11 @@ import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } f
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 
-const emptyGraph: CommitGraph = { commits: [], branches: [], tags: [] };
+const emptyGraph: CommitGraph = { current_commit: null, at_branch_tip: true, commits: [], branches: [], tags: [], buds: [] };
 const UNCHANGED_NOTE = "作業フォルダは変更していません。";
 
 function shortId(value: string | null): string {
   return value ? value.slice(0, 12) : "-";
-}
-
-function currentCommitOf(graph: CommitGraph): string | null {
-  if (graph.current_commit !== undefined) return graph.current_commit ?? null;
-  return graph.branches.find((branch) => branch.current)?.commit_id ?? null;
 }
 
 /** Report a refused move with its reason and path, and that nothing was changed. */
@@ -92,7 +87,7 @@ function App() {
     setGraph(nextGraph);
     setSelection((current) => {
       if (current?.kind === "commit" && !nextGraph.commits.some((entry) => entry.id === current.id)) return null;
-      if (current?.kind === "bud" && !(nextGraph.buds ?? []).some((bud) => bud.id === current.id)) return null;
+      if (current?.kind === "bud" && !nextGraph.buds.some((bud) => bud.id === current.id)) return null;
       return current;
     });
   }
@@ -337,6 +332,7 @@ function App() {
     setStatus((current) => current && {
       ...current,
       branch: result.branch,
+      branch_id: result.branch_id,
       current_commit: result.current_commit,
       at_branch_tip: result.at_branch_tip,
       changes: result.changes,
@@ -345,8 +341,8 @@ function App() {
       ...current,
       current_commit: result.current_commit,
       at_branch_tip: result.at_branch_tip,
-      branches: current.branches.map((branch) => ({ ...branch, current: branch.name === result.branch })),
-      buds: result.bud ? [result.bud, ...(current.buds ?? [])] : current.buds,
+      branches: current.branches.map((branch) => ({ ...branch, current: branch.id === result.branch_id })),
+      buds: result.bud ? [result.bud, ...current.buds] : current.buds,
     }));
   }
 
@@ -454,8 +450,8 @@ function App() {
   const tracked = status?.tracked ?? [];
   const untracked = status?.untracked ?? [];
   const changes = status?.changes ?? [];
-  const currentCommit = currentCommitOf(graph);
-  const selectedBud = selection?.kind === "bud" ? (graph.buds ?? []).find((bud) => bud.id === selection.id) : undefined;
+  const currentCommit = graph.current_commit;
+  const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
 
   function sidePanel() {
@@ -468,7 +464,7 @@ function App() {
     }
     if (selectedBud) {
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
-      return <BudPanel bud={selectedBud} baseMessage={base?.message ?? "最初の保存前"} busy={busy} onRestore={restoreBud} onDrop={dropBud} onClose={closeSelection} />;
+      return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onClose={closeSelection} />;
     }
     return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => setThumbnailPath("")} onSave={commitChanges} />;
   }

@@ -1246,8 +1246,10 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert "作品/絵.psd" in status_result.stdout
     assert "\\u" not in status_result.stdout
     assert "On branch" not in status_result.stdout
+    main_id = Repository.discover(project).branch_id("main")
     assert json.loads(status_result.stdout) == {
         "branch": "main",
+        "branch_id": main_id,
         "current_commit": None,
         "at_branch_tip": True,
         "changes": [{"state": "added", "path": "作品/絵.psd"}],
@@ -1259,6 +1261,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert path_status.exit_code == 0
     assert json.loads(path_status.stdout) == {
         "branch": "main",
+        "branch_id": main_id,
         "current_commit": None,
         "at_branch_tip": True,
         "paths": [{"path": "作品/絵.psd", "tracked": True}],
@@ -1370,9 +1373,11 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     assert committed.exit_code == 0
     commit_payload = json.loads(committed.stdout)
     commit_id = commit_payload["id"]
+    main_id = Repository.discover(project).branch_id("main")
     assert commit_payload == {
         "id": commit_id,
         "branch": "main",
+        "branch_id": main_id,
         "created_branch": False,
         "message": "日本語コミット",
         "removed_paths": [],
@@ -1410,7 +1415,10 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
         monkeypatch,
     )
     assert created.exit_code == 0
+    idea_id = Repository.discover(project).branch_id("案")
+    assert idea_id != main_id
     assert json.loads(created.stdout) == {
+        "id": idea_id,
         "name": "案",
         "commit_id": commit_id,
         "comment": "検討中",
@@ -1421,6 +1429,7 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     assert switched.exit_code == 0
     assert json.loads(switched.stdout) == {
         "branch": "案",
+        "branch_id": idea_id,
         "commit_id": commit_id,
     }
 
@@ -1657,3 +1666,43 @@ def test_json_exposes_branch_identity_and_ordered_attachments(tmp_path, monkeypa
     assert graph["commits"][0]["attachments"] == detail["attachments"]
     text = invoke(["show", commit], repo.root, monkeypatch).stdout
     assert text.index("first [preview:1]") < text.index("second [preview:8]")
+
+
+def test_json_reports_branch_identity_for_position_and_branch_edits(tmp_path, monkeypatch):
+    repo = Repository.init(tmp_path / "project")
+    asset = repo.root / "asset.bin"
+    asset.write_bytes(b"v1")
+    repo.track([asset])
+    first = repo.commit("first").commit_id
+    main_id = repo.branch_id("main")
+
+    def run(args: list[str]) -> dict:
+        result = invoke([*args, "--json"], repo.root, monkeypatch)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    side = run(["branch", "side", first, "-m", "draft"])
+    side_id = side["id"]
+    assert side_id != main_id
+    assert run(["branch", "--set-comment", "kept", "side"]) == {
+        "id": side_id, "name": "side", "comment": "kept"
+    }
+    assert run(["branch", "side", "--rename", "idea"]) == {
+        "id": side_id, "name": "idea", "previous_name": "side"
+    }
+    switched = run(["switch", "idea"])
+    assert (switched["branch"], switched["branch_id"]) == ("idea", side_id)
+    assert run(["status"])["branch_id"] == side_id
+
+    asset.write_bytes(b"v2")
+    committed = run(["commit", "-m", "second"])
+    assert (committed["branch"], committed["branch_id"]) == ("idea", side_id)
+
+    moved = run(["go", "main"])
+    assert (moved["branch"], moved["branch_id"]) == ("main", main_id)
+    assert run(["branch", "--delete", "idea"]) == {"id": side_id, "name": "idea", "deleted": True}
+    recreated = run(["branch", "idea", first])
+    assert recreated["id"] not in (side_id, main_id)
+    graph = run(["tree"])
+    assert {c["branch_id"] for c in graph["commits"] if c["message"] == "second"} == {side_id}
+    assert side_id not in {branch["id"] for branch in graph["branches"]}

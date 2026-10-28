@@ -7,8 +7,10 @@ export interface StatusChange {
 
 export interface SproutStatus {
   branch: string;
-  current_commit?: string | null;
-  at_branch_tip?: boolean;
+  branch_id: string;
+  /** Snapshot the working tree was last placed on; null before the first commit. */
+  current_commit: string | null;
+  at_branch_tip: boolean;
   changes: StatusChange[];
   tracked?: string[];
   untracked?: string[];
@@ -21,6 +23,7 @@ export interface PathOperationResult {
 export interface CommitResult {
   id: string;
   branch: string;
+  branch_id: string;
   created_branch?: boolean;
   message: string;
   removed_paths: string[];
@@ -107,17 +110,19 @@ export interface Bud {
 }
 
 export interface CommitGraph {
-  current_commit?: string | null;
-  at_branch_tip?: boolean;
+  current_commit: string | null;
+  at_branch_tip: boolean;
   commits: GraphCommit[];
+  /** Live branches only; deleted branches remain identifiable through commit and bud branch IDs. */
   branches: BranchInfo[];
   tags: GraphTag[];
-  buds?: Bud[];
+  buds: Bud[];
 }
 
 export interface GoResult {
   current_commit: string;
   branch: string;
+  branch_id: string;
   at_branch_tip: boolean;
   bud: Bud | null;
   changes: StatusChange[];
@@ -165,6 +170,24 @@ export function normalizeCliError(error: unknown): SproutCliError {
 
 export function isUninitializedProject(error: SproutCliError): boolean {
   return error.message.includes("not inside a Sprout project");
+}
+
+export interface BranchIdentity {
+  /** Name the branch had when the commit or bud was created. */
+  createdName: string;
+  /** Current name of the same branch, or null when it has been deleted. */
+  currentName: string | null;
+}
+
+/** Resolve a recorded branch by ID so renamed and deleted branches are not confused with reused names. */
+export function branchIdentity(branchId: string, createdName: string, branches: BranchInfo[]): BranchIdentity {
+  return { createdName, currentName: branches.find((branch) => branch.id === branchId)?.name ?? null };
+}
+
+export function branchIdentityLabel({ createdName, currentName }: BranchIdentity): string {
+  if (currentName === null) return `${createdName}（削除済み）`;
+  if (currentName !== createdName) return `${currentName}（作成時: ${createdName}）`;
+  return currentName;
 }
 
 export function canDiscardChanges(error: SproutCliError): boolean {
