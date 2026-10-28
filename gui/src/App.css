@@ -175,6 +175,8 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .branch-label text { fill: var(--muted); font-size: 13px; }
 .branch-label line { stroke: var(--line); stroke-width: 2; stroke-dasharray: 2 5; }
 .branch-name { cursor: pointer; outline: none; }
+.branch-label .sprout-tip { fill: var(--paper); stroke: var(--line); stroke-width: 2; }
+.branch-label.side line { stroke-dasharray: 3 4; }
 .branch-name.current text { fill: var(--current); font-weight: 700; }
 .branch-name:hover text, .branch-name.selected text, .branch-name:focus-visible text { text-decoration: underline; fill: var(--ink); }
 .leaf { cursor: pointer; outline: none; }

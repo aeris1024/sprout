@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAP, lanePath, layoutSproutMap, tagChip } from "./sproutMap";
+import { MAP, SIDE_LABEL, branchLabelText, estimateChipText, lanePath, layoutSproutMap, tagChip } from "./sproutMap";
 import type { BranchInfo, CommitGraph, GraphCommit, GraphTag } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {
@@ -166,6 +166,45 @@ describe("layoutSproutMap", () => {
     const shortened = tagChip("クライアント最終確認済み版", wide);
     expect(shortened.text).toBe("#クライア…");
     expect(shortened.width).toBe(6 * 14 + 12);
+  });
+
+  it("puts names of branches whose tip is partway up a stem beside it, away from the leaf", () => {
+    const chain = [commit("c", "b", "main", 2), commit("b", "a", "main", 1), commit("a", null, "main", 0)];
+    const branch = (id: string, tip: string, current = false) => ({ id, name: id, commit_id: tip, comment: "", current });
+    const layout = layoutSproutMap(tree(chain, [branch("main", "c"), branch("分岐2", "b", true), branch("copy", "b"), branch("early", "a")]));
+    const leaves = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
+    const byNames = Object.fromEntries(layout.labels.map((label) => [label.branches.map((item) => item.name).join(","), label]));
+
+    expect(byNames.main.placement).toBe("top");
+    const mid = byNames["分岐2,copy"];
+    expect(mid).toMatchObject({ placement: "side", x: leaves.b.x, y: leaves.b.y, current: true });
+    // The leaf of b is on the right, so the names sprout to the left and do not cover it.
+    expect(leaves.b.side).toBe(1);
+    expect(mid.placement === "side" && mid.direction).toBe(-1);
+    const early = byNames.early;
+    expect(leaves.a.side).toBe(-1);
+    expect(early.placement === "side" && early.direction).toBe(1);
+  });
+
+  it("makes room for side names at both edges of the map", () => {
+    const chain = [commit("c", "b", "main", 2), commit("b", "a", "main", 1), commit("a", null, "main", 0)];
+    const longName = "とても長い名前の分岐ブランチ";
+    const plain = layoutSproutMap(tree(chain, [{ id: "main", name: "main", commit_id: "c", comment: "", current: true }]));
+    const shifted = layoutSproutMap(tree(chain, [
+      { id: "main", name: "main", commit_id: "c", comment: "", current: false },
+      { id: "left", name: longName, commit_id: "b", comment: "", current: true },
+      { id: "right", name: longName, commit_id: "a", comment: "", current: false },
+    ]));
+    expect(plain.leaves[0].x).toBe(MAP.left);
+    const shift = shifted.leaves[0].x - MAP.left;
+    expect(shift).toBeGreaterThan(0);
+    expect(shifted.lanes[0].x).toBe(MAP.left + shift);
+    const leftLabel = shifted.labels.find((label) => label.branches[0].id === "left")!;
+    const textStart = leftLabel.x - (SIDE_LABEL.stubEnd + SIDE_LABEL.textGap);
+    expect(textStart - estimateChipText(branchLabelText(leftLabel.branches[0])) * SIDE_LABEL.fontScale).toBeGreaterThanOrEqual(SIDE_LABEL.margin - 1);
+    const rightLabel = shifted.labels.find((label) => label.branches[0].id === "right")!;
+    const textEnd = rightLabel.x + SIDE_LABEL.stubEnd + SIDE_LABEL.textGap + estimateChipText(longName) * SIDE_LABEL.fontScale;
+    expect(shifted.width).toBeGreaterThanOrEqual(textEnd);
   });
 
   it("handles hundreds of snapshots", () => {

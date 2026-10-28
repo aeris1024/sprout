@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { LABEL_LINE, MAP, estimateChipText, lanePath, layoutSproutMap, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
+import { LABEL_LINE, MAP, SIDE_LABEL, branchLabelText, estimateChipText, lanePath, layoutSproutMap, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
 
@@ -233,10 +233,24 @@ export default function SproutMap({
             </g>
           ))}
           {layout.labels.map((label) => (
-            <g key={`${label.x}:${label.y}`} className="branch-label">
-              <line x1={label.x} x2={label.x} y1={label.y + 8} y2={label.y + MAP.row - 8} />
+            <g key={`${label.x}:${label.y}`} className={`branch-label ${label.placement}`}>
+              {label.placement === "top" ? (
+                <line x1={label.x} x2={label.x} y1={label.y + 8} y2={label.y + MAP.row - 8} />
+              ) : (
+                <>
+                  <line x1={label.x + label.direction * SIDE_LABEL.stubStart} x2={label.x + label.direction * SIDE_LABEL.stubEnd} y1={label.y} y2={label.y} />
+                  <circle className="sprout-tip" cx={label.x + label.direction * SIDE_LABEL.stubEnd} cy={label.y} r={3.5} />
+                </>
+              )}
               {label.branches.map((branch, index) => {
                 const selected = selection?.kind === "branch" && selection.id === branch.id;
+                const textProps = label.placement === "top"
+                  ? { x: label.x, y: label.y - index * LABEL_LINE, textAnchor: "middle" as const }
+                  : {
+                      x: label.x + label.direction * (SIDE_LABEL.stubEnd + SIDE_LABEL.textGap),
+                      y: label.y + 4 + (index - (label.branches.length - 1) / 2) * LABEL_LINE,
+                      textAnchor: label.direction < 0 ? ("end" as const) : ("start" as const),
+                    };
                 return (
                   <g
                     key={branch.id}
@@ -248,9 +262,7 @@ export default function SproutMap({
                     onClick={() => onSelectBranch(branch.id)}
                     onKeyDown={(event) => onKey(event, () => onSelectBranch(branch.id))}
                   >
-                    <text x={label.x} y={label.y - index * LABEL_LINE} textAnchor="middle">
-                      {branch.current ? `${branch.name}（現在のブランチ）` : branch.name}
-                    </text>
+                    <text {...textProps}>{branchLabelText(branch)}</text>
                   </g>
                 );
               })}
