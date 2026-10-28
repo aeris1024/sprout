@@ -168,7 +168,7 @@ export default function SproutMap({
           <line className="ground" x1={24} x2={layout.width - 24} y1={layout.groundY + 8} y2={layout.groundY + 8} />
           <text className="ground-label" x={32} y={layout.groundY + 28}>はじまり</text>
           {layout.lanes.map((lane, index) => (
-            <g key={lane.name} className={index === 0 ? "stem main" : "stem"}>
+            <g key={lane.id} className={index === 0 ? "stem main" : "stem"}>
               <path d={lanePath(lane, layout.groundY + 8)} />
               {!lane.live && (
                 <text className="lane-label" x={lane.x} y={lane.topY - MAP.row + 12} textAnchor="middle">

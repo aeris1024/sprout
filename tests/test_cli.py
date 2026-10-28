@@ -1202,8 +1202,8 @@ def test_tree_cli_shows_complete_graph_and_structured_json(
     assert attachment["created_at"]
     assert attachment["updated_at"]
     assert payload["branches"] == [
-        {"name": "archive", "commit_id": first, "comment": "", "current": False},
-        {"name": "main", "commit_id": main_tip, "comment": "", "current": True},
+        {"id": Repository.discover(project).branch_id("archive"), "name": "archive", "commit_id": first, "comment": "", "current": False},
+        {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": main_tip, "comment": "", "current": True},
     ]
     assert len(payload["tags"]) == 1
     assert payload["tags"][0]["name"] == "baseline"
@@ -1223,7 +1223,7 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
         "at_branch_tip": True,
         "commits": [],
         "branches": [
-            {"name": "main", "commit_id": None, "comment": "", "current": True}
+            {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": None, "comment": "", "current": True}
         ],
         "tags": [],
         "buds": [],
@@ -1290,7 +1290,9 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert show_payload == {
         "id": commit_id,
         "parent_id": None,
+        "branch_id": Repository.discover(project).branch_id("main"),
         "branch_name": "main",
+        "attachments": [],
         "created_at": log_payload[0]["created_at"],
         "message": "日本語コミット",
         "note": None,
@@ -1312,8 +1314,8 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     branch_result = invoke(["branch", "--json"], project, monkeypatch)
     assert branch_result.exit_code == 0
     assert json.loads(branch_result.stdout) == [
-        {"name": "ideas", "commit_id": commit_id, "comment": "案", "current": False},
-        {"name": "main", "commit_id": commit_id, "comment": "", "current": True},
+        {"id": Repository.discover(project).branch_id("ideas"), "name": "ideas", "commit_id": commit_id, "comment": "案", "current": False},
+        {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": commit_id, "comment": "", "current": True},
     ]
     assert "* main" not in branch_result.stdout
 
@@ -1630,3 +1632,28 @@ def test_export_json_and_structured_untracked_conflict(tmp_path: Path, monkeypat
     assert error.code == "untracked_conflict"
     assert error.details["path"] == "extra.bin"
     assert extra.read_bytes() == b"untracked work"
+
+
+def test_json_exposes_branch_identity_and_ordered_attachments(tmp_path, monkeypatch):
+    repo = Repository.init(tmp_path / "project")
+    asset = repo.root / "asset.bin"
+    asset.write_bytes(b"content")
+    repo.track([asset])
+    commit = repo.commit("first").commit_id
+    digest = repo.manifest(commit)["asset.bin"].object_hash
+    with repo.connect() as db:
+        for attachment_id, position in [("second", 8), ("first", 1)]:
+            db.execute(
+                "INSERT INTO commit_attachments(id,commit_id,role,position,original_name,media_type,object_hash,size,created_at,updated_at) "
+                "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,7,'now','now')",
+                (attachment_id, commit, position, digest),
+            )
+    detail = json.loads(invoke(["show", commit, "--json"], repo.root, monkeypatch).stdout)
+    graph = json.loads(invoke(["tree", "--json"], repo.root, monkeypatch).stdout)
+    assert detail["branch_id"] == repo.branch_id()
+    assert graph["commits"][0]["branch_id"] == repo.branch_id()
+    assert graph["branches"][0]["id"] == repo.branch_id()
+    assert [(a["id"], a["position"]) for a in detail["attachments"]] == [("first", 1), ("second", 8)]
+    assert graph["commits"][0]["attachments"] == detail["attachments"]
+    text = invoke(["show", commit], repo.root, monkeypatch).stdout
+    assert text.index("first [preview:1]") < text.index("second [preview:8]")

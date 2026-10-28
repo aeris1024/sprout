@@ -289,7 +289,7 @@ sprout switch main --discard
 sprout restore main
 ```
 
-Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。`status`の変更一覧、引数なしの`diff`、移動前の未保存変更の判定は、ブランチ先端ではなく現在位置と作業ツリーを比べます。そのため、過去のスナップショットへ移動した直後は変更なしと表示され、編集しなければ`--discard`なしで別のスナップショットへ移動できます。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置の記録がない既存のリポジトリは、現在のブランチ先端にいるものとして扱います。
+Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`go`、つぼみの復元、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。`status`の変更一覧、引数なしの`diff`、移動前の未保存変更の判定は、ブランチ先端ではなく現在位置と作業ツリーを比べます。そのため、過去のスナップショットへ移動した直後は変更なしと表示され、編集しなければ`--discard`なしで別のスナップショットへ移動できます。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置は専用の状態テーブルへ保存し、最初のコミット前はNULLで表します。必須の状態が欠けたリポジトリは、ブランチ先端と推測せずエラーにします。
 
 現在位置がブランチ先端以外のときに`commit`すると、変更が先端の上に積まれないよう、現在位置を起点とする新しいブランチを自動で作成して切り替え、そこへコミットします。ブランチ名は`branch-YYYYMMDD-HHMMSS`（ローカル時刻）で、既存のブランチ名やタグ名と重なる場合は末尾に`-2`、`-3`…を付けます。名前は`sprout branch OLD --rename NEW`で変更できます。`commit --json`の`created_branch`で、ブランチを自動作成したかどうかが分かります。現在位置から変更がない場合は、ブランチを作らずに`nothing to commit`となります。
 
@@ -453,13 +453,17 @@ sprout commit -m "ファイルを移動"
 
 `.sprout`の内容は手動で編集しないでください。処理が途中で中断された場合は、次回のSprout起動時に可能な範囲で自動的に復旧します。
 
-現在のリポジトリ形式はSchema Version 1です。正式リリースに向けて、現行のテーブル構成を新しい初期形式に統合しました。コミット履歴、添付、メモ、ラベル、リポジトリ固有ID・作成日時を保存し、オブジェクトはZstandardで圧縮します。
+現在のリポジトリ形式はSchema Version 1です。正式リリースに向けて、現行のテーブル構成を新しい初期形式に統合しました。コミット履歴、添付、メモ、ラベル、リポジトリ固有ID・作成日時を保存し、オブジェクトはZstandardで圧縮します。ブランチは名前と独立した不変のIDで識別し、現在のブランチとコミットは専用のrepository_stateテーブルへ外部キー付きで保存します。
 
-開発中に作成した旧Version 1・2・3のリポジトリとの互換性はありません。旧Version 1は同じ番号でも構造が異なるため読み込めません。旧形式や必須構造の欠落を検出した場合は、データを自動変換・修復せずエラーにします。
+今回の初期仕様見直し前に作成したVersion 1、および開発中に作成した旧Version 1・2・3のリポジトリとの互換性はありません。旧Version 1は同じ番号でも構造が異なるため読み込めません。旧形式や必須構造の欠落を検出した場合は、データを自動変換・修復せずエラーにします。つぼみと状態テーブルも必須構造として検査し、起動時に不足テーブルを追加することはありません。
 
-既存の開発用リポジトリを使い直す場合は、Sproutを終了し、必要な作業ファイルを確認したうえで`.sprout`全体をプロジェクト外へ退避し、`sprout init`で再初期化してください。作業ファイルは残りますが、以前の履歴・追跡設定・添付・メモ・ラベルは新しいリポジトリへ引き継がれません。必要なファイルを改めて`sprout track`し、最初のコミットを作成します。
+既存の開発用リポジトリを使い直す場合は、Sproutを終了し、必要な作業ファイルを確認したうえで`.sprout`全体をプロジェクト外へ退避し、`sprout init`で再初期化してください。作業ファイルは残りますが、以前の履歴・追跡設定・つぼみ・添付・メモ・ラベルは新しいリポジトリへ引き継がれません。必要なファイルを改めて`sprout track`し、最初のコミットを作成します。
 
 復元途中の記録もVersion 1に統一しています。現行形式の中断処理は自動復旧しますが、番号のない旧形式や非対応バージョンの記録は変換せず拒否し、作業ファイルと復旧用バックアップを保持します。
+
+ブランチの名前を変えてもIDは変わりません。削除済みの枝の識別情報とコミット・つぼみの作成時の名前は履歴用に保持し、同名で枝を作り直すと新しいIDになります。削除済みの枝は通常のブランチ一覧とpruneの先端保護から外れます。その枝のつぼみを戻すときは現在の有効なブランチを維持し、同名で作り直した別の枝へは接続しません。
+
+添付は不変のIDと表示順positionを持ち、保存層は1コミットに複数のpreviewを保持できます。thumbnailは従来どおり1件に限り、置き換えても添付IDと最初の登録日時を維持します。複数previewの追加・個別操作・並べ替えコマンドは後続のTASK-38で実装します。現段階でもshowとtreeのJSONから保存された添付一覧を取得できます。
 
 ## コマンド一覧
 
@@ -581,10 +585,13 @@ tree:
   "commits": [{
     "id": string,
     "parent_id": string | null,
+    "branch_id": string,
     "branch_name": string,
     "created_at": string,
     "message": string,
     "attachments": [{
+      "id": string,
+      "position": number,
       "commit_id": string,
       "role": string,
       "original_name": string,
@@ -599,6 +606,7 @@ tree:
     "labels": [string]
   }],
   "branches": [{
+    "id": string,
     "name": string,
     "commit_id": string | null,
     "comment": string,
@@ -638,6 +646,7 @@ Bud:
 {
   "id": string,
   "base_commit_id": string | null,
+  "branch_id": string,
   "branch_name": string,
   "created_at": string,
   "changes": [{"state": string, "path": string}],
@@ -653,14 +662,18 @@ show:
 {
   "id": string,
   "parent_id": string | null,
+  "branch_id": string,
   "branch_name": string,
   "created_at": string,
   "message": string,
   "note": string | null,
   "note_updated_at": string | null,
   "labels": [string],
+  "attachments": [Attachment],
   "thumbnail": {
     "commit_id": string,
+    "id": string,
+    "position": number,
     "role": "thumbnail",
     "original_name": string,
     "media_type": "image/png" | "image/jpeg" | "image/webp",
@@ -679,12 +692,15 @@ show:
 
 branch:
 [{
+  "id": string,
   "name": string,
   "commit_id": string | null,
   "comment": string,
   "current": boolean
 }]
 ```
+
+showとtreeの添付一覧はrole、position、添付IDの順で返します。同じrole内ではpositionが表示順です。Attachmentはid、commit_id、role、position、original_name、media_type、object_hash、size、created_at、updated_atを持ちます。roleとmedia_typeは未知の値も許可します。ブランチ一覧のid、およびコミット・つぼみのbranch_idは不変のブランチIDです。branch_nameは作成時の名前です。
 
 JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数のまま返します。そのため、`show --json`と`--timezone`は同時指定できません。`log --json`と`--oneline`も表示形式が競合するため同時指定できません。
 
@@ -698,7 +714,7 @@ JSONモードで期待されるエラーが起きた場合は、非0で終了し
 
 エラーは常に`code`、`message`、`details`を持ちます。代表的な`code`は、一般的な操作エラーの`sprout_error`、他の操作がロック中の`repository_locked`、未コミット変更がある`uncommitted_changes`、OSまたはSQLite操作の`repository_error`、引数指定の`usage_error`です。`repository_locked`の`details.retryable`と`uncommitted_changes`の`details.can_discard`をGUIの再試行・確認フローに利用できます。
 
-正式リリース前は、保存形式・CLI・JSON出力の後方互換性を保証しません。GUIとCLIは同じリビジョンの組み合わせで使用してください。今回の保存形式の整理では、CLIのコマンドとJSON出力の仕様は変更していません。
+正式リリース前は、保存形式・CLI・JSON出力の後方互換性を保証しません。GUIとCLIは同じリビジョンの組み合わせで使用してください。今回の保存形式の整理では、名前によるCLI操作は維持し、JSON出力にはブランチID・添付ID・表示順・showの添付一覧を追加しています。
 
 ## 無視パターン (`.sproutignore`)
 

@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
 const attachment: CommitAttachment = {
+  id: "thumbnail-fixture",
+  position: 0,
   commit_id: "a".repeat(64),
   role: "thumbnail",
   original_name: "preview.png",

@@ -6,6 +6,7 @@ function commit(id: string, parent: string | null, branch: string, minute: numbe
   return {
     id,
     parent_id: parent,
+    branch_id: branch,
     branch_name: branch,
     created_at: `2026-10-28T00:${String(minute).padStart(2, "0")}:00+00:00`,
     message: id,
@@ -27,15 +28,44 @@ const graph: CommitGraph = {
     commit("z", "a", "gone", 5),
   ],
   branches: [
-    { name: "main", commit_id: "d", comment: "", current: true },
-    { name: "side", commit_id: "x", comment: "", current: false },
-    { name: "copy", commit_id: "x", comment: "", current: false },
+    { id: "main", name: "main", commit_id: "d", comment: "", current: true },
+    { id: "side", name: "side", commit_id: "x", comment: "", current: false },
+    { id: "copy", name: "copy", commit_id: "x", comment: "", current: false },
   ],
   tags: [{ name: "draft", commit_id: "a", comment: "", created_at: "" }],
-  buds: [{ id: "bud", base_commit_id: "b", branch_name: "main", created_at: "", changes: [], files: [] }],
+  buds: [{ id: "bud", base_commit_id: "b", branch_id: "main", branch_name: "main", created_at: "", changes: [], files: [] }],
 };
 
 describe("layoutSproutMap", () => {
+  it("keeps branch identity across renames and reuses names on distinct lanes", () => {
+    const root = { ...commit("root", null, "original-id", 1), branch_name: "old-name" };
+    const renamed = { ...commit("renamed", "root", "original-id", 2), branch_name: "new-name" };
+    const reused = { ...commit("reused", "root", "new-id", 3), branch_name: "old-name" };
+    const layout = layoutSproutMap({
+      commits: [reused, renamed, root],
+      branches: [
+        { id: "original-id", name: "new-name", commit_id: "renamed", comment: "", current: true },
+        { id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: false },
+      ],
+      tags: [],
+    });
+    expect(layout.lanes.map((lane) => [lane.id, lane.name])).toEqual([
+      ["original-id", "new-name"], ["new-id", "old-name"],
+    ]);
+    const leaves = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
+    expect(leaves.root.lane).toBe(leaves.renamed.lane);
+    expect(leaves.reused.lane).not.toBe(leaves.root.lane);
+
+    const deleted = layoutSproutMap({
+      commits: [reused, root],
+      branches: [{ id: "new-id", name: "old-name", commit_id: "reused", comment: "", current: true }],
+      tags: [],
+    });
+    expect(deleted.lanes.map((lane) => [lane.id, lane.live])).toEqual([
+      ["original-id", false], ["new-id", true],
+    ]);
+  });
+
   it("puts older snapshots lower and alternates leaves along each stem", () => {
     const layout = layoutSproutMap(graph);
     const byId = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
@@ -62,7 +92,7 @@ describe("layoutSproutMap", () => {
   });
 
   it("routes a fork from a right-side leaf above that leaf", () => {
-    const lane = { name: "x", x: 500, fork: { x: 100, y: 400, side: 1 as const }, bottomY: 300, topY: 100, live: true };
+    const lane = { id: "x", name: "x", x: 500, fork: { x: 100, y: 400, side: 1 as const }, bottomY: 300, topY: 100, live: true };
     const path = lanePath(lane, 900);
     const turnY = 400 - MAP.leafHeight / 2 - 12;
     expect(path.startsWith(`M100 400 V${turnY} C`)).toBe(true);
@@ -101,7 +131,7 @@ describe("layoutSproutMap", () => {
       commit(`c${index}`, index ? `c${index - 1}` : null, "main", index % 60),
     ).map((item, index) => ({ ...item, created_at: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString() }));
     const started = performance.now();
-    const layout = layoutSproutMap({ commits: many, branches: [{ name: "main", commit_id: "c499", comment: "", current: true }], tags: [] });
+    const layout = layoutSproutMap({ commits: many, branches: [{ id: "main", name: "main", commit_id: "c499", comment: "", current: true }], tags: [] });
     expect(performance.now() - started).toBeLessThan(200);
     expect(layout.leaves).toHaveLength(500);
     expect(layout.height).toBe(MAP.top + MAP.bottom + 500 * MAP.row);

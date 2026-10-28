@@ -227,6 +227,8 @@ def _log_json(
 
 def _attachment_json(attachment: CommitAttachment) -> dict[str, Any]:
     return {
+        "id": attachment.id,
+        "position": attachment.position,
         "commit_id": attachment.commit_id,
         "role": attachment.role,
         "original_name": attachment.original_name,
@@ -243,15 +245,18 @@ def _show_json(
     files: list[FileState],
     thumbnail: CommitAttachment | None,
     annotations: CommitAnnotations,
+    attachments: tuple[CommitAttachment, ...],
 ) -> dict[str, Any]:
     return {
         "id": row["id"],
         "parent_id": row["parent_id"],
         "branch_name": row["branch_name"],
+        "branch_id": row["branch_id"],
         "created_at": row["created_at"],
         "message": row["message"],
         **_annotations_json(annotations),
         "thumbnail": _attachment_json(thumbnail) if thumbnail is not None else None,
+        "attachments": [_attachment_json(item) for item in attachments],
         "files": [
             {
                 "path": item.path,
@@ -265,15 +270,15 @@ def _show_json(
 
 
 def _branches_json(repository: Repository) -> list[dict[str, Any]]:
-    current = repository.head_branch()
     return [
         {
-            "name": name,
-            "commit_id": commit_id,
-            "comment": comment,
-            "current": name == current,
+            "id": branch.id,
+            "name": branch.name,
+            "commit_id": branch.commit_id,
+            "comment": branch.comment,
+            "current": branch.current,
         }
-        for name, commit_id, comment in repository.branches()
+        for branch in repository.branch_references()
     ]
 
 
@@ -282,6 +287,7 @@ def _bud_json(bud: Bud) -> dict[str, Any]:
         "id": bud.id,
         "base_commit_id": bud.base_commit_id,
         "branch_name": bud.branch_name,
+        "branch_id": bud.branch_id,
         "created_at": bud.created_at,
         "changes": [{"state": entry.state, "path": entry.path} for entry in bud.changes],
         "files": [
@@ -311,6 +317,7 @@ def _graph_json(graph: CommitGraph) -> dict[str, Any]:
                 "id": commit.id,
                 "parent_id": commit.parent_id,
                 "branch_name": commit.branch_name,
+                "branch_id": commit.branch_id,
                 "created_at": commit.created_at,
                 "message": commit.message,
                 "attachments": [
@@ -325,6 +332,7 @@ def _graph_json(graph: CommitGraph) -> dict[str, Any]:
         ],
         "branches": [
             {
+                "id": branch.id,
                 "name": branch.name,
                 "commit_id": branch.commit_id,
                 "comment": branch.comment,
@@ -757,10 +765,11 @@ def show(
     row, files = repository.commit_info(commit)
     thumbnail = repository.thumbnail(row["id"])
     annotations = repository.annotations(row["id"])
+    attachments = repository.attachments_many([row["id"]])[row["id"]]
     if json_output:
         if timezone_name.upper() != "UTC":
             raise SproutError("--timezone cannot be used with --json")
-        _echo_json(_show_json(row, files, thumbnail, annotations))
+        _echo_json(_show_json(row, files, thumbnail, annotations, attachments))
         return
     display_timezone = _display_timezone(timezone_name)
     created_at = datetime.fromisoformat(row["created_at"])
@@ -783,6 +792,12 @@ def show(
             f"Thumbnail: {thumbnail.original_name} "
             f"({thumbnail.media_type}, {thumbnail.size} bytes)"
         )
+    for attachment in attachments:
+        if attachment.role != "thumbnail":
+            typer.echo(
+                f"Attachment: {attachment.id} [{attachment.role}:{attachment.position}] "
+                f"{attachment.original_name} ({attachment.media_type}, {attachment.size} bytes)"
+            )
     for item in files:
         modified_at = datetime.fromtimestamp(item.mtime_ns // 1_000_000_000, tz=timezone.utc)
         typer.echo(

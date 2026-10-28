@@ -143,6 +143,7 @@ def test_discover_rejects_original_v1_structure_without_modifying_it(tmp_path: P
     repo = create_repo(tmp_path)
     # The original uncompressed v1 predates tags, annotations and repository identity.
     with repo.connect() as db:
+        db.execute("PRAGMA foreign_keys=OFF")
         for table in ("commit_attachments", "commit_notes", "commit_labels", "tags"):
             db.execute(f"DROP TABLE {table}")
         db.execute(
@@ -171,18 +172,19 @@ def test_schema_check_reads_committed_version_from_wal(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("table", [
     "meta", "commits", "commit_files", "commit_attachments", "commit_notes",
-    "commit_labels", "branches", "tags", "tracked_paths",
+    "commit_labels", "branches", "tags", "tracked_paths", "repository_state", "buds", "bud_files",
 ])
 def test_discover_rejects_missing_schema_table_without_modifying_it(tmp_path: Path, table: str) -> None:
     repo = create_repo(tmp_path)
     with repo.connect() as db:
+        db.execute("PRAGMA foreign_keys=OFF")
         db.execute(f"DROP TABLE {table}")
     match = "cannot read repository" if table == "meta" else f"missing tables: {table}; reinitialize"
     assert_discover_rejected_without_changes(repo, match)
 
 
 @pytest.mark.parametrize("key", [
-    "schema_version", "object_compression", "head_branch", "active_operation",
+    "schema_version", "object_compression", "active_operation",
     "repository_id", "repository_created_at",
 ])
 def test_discover_rejects_missing_metadata_without_modifying_it(tmp_path: Path, key: str) -> None:
@@ -218,7 +220,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
     assert metadata["schema_version"] == "1"
     assert tables == {
         "meta", "commits", "commit_files", "commit_attachments", "commit_notes",
-        "commit_labels", "branches", "tags", "tracked_paths", "buds", "bud_files",
+        "commit_labels", "branches", "tags", "tracked_paths", "buds", "bud_files", "repository_state",
     }
     assert metadata["object_compression"] == "zstd"
     assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
@@ -242,15 +244,16 @@ def test_schema_version_1_attachment_note_and_label_constraints(tmp_path: Path) 
 
     with repo.connect() as db:
         db.execute(
-            "INSERT INTO commits(id, parent_id, branch_name, created_at, message) "
-            "VALUES(?, NULL, 'main', ?, 'schema fixture')",
-            (commit_id, timestamp),
+            "INSERT INTO commits(id, parent_id, branch_id, branch_name, created_at, message) "
+            "VALUES(?, NULL, ?, 'main', ?, 'schema fixture')",
+            (commit_id, repo.branch_id(), timestamp),
         )
         db.execute(
             "INSERT INTO commit_attachments("
-            "commit_id, role, original_name, media_type, object_hash, size, "
-            "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            "id, commit_id, role, original_name, media_type, object_hash, size, "
+            "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                uuid.uuid4().hex,
                 commit_id,
                 "future-role",
                 "asset.future",
@@ -276,8 +279,8 @@ def test_schema_version_1_attachment_note_and_label_constraints(tmp_path: Path) 
         with pytest.raises(sqlite3.IntegrityError):
             db.execute(
                 "INSERT INTO commit_attachments("
-                "commit_id, role, original_name, media_type, object_hash, size, "
-                "created_at, updated_at) VALUES(?, ?, 'other', 'other/type', ?, 1, ?, ?)",
+                "id, commit_id, role, original_name, media_type, object_hash, size, "
+                "created_at, updated_at) VALUES('other-id', ?, ?, 'other', 'other/type', ?, 1, ?, ?)",
                 (commit_id, "future-role", "c" * 64, timestamp, timestamp),
             )
         with pytest.raises(sqlite3.IntegrityError):
@@ -2635,25 +2638,11 @@ def test_partial_and_failed_restore_keep_current_position(
     assert repo.current_position() == (second, True)
 
 
-def test_repository_without_recorded_position_sits_at_branch_tip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_repository_without_recorded_position_is_rejected(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
-    monkeypatch.chdir(repo.root)
-    asset = write(repo.root, "asset.bin", b"v1")
-    repo.track([asset])
-    first = repo.commit("first").commit_id
-    asset.write_bytes(b"v2")
-    second = repo.commit("second").commit_id
     with repo.connect() as db:
-        db.execute("DELETE FROM meta WHERE key='current_commit'")
-
-    reopened = Repository.discover(repo.root)
-    assert reopened.current_position() == (second, True)
-    assert reopened.doctor().ok
-
-    reopened.restore(first)
-    assert reopened.current_position() == (first, False)
+        db.execute("DELETE FROM repository_state")
+    assert_discover_rejected_without_changes(repo, "invalid repository state")
 
 
 def test_create_branch_uses_recorded_position_for_omitted_start_point(
@@ -2684,7 +2673,8 @@ def test_doctor_reports_missing_current_commit(
     repo.track([asset])
     repo.commit("first")
     with repo.connect() as db:
-        db.execute("UPDATE meta SET value='0123456789abcdef' WHERE key='current_commit'")
+        db.execute("PRAGMA foreign_keys=OFF")
+        db.execute("UPDATE repository_state SET current_commit_id='0123456789abcdef'")
 
     result = repo.doctor()
     assert not result.ok
@@ -2771,27 +2761,12 @@ def test_unchanged_old_snapshot_moves_without_discard(
     assert repo.status() == []
 
 
-def test_change_detection_without_recorded_position_uses_branch_tip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_change_detection_requires_recorded_position(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
-    monkeypatch.chdir(repo.root)
-    asset = write(repo.root, "asset.bin", b"v1")
-    repo.track([asset])
-    repo.commit("first")
-    asset.write_bytes(b"v2")
-    repo.commit("second")
     with repo.connect() as db:
-        db.execute("DELETE FROM meta WHERE key='current_commit'")
-
-    assert repo.status() == []
-    asset.write_bytes(b"edited")
-    assert [(entry.state, entry.path) for entry in repo.status()] == [
-        ("modified", "asset.bin")
-    ]
-    assert [(entry.state, entry.path) for entry in repo.diff()] == [
-        ("modified", "asset.bin")
-    ]
+        db.execute("DELETE FROM repository_state")
+    with pytest.raises(SproutError, match="missing current position"):
+        repo.status()
 
 
 def bud_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Repository, Path, str, str]:
@@ -2967,18 +2942,12 @@ def test_gc_doctor_and_prune_respect_buds(
     assert bud_object in repo.gc().objects
 
 
-def test_repository_without_bud_tables_creates_them_on_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo, asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+def test_repository_without_bud_tables_is_rejected(tmp_path: Path) -> None:
+    repo = create_repo(tmp_path)
     with repo.connect() as db:
         db.execute("DROP TABLE bud_files")
         db.execute("DROP TABLE buds")
-
-    reopened = Repository.discover(repo.root)
-    assert reopened.buds() == []
-    asset.write_bytes(b"draft")
-    assert reopened.save_bud().base_commit_id is not None
+    assert_discover_rejected_without_changes(repo, "missing tables: bud_files, buds")
 
 
 def test_commit_at_branch_tip_keeps_the_branch(
