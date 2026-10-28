@@ -1,4 +1,4 @@
-import type { Bud, CommitGraph, GraphCommit } from "./sprout";
+import type { BranchInfo, Bud, CommitGraph, GraphCommit } from "./sprout";
 
 export const MAP = {
   row: 96,
@@ -45,12 +45,16 @@ export interface MapRootBud {
   y: number;
 }
 
+/** Names of the live branches whose tip is one leaf, stacked above it. */
 export interface MapLabel {
   x: number;
   y: number;
-  names: string[];
+  branches: BranchInfo[];
   current: boolean;
 }
+
+/** Vertical distance between stacked branch names on one tip. */
+export const LABEL_LINE = 18;
 
 /** Path of a lane's stem: from the ground, or curving out of its fork without crossing the fork's leaf. */
 export function lanePath(lane: MapLane, groundY: number): string {
@@ -158,8 +162,8 @@ export function layoutSproutMap(graph: CommitGraph): SproutMapLayout {
   for (const branch of graph.branches) {
     const leaf = branch.commit_id ? byId.get(branch.commit_id) : undefined;
     if (!leaf) continue;
-    const label = labelsByCommit.get(leaf.commit.id) ?? { x: leaf.x, y: leaf.y - MAP.row - 4, names: [], current: false };
-    label.names.push(branch.name);
+    const label = labelsByCommit.get(leaf.commit.id) ?? { x: leaf.x, y: leaf.y - MAP.row - 4, branches: [], current: false };
+    label.branches.push(branch);
     label.current ||= branch.current;
     labelsByCommit.set(leaf.commit.id, label);
   }

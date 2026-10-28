@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
+import { LABEL_LINE, MAP, lanePath, layoutSproutMap, type MapLeaf } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
 
@@ -81,7 +81,7 @@ function budLabel(bud: Bud): string {
     : `最初の保存前のつぼみ（${bud.changes.length}件の変更）`;
 }
 
-export type MapSelection = { kind: "commit" | "bud"; id: string } | { kind: "unsaved" } | null;
+export type MapSelection = { kind: "commit" | "bud" | "branch"; id: string } | { kind: "unsaved" } | null;
 
 interface SproutMapProps {
   graph: CommitGraph;
@@ -91,6 +91,7 @@ interface SproutMapProps {
   sproutProgram: string;
   onSelect: (commitId: string) => void;
   onSelectBud: (budId: string) => void;
+  onSelectBranch: (branchId: string) => void;
   onSelectUnsaved: () => void;
 }
 
@@ -102,6 +103,7 @@ export default function SproutMap({
   sproutProgram,
   onSelect,
   onSelectBud,
+  onSelectBranch,
   onSelectUnsaved,
 }: SproutMapProps) {
   const selectedId = selection?.kind === "commit" ? selection.id : null;
@@ -216,12 +218,27 @@ export default function SproutMap({
             </g>
           ))}
           {layout.labels.map((label) => (
-            <g key={`${label.x}:${label.y}`} className={label.current ? "branch-label current" : "branch-label"}>
+            <g key={`${label.x}:${label.y}`} className="branch-label">
               <line x1={label.x} x2={label.x} y1={label.y + 8} y2={label.y + MAP.row - 8} />
-              <text x={label.x} y={label.y} textAnchor="middle">
-                {label.names.join(", ")}
-                {label.current ? "（現在のブランチ）" : ""}
-              </text>
+              {label.branches.map((branch, index) => {
+                const selected = selection?.kind === "branch" && selection.id === branch.id;
+                return (
+                  <g
+                    key={branch.id}
+                    className={`branch-name${branch.current ? " current" : ""}${selected ? " selected" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`ブランチ ${branch.name}`}
+                    aria-pressed={selected}
+                    onClick={() => onSelectBranch(branch.id)}
+                    onKeyDown={(event) => onKey(event, () => onSelectBranch(branch.id))}
+                  >
+                    <text x={label.x} y={label.y - index * LABEL_LINE} textAnchor="middle">
+                      {branch.current ? `${branch.name}（現在のブランチ）` : branch.name}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           ))}
           {layout.leaves.map((leaf) => {

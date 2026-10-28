@@ -107,7 +107,7 @@ describe("layoutSproutMap", () => {
     expect(layout.currentId).toBe("b");
     expect(byId.a.tags).toEqual(["draft"]);
     expect(byId.b.buds.map((bud) => bud.id)).toEqual(["bud"]);
-    expect(layout.labels.map((label) => [label.names, label.current])).toEqual([
+    expect(layout.labels.map((label) => [label.branches.map((branch) => branch.name), label.current])).toEqual([
       [["main"], true],
       [["side", "copy"], false],
     ]);
