@@ -56,6 +56,31 @@ export interface MapLabel {
 /** Vertical distance between stacked branch names on one tip. */
 export const LABEL_LINE = 18;
 
+/** Approximate advance widths of the 11px tag chip font, wide enough for Yu Gothic UI and fallbacks. */
+const CHIP_FONT = { narrow: 7, wide: 11.5, padding: 12 };
+const WIDE_CHARACTER = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]/u;
+
+/** Measures rendered text width; the estimate is used where no font metrics are available. */
+export type TextMeasure = (text: string) => number;
+
+export function estimateChipText(text: string): number {
+  let width = 0;
+  for (const character of text) width += WIDE_CHARACTER.test(character) ? CHIP_FONT.wide : CHIP_FONT.narrow;
+  return width;
+}
+
+/** Label and width of a leaf's tag chip; names that do not fit the leaf end with an ellipsis. */
+export function tagChip(tag: string, measure: TextMeasure = estimateChipText): { text: string; width: number } {
+  const maxWidth = MAP.leafWidth - 12;
+  const characters = [...`#${tag}`];
+  let text = characters.join("");
+  while (characters.length > 1 && measure(text) + CHIP_FONT.padding > maxWidth) {
+    characters.pop();
+    text = `${characters.join("")}…`;
+  }
+  return { text, width: Math.min(maxWidth, Math.ceil(measure(text)) + CHIP_FONT.padding) };
+}
+
 /** Path of a lane's stem: from the ground, or curving out of its fork without crossing the fork's leaf. */
 export function lanePath(lane: MapLane, groundY: number): string {
   if (!lane.fork) return `M${lane.x} ${groundY} V${lane.topY}`;

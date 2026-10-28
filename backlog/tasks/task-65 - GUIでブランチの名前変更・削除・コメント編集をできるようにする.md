@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-28 16:58'
-updated_date: '2026-10-28 17:42'
+updated_date: '2026-10-28 17:56'
 labels: []
 dependencies:
   - TASK-63
@@ -61,6 +61,10 @@ BranchPanelを追加し、名前・コメント・枝先のスナップショッ
 - GUI: vitest 46 passed。マップの枝名からの選択、名前の重複による拒否と入力の保持、名前変更後もIDで同じブランチを選択していること、コメントを空にする操作、枝先から葉を開いて改名後の名前を表示すること、上部バーから現在のブランチを開くこと、現在のブランチの削除不可、確認キャンセル、削除後の選択解除と削除済みブランチ由来の表示をDOMテストで確認した。
 - tsc・vite build・cargo test（5 passed）・Python全体（288 passed、19 skipped）・git diff --checkが成功。
 - Tauriの実ウィンドウでの手動確認は未実施。
+
+## 追加修正: 日本語タグ名の札
+
+実データでの画面確認で、葉の札に表示する日本語のタグ名が途中で切れる不具合（札の幅を半角文字数×8pxで計算していた）を見つけたため、本PRで修正した。tagChipは、画面ではcanvasで実フォント幅を測り、測れない環境では全角を考慮した見積もりで札の幅を決める。葉に収まらない名前は「…」で省略し、札のtitleで全体を表示する。vitest 48 passed、tsc・vite buildが成功。確認用ブリッジで「#提出」「#線画完成」が全部表示され、長い名前が葉の幅に収まることを確認した。
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
