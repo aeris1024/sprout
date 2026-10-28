@@ -1,10 +1,17 @@
+import os
 import sqlite3
 
 import pytest
 from PIL import Image
 
+from sprout.cli import _tree_lines
 from sprout.errors import SproutError
-from sprout.repository import Repository
+from sprout.repository import (
+    SAVED_FILE_COMMITS_SQL,
+    TIMESTAMP_PATTERN,
+    Repository,
+    utc_timestamp,
+)
 
 
 def committed_repo(tmp_path):
@@ -90,12 +97,14 @@ def test_multiple_attachments_keep_identity_order_and_gc_references(tmp_path):
     source = repo.root / "preview.bin"
     source.write_bytes(b"only referenced by previews")
     digest, size = repo._store_object(source)
+    now = utc_timestamp()
     with repo.connect() as db:
+        repo._register_objects(db, {digest: size}, now)
         for attachment_id, position in [("later", 9), ("earlier", 2)]:
             db.execute(
                 "INSERT INTO commit_attachments(id,commit_id,role,position,original_name,media_type,object_hash,size,created_at,updated_at) "
-                "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,?,'now','now')",
-                (attachment_id, commit, position, digest, size),
+                "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,?,?,?)",
+                (attachment_id, commit, position, digest, size, now, now),
             )
     reopened = Repository.discover(repo.root)
     attachments = reopened.attachments_many([commit])[commit]
@@ -141,7 +150,11 @@ def test_database_rejects_invalid_identity_size_and_references(tmp_path, stateme
     "DROP TABLE repository_state",
     "DROP TABLE bud_files",
     "DROP INDEX idx_single_thumbnail",
-    "ALTER TABLE commits DROP COLUMN branch_id",
+    "ALTER TABLE commits DROP COLUMN message",
+    "DROP TABLE objects",
+    "DROP TABLE worktree_cache",
+    "DROP INDEX idx_commit_files_object",
+    "ALTER TABLE worktree_cache DROP COLUMN file_id",
 ])
 def test_incomplete_v1_is_rejected_without_repair(tmp_path, statement):
     repo = Repository.init(tmp_path / "project")
@@ -171,3 +184,258 @@ def test_failure_after_same_position_finalize_keeps_backup_bud(tmp_path, monkeyp
     assert len(repo.buds()) == 1
     assert repo.buds()[0].changes[0].path == "asset.bin"
     assert repo.gc(dry_run=True).removed_objects == 0
+
+
+def cache_row(repo, relative):
+    with repo.connect() as db:
+        db.execute(
+            "INSERT INTO worktree_cache(path, size, mtime_ns, ctime_ns, file_id, object_hash, recorded_ns) "
+            "VALUES(?, 1, 1, 1, '1', ?, 1)",
+            (relative, "0" * 64),
+        )
+
+
+def cached_paths(repo):
+    with repo.connect() as db:
+        return {row[0] for row in db.execute("SELECT path FROM worktree_cache")}
+
+
+def test_every_foreign_key_is_backed_by_an_index(tmp_path):
+    repo = Repository.init(tmp_path / "project")
+    with repo.connect() as db:
+        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        for table in tables:
+            if table == "repository_state":  # CHECK (id = 1) keeps it to one row.
+                continue
+            prefixes = set()
+            for index in db.execute(f"PRAGMA index_list({table})"):
+                columns = [row["name"] for row in db.execute(f"PRAGMA index_info({index['name']})")]
+                prefixes.update(tuple(columns[:n]) for n in range(1, len(columns) + 1))
+            keys: dict[int, list[str]] = {}
+            for row in db.execute(f"PRAGMA foreign_key_list({table})"):
+                keys.setdefault(row["id"], []).append(row["from"])
+            for columns in keys.values():
+                assert tuple(columns) in prefixes, (table, columns)
+
+
+def test_saved_snapshot_lookup_uses_object_index(tmp_path):
+    repo, _, _ = committed_repo(tmp_path)
+    with repo.connect() as db:
+        plan = " ".join(
+            row["detail"]
+            for row in db.execute("EXPLAIN QUERY PLAN " + SAVED_FILE_COMMITS_SQL, ("0" * 64, 1, "asset.bin"))
+        )
+    assert "idx_commit_files_object" in plan
+    assert "SCAN commit_files" not in plan
+
+
+def test_objects_record_storage_and_canonical_file_time(tmp_path):
+    repo, _, first = committed_repo(tmp_path)
+    copy = repo.root / "copy.bin"
+    copy.write_bytes(b"base")
+    older = 1_600_000_000_123_456_789
+    os.utime(copy, ns=(older, older))
+    repo.track([copy])
+    image = repo.root / "thumb.png"
+    Image.new("RGB", (4, 4), "red").save(image)
+    second = repo.commit("copy", thumbnail=image).commit_id
+    with repo.connect() as db:
+        rows = {row["hash"]: row for row in db.execute("SELECT * FROM objects")}
+        columns = {row[1] for row in db.execute("PRAGMA table_info(commit_files)")}
+    original = repo.manifest(first)["asset.bin"]
+    thumbnail = repo.thumbnail(second)
+    assert "mtime_ns" not in columns
+    assert set(rows) == {original.object_hash, thumbnail.object_hash}
+    for object_hash, row in rows.items():
+        stored = repo.objects / object_hash[:2] / object_hash
+        assert (row["encoding"], row["stored_size"]) == ("zstd", stored.stat().st_size)
+    # The first commit fixed the content time; a later, older copy does not change it.
+    assert rows[original.object_hash]["file_mtime_ns"] == original.mtime_ns
+    assert repo.manifest(second)["copy.bin"].mtime_ns == original.mtime_ns
+    assert rows[thumbnail.object_hash]["file_mtime_ns"] is None
+    assert Repository.discover(repo.root).doctor().ok
+
+
+def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path):
+    repo, _, first = committed_repo(tmp_path)
+    image = repo.root / "art.png"
+    Image.new("RGB", (4, 4), "blue").save(image)
+    repo.set_thumbnail(first, image)
+    file_time = 1_650_000_000_000_000_000
+    os.utime(image, ns=(file_time, file_time))
+    repo.track([image])
+    second = repo.commit("art").commit_id
+    assert repo.manifest(second)["art.png"].mtime_ns == file_time
+
+
+@pytest.mark.parametrize("statement", [
+    "INSERT INTO commit_files(commit_id, path, object_hash, size) "
+    "SELECT commit_id, 'other.bin', object_hash, size + 1 FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, object_hash, size) "
+    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size FROM commit_files",
+    "DELETE FROM objects",
+    "UPDATE objects SET hash='ABC'",
+    "UPDATE objects SET stored_size=-1",
+    "UPDATE commits SET created_at='2026-10-29T00:00:00+00:00'",
+    "UPDATE commits SET seq=0",
+    "INSERT INTO worktree_cache(path, size, mtime_ns, ctime_ns, file_id, object_hash, recorded_ns) "
+    f"VALUES('untracked.bin', 1, 1, 1, '1', '{'0' * 64}', 1)",
+])
+def test_database_rejects_invalid_objects_times_order_and_cache(tmp_path, statement):
+    repo, _, _ = committed_repo(tmp_path)
+    with pytest.raises(sqlite3.IntegrityError), repo.connect() as db:
+        db.execute(statement)
+
+
+def test_interrupted_object_registration_leaves_no_reference_and_gc_collects(tmp_path, monkeypatch):
+    repo, asset, first = committed_repo(tmp_path)
+    asset.write_bytes(b"never registered")
+    register = repo._register_objects
+
+    def fail_after_register(db, objects, created_at):
+        register(db, objects, created_at)
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(repo, "_register_objects", fail_after_register)
+    with pytest.raises(OSError):
+        repo.commit("lost")
+    monkeypatch.undo()
+    digest, _ = Repository.hash_file(asset)
+    assert (repo.objects / digest[:2] / digest).is_file()
+    assert [commit.id for commit in repo.commit_graph().commits] == [first]
+    with repo.connect() as db:
+        assert db.execute("SELECT 1 FROM objects WHERE hash=?", (digest,)).fetchone() is None
+    assert {(issue.kind, issue.detail) for issue in repo.doctor().issues} == {("unregistered_object", digest)}
+    assert repo.gc().objects == (digest,)
+    assert repo.doctor().ok
+
+
+def test_gc_forgets_unreferenced_objects_and_stats_follow_the_registry(tmp_path):
+    repo, asset, first = committed_repo(tmp_path)
+    asset.write_bytes(b"dropped draft")
+    bud = repo.save_bud()
+    draft = bud.files[0].object_hash
+    repo.drop_bud(bud.id)
+    assert repo.gc().objects == (draft,)
+    kept = repo.manifest(first)["asset.bin"].object_hash
+    with repo.connect() as db:
+        assert {row[0] for row in db.execute("SELECT hash FROM objects")} == {kept}
+    stats = repo.stats()
+    assert (stats.objects, stats.objects_bytes) == (1, (repo.objects / kept[:2] / kept).stat().st_size)
+
+
+@pytest.mark.parametrize(("statement", "kind"), [
+    ("UPDATE objects SET stored_size=stored_size+1", "object_size_mismatch"),
+    ("UPDATE objects SET encoding='future'", "unsupported_object_encoding"),
+    ("DELETE FROM objects", "missing_object"),
+    ("UPDATE objects SET file_mtime_ns=NULL", "missing_object_file_time"),
+])
+def test_doctor_reports_object_registry_problems(tmp_path, statement, kind):
+    repo, _, _ = committed_repo(tmp_path)
+    with repo.connect() as db:
+        db.execute("PRAGMA foreign_keys=OFF")
+        db.execute(statement)
+    assert kind in {issue.kind for issue in repo.doctor().issues}
+
+
+def test_worktree_cache_is_cleared_by_untrack_move_restore_and_missing_files(tmp_path, monkeypatch):
+    repo, asset, first = committed_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    other = repo.root / "other.bin"
+    other.write_bytes(b"other")
+    repo.track([other])
+    second = repo.commit("other").commit_id
+    cache_row(repo, "asset.bin")
+    cache_row(repo, "other.bin")
+
+    repo.restore(first, [asset], discard=True)
+    assert cached_paths(repo) == {"other.bin"}
+    repo.move(other, repo.root / "moved.bin")
+    assert cached_paths(repo) == set()
+    cache_row(repo, "moved.bin")
+    repo.untrack([repo.root / "moved.bin"])
+    assert cached_paths(repo) == set()
+
+    repo.restore(second, discard=True)
+    cache_row(repo, "asset.bin")
+    repo.restore(first, discard=True)
+    assert cached_paths(repo) == set()
+
+    cache_row(repo, "asset.bin")
+    asset.unlink()
+    other.write_bytes(b"replacement")
+    repo.track([other])
+    repo.commit("asset removed")
+    assert cached_paths(repo) == set()
+
+
+def test_creation_sequence_orders_history_despite_clock_and_vacuum(tmp_path):
+    repo, asset, first = committed_repo(tmp_path)
+    asset.write_bytes(b"second")
+    second = repo.commit("second").commit_id
+    repo.restore(first, discard=True)
+    asset.write_bytes(b"sibling")
+    sibling = repo.commit("sibling").commit_id
+    asset.write_bytes(b"draft one")
+    one = repo.save_bud()
+    asset.write_bytes(b"draft two")
+    two = repo.save_bud()
+    epoch = "2000-01-01T00:00:00.000000+00:00"
+    with repo.connect() as db:
+        # A clock moved backwards must not reorder history.
+        db.execute("UPDATE commits SET created_at=? WHERE id=?", (epoch, sibling))
+        db.execute("UPDATE buds SET created_at=? WHERE id=?", (epoch, two.id))
+    db = sqlite3.connect(repo.db_path)
+    try:
+        db.execute("VACUUM")
+    finally:
+        db.close()
+    reopened = Repository.discover(repo.root)
+    graph = reopened.commit_graph()
+    assert [commit.id for commit in graph.commits] == [sibling, second, first]
+    assert [bud.id for bud in reopened.buds()] == [two.id, one.id]
+    text = "\n".join(_tree_lines(graph))
+    assert text.index(second[:12]) < text.index(sibling[:12])
+
+
+def test_prune_lists_commits_in_creation_order(tmp_path):
+    repo, asset, first = committed_repo(tmp_path)
+    asset.write_bytes(b"second")
+    second = repo.commit("second").commit_id
+    asset.write_bytes(b"third")
+    repo.commit("third")
+    with repo.connect() as db:
+        db.execute(
+            "UPDATE commits SET created_at='2000-01-01T00:00:00.000000+00:00' WHERE id=?", (second,)
+        )
+    removed = [commit.id for commit in repo.prune(all_history=True, dry_run=True).commits]
+    assert removed == [first, second]
+
+
+def test_all_stored_times_share_utc_microsecond_format(tmp_path):
+    repo, asset, first = committed_repo(tmp_path)
+    image = repo.root / "thumb.png"
+    Image.new("RGB", (4, 4), "green").save(image)
+    repo.set_thumbnail(first, image)
+    repo.set_note(first, "note")
+    repo.create_tag("v1", first)
+    asset.write_bytes(b"draft")
+    repo.save_bud()
+    with repo.connect() as db:
+        values = [db.execute("SELECT value FROM meta WHERE key='repository_created_at'").fetchone()[0]]
+        for table, column in [
+            ("commits", "created_at"), ("objects", "created_at"), ("commit_attachments", "created_at"),
+            ("commit_attachments", "updated_at"), ("commit_notes", "updated_at"),
+            ("tags", "created_at"), ("buds", "created_at"),
+        ]:
+            values.extend(row[0] for row in db.execute(f"SELECT {column} FROM {table}"))
+    assert len(values) == 10  # meta, commit, 3 objects, thumbnail x2, note, tag, bud
+    assert all(TIMESTAMP_PATTERN.fullmatch(value) for value in values), values
+
+
+def test_repository_created_at_must_use_the_stored_time_format(tmp_path):
+    repo = Repository.init(tmp_path / "project")
+    with repo.connect() as db:
+        db.execute("UPDATE meta SET value='2026-10-29T00:00:00+00:00' WHERE key='repository_created_at'")
+    with pytest.raises(SproutError, match="repository_created_at"):
+        Repository.discover(repo.root)

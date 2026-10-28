@@ -427,8 +427,10 @@ def _tree_lines(graph: CommitGraph) -> list[str]:
     for commit in graph.commits:
         parent = commit.parent_id if commit.parent_id in commit_ids else None
         children.setdefault(parent, []).append(commit)
+    # The graph lists commits newest first by their creation sequence.
+    creation_order = {commit.id: -index for index, commit in enumerate(graph.commits)}
     for items in children.values():
-        items.sort(key=lambda item: (item.created_at, item.id))
+        items.sort(key=lambda item: creation_order[item.id])
 
     lines: list[str] = []
     for root in children.get(None, []):
