@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
+import CommitAnnotations from "./CommitAnnotations";
 import { branchIdentity, branchIdentityLabel, type BranchInfo, type CommitAttachment, type CommitDetail, type GraphTag } from "../lib/sprout";
 
 const roleLabels: Record<string, string> = {
@@ -29,6 +30,7 @@ interface CommitPanelProps {
   onUpdateMessage: (commitId: string, message: string) => void;
   onExport: (commitId: string) => void;
   onClose: () => void;
+  annotations: Pick<ComponentProps<typeof CommitAnnotations>, "onSaveNote" | "onAddLabel" | "onRemoveLabel" | "onCreateTag" | "onSetTagComment" | "onDeleteTag">;
 }
 
 export default function CommitPanel({
@@ -44,13 +46,14 @@ export default function CommitPanel({
   onUpdateMessage,
   onExport,
   onClose,
+  annotations,
 }: CommitPanelProps) {
   const [editingMessage, setEditingMessage] = useState(false);
   const [messageDraft, setMessageDraft] = useState(detail.message);
   const [growing, setGrowing] = useState(false);
   const [branchName, setBranchName] = useState("");
   const tips = branches.filter((branch) => branch.commit_id === detail.id);
-  const commitTags = tags.filter((tag) => tag.commit_id === detail.id).map((tag) => tag.name);
+  const commitTags = tags.filter((tag) => tag.commit_id === detail.id);
 
   useEffect(() => {
     setEditingMessage(false);
@@ -92,7 +95,6 @@ export default function CommitPanel({
         <div><dt>日時</dt><dd>{new Date(detail.created_at).toLocaleString("ja-JP")}</dd></div>
         <div><dt>ブランチ</dt><dd>{branchIdentityLabel(branchIdentity(detail.branch_id, detail.branch_name, branches))}</dd></div>
         {tips.length > 0 && <div><dt>枝先</dt><dd>{tips.map((branch) => branch.name).join(", ")}</dd></div>}
-        {commitTags.length > 0 && <div><dt>タグ</dt><dd>{commitTags.map((tag) => `#${tag}`).join(" ")}</dd></div>}
         <div>
           <dt>添付</dt>
           <dd>
@@ -135,6 +137,7 @@ export default function CommitPanel({
         </button>
         <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
       </div>
+      <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       {!current && unsavedCount > 0 && (
         <p className="panel-copy">{`移動すると、未保存の変更 ${unsavedCount}件は今の芽につぼみとして残ります。`}</p>
       )}

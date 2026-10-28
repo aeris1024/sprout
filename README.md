@@ -185,6 +185,9 @@ sprout tag submitted -m "提出版"
 # 過去のコミットにタグを作成
 sprout tag first-draft <commit-id> -m "初稿"
 
+# コメントの変更（空文字でコメントを消す）
+sprout tag first-draft --set-comment "初稿（差し戻し前）"
+
 # 一覧と削除
 sprout tag
 sprout tag --delete first-draft
@@ -484,7 +487,7 @@ sprout commit -m "ファイルを移動"
 | `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
 | `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
-| `tag [NAME] [COMMIT] [--delete NAME]` | タグの一覧・作成・削除を行う |
+| `tag [NAME] [COMMIT] [--set-comment TEXT] [--delete NAME] [--json]` | タグの一覧・作成・コメント変更・削除を行う |
 | `switch BRANCH [--json]` | 別のブランチへ切り替える |
 | `serve` | JSON Linesで要求を受け付ける常駐モードを起動する |
 | `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
@@ -508,7 +511,7 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -521,7 +524,7 @@ sprout commit -m "first" --json
 sprout switch ideas --json
 ```
 
-更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。
+更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。`tag`の作成とコメント変更はタグ情報、削除は`name`と`deleted`、一覧はタグ情報の配列を返します。
 
 ```text
 init:       {"root": string}
@@ -531,6 +534,8 @@ commit:     {"id": string, "branch": string, "branch_id": string, "created_branc
 message:    {"commit_id": string, "message": string}
 note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
 switch:     {"branch": string, "branch_id": string, "commit_id": string | null}
+tag:        {"name": string, "commit_id": string, "comment": string, "created_at": string}
+tag --delete: {"name": string, "deleted": true}
 export:     {"commit_id": string, "output": string, "paths": [string]}
 restore:    {"commit_id": string, "paths": [string] | null}
 

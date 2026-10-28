@@ -282,6 +282,13 @@ def _branches_json(repository: Repository) -> list[dict[str, Any]]:
     ]
 
 
+def _tag_json(repository: Repository, name: str) -> dict[str, Any]:
+    for tag_name, commit_id, comment, created_at in repository.tags():
+        if tag_name == name:
+            return {"name": tag_name, "commit_id": commit_id, "comment": comment, "created_at": created_at}
+    raise SproutError(f"unknown tag: {name}")
+
+
 def _bud_json(bud: Bud) -> dict[str, Any]:
     return {
         "id": bud.id,
@@ -1141,22 +1148,51 @@ def tag(
     delete: Annotated[
         str | None, typer.Option("--delete", help="Delete a tag")
     ] = None,
+    set_comment: Annotated[
+        str | None, typer.Option("--set-comment", help="Replace an existing tag comment")
+    ] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
-    """List, create, or delete tags."""
+    """List, create, delete, or edit tags."""
     repository = repo()
     if delete is not None:
-        if name is not None or commit is not None or comment:
+        if name is not None or commit is not None or comment or set_comment is not None:
             raise SproutError("--delete cannot be combined with tag creation arguments")
         repository.delete_tag(delete)
+        if json_output:
+            _echo_json({"name": delete, "deleted": True})
+            return
         typer.echo(f"Deleted tag {delete}")
+        return
+    if set_comment is not None:
+        if name is None:
+            raise SproutError("a tag name is required with --set-comment")
+        if commit is not None or comment:
+            raise SproutError("--comment and --set-comment cannot be used together")
+        repository.set_tag_comment(name, set_comment)
+        if json_output:
+            _echo_json(_tag_json(repository, name))
+            return
+        typer.echo(f"Updated comment for tag {name}")
         return
     if name is not None:
         commit_id = repository.create_tag(name, commit, comment)
+        if json_output:
+            _echo_json(_tag_json(repository, name))
+            return
         typer.echo(f"Created tag {name} at {commit_id[:12]}")
         return
     if commit is not None or comment:
         raise SproutError("a tag name is required")
     tags = repository.tags()
+    if json_output:
+        _echo_json(
+            [
+                {"name": tag_name, "commit_id": commit_id, "comment": tag_comment, "created_at": created_at}
+                for tag_name, commit_id, tag_comment, created_at in tags
+            ]
+        )
+        return
     if not tags:
         typer.echo("No tags")
         return
