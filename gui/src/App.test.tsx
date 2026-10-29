@@ -965,6 +965,24 @@ describe("Sprout GUI operations", () => {
       expect(screen.queryByRole("region", { name: "選択中のスナップショット" })).toBeNull();
     });
 
+    it("reports a failed confirmation without deleting and allows retrying", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      mocks.runSprout.mockResolvedValueOnce(deletion(true));
+      mocks.confirm.mockRejectedValueOnce("dialog.message not allowed");
+
+      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      expect(await screen.findByText("dialog.message not allowed")).toBeTruthy();
+      expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
+      expect(screen.getByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();
+
+      mocks.runSprout.mockResolvedValueOnce(deletion(true));
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
+      expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
+    });
+
     it("reports a refused deletion preview without asking", async () => {
       const user = userEvent.setup();
       await openDetail(user);

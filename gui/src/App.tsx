@@ -615,19 +615,15 @@ function App() {
   /** Preview the deletion, confirm its effects, then delete; cancelling changes nothing. */
   async function deleteCommit(commitId: string) {
     if (!projectDir || operationActive.current) return;
-    let preview = null as CommitDeletion | null;
-    const previewed = await execute(async () => {
-      preview = await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--dry-run"], sproutProgram);
-    });
-    if (!previewed || !preview) return;
-    const accepted = await confirmDialog(deletionSummary(preview), {
-      title: "この葉を削除",
-      kind: "warning",
-      okLabel: "削除",
-      cancelLabel: "キャンセル",
-    });
-    if (!accepted) return;
     await execute(async () => {
+      const preview = await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--dry-run"], sproutProgram);
+      const accepted = await confirmDialog(deletionSummary(preview), {
+        title: "この葉を削除",
+        kind: "warning",
+        okLabel: "削除",
+        cancelLabel: "キャンセル",
+      });
+      if (!accepted) return;
       await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--yes"], sproutProgram);
       await fetchWorkspace(projectDir);
       closeSelection();
