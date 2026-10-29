@@ -4,11 +4,12 @@ title: 未保存変更の判定でファイル全体のハッシュ計算を省�
 status: To Do
 assignee: []
 created_date: '2026-10-27 15:03'
-updated_date: '2026-10-27 15:16'
+updated_date: '2026-10-28 19:47'
 labels:
   - cli
   - performance
-dependencies: []
+dependencies:
+  - TASK-69
 references:
   - src/sprout/repository.py
 documentation:
@@ -28,6 +29,12 @@ TASK-51の計測では、追跡ファイル20件・計40 MBの作業ツリーで
 ## ゴール
 
 前回ハッシュ計算したときのサイズ・更新日時などを記録し、変わっていないファイルのハッシュ計算を省略する。内容が変わったのに検出できない状態を作らないことを最優先とする。
+
+## キャッシュの保存先と前提
+
+TASK-69で履歴DBから分離する、再生成可能な別のキャッシュDBを利用する。キャッシュの欠落・破損・非対応形式・書き込み不可によって履歴の読み出しや通常操作を妨げず、利用できない場合は全体のハッシュ計算へ安全に戻る。履歴DBの再初期化を要求しない。
+
+本タスクでは、この別DBの記録を利用する安全な判定の省略と性能改善を実装する。キャッシュを履歴DBの必須構造として追加しない。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

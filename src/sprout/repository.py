@@ -21,6 +21,7 @@ from typing import Any, BinaryIO, Callable, Iterator, TypeVar
 import zstandard
 from PIL import Image, UnidentifiedImageError
 
+from .cache import WorktreeCache
 from .errors import SproutError
 
 CONTROL_DIR = ".sprout"
@@ -59,7 +60,6 @@ REQUIRED_SCHEMA_TABLES = {
     "branches",
     "tags",
     "tracked_paths",
-    "worktree_cache",
     "repository_state",
     "buds",
     "bud_files",
@@ -182,15 +182,6 @@ CREATE TABLE tags (
 );
 CREATE TABLE tracked_paths (
     path TEXT PRIMARY KEY NOT NULL
-);
-CREATE TABLE worktree_cache (
-    path TEXT PRIMARY KEY NOT NULL REFERENCES tracked_paths(path) ON DELETE CASCADE,
-    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
-    mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
-    ctime_ns INTEGER NOT NULL CHECK (typeof(ctime_ns) = 'integer'),
-    file_id TEXT NOT NULL,
-    object_hash TEXT NOT NULL CHECK ({OBJECT_HASH_CHECK.format("object_hash")}),
-    recorded_ns INTEGER NOT NULL CHECK (typeof(recorded_ns) = 'integer')
 );
 CREATE TABLE buds (
     id TEXT PRIMARY KEY NOT NULL,
@@ -435,6 +426,7 @@ class Repository:
         self.db_path = self.control / DB_NAME
         self.objects = self.control / "objects"
         self.tmp = self.control / "tmp"
+        self.worktree_cache = WorktreeCache(self.control / "worktree-cache.db", self.db_path, self._restore_internal)
         self.progress = progress
 
     @classmethod
@@ -575,7 +567,11 @@ class Repository:
                 "SELECT s.current_commit_id FROM repository_state s "
                 "JOIN branches b ON b.id=s.head_branch_id WHERE s.id=1 AND b.deleted=0"
             ).fetchone()
-            if state is None or db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            invalid_reference = any(
+                db.execute(f'PRAGMA foreign_key_check("{table}")').fetchone() is not None
+                for table in sorted(REQUIRED_SCHEMA_TABLES)
+            )
+            if state is None or invalid_reference:
                 raise SproutError("invalid repository state or references; reinitialize the repository")
         found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
@@ -736,6 +732,7 @@ class Repository:
                 raise SproutError(f"file or directory does not exist: {value}")
         with self.connect() as db:
             db.executemany("INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)", ((p,) for p in paths))
+        self.worktree_cache.invalidate(paths)
         return sorted(paths)
 
     @locked
@@ -754,6 +751,7 @@ class Repository:
                     or self._path_key(path).startswith(prefix_key)
                 )
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in set(requested)))
+        self.worktree_cache.invalidate(requested)
         return sorted(set(requested))
 
     @locked
@@ -784,7 +782,6 @@ class Repository:
         os.replace(source_absolute, destination_absolute)
         try:
             with self.connect() as db:
-                db.execute("DELETE FROM worktree_cache WHERE path=?", (source_relative,))
                 db.execute(
                     "UPDATE tracked_paths SET path=? WHERE path=?",
                     (destination_relative, source_relative),
@@ -794,6 +791,7 @@ class Repository:
                 source_absolute.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(destination_absolute, source_absolute)
             raise
+        self.worktree_cache.invalidate([source_relative, destination_relative])
         return source_relative, destination_relative
 
     def tracked(self) -> set[str]:
@@ -1034,6 +1032,7 @@ class Repository:
             object_hash = digest.hexdigest()
             destination = self.objects / object_hash[:2] / object_hash
             destination.parent.mkdir(exist_ok=True)
+            self._check_object_encoding(object_hash)
             if destination.exists():
                 try:
                     existing_hash, existing_size = self._read_object(destination)
@@ -1058,6 +1057,8 @@ class Repository:
         self, db: sqlite3.Connection, objects: dict[str, int], created_at: str
     ) -> None:
         """Record stored object files in the same transaction that references them."""
+        for object_hash in objects:
+            self._check_object_encoding(object_hash, db)
         db.executemany(
             "INSERT INTO objects(hash, size, stored_size, encoding, file_mtime_ns, created_at) "
             "VALUES(?, ?, ?, ?, NULL, ?) ON CONFLICT(hash) DO NOTHING",
@@ -1072,6 +1073,19 @@ class Repository:
                 for object_hash, size in sorted(objects.items())
             ),
         )
+
+    def _check_object_encoding(self, object_hash: str, db: sqlite3.Connection | None = None) -> None:
+        if db is None:
+            with self.connect() as connection:
+                self._check_object_encoding(object_hash, connection)
+            return
+        row = db.execute("SELECT encoding FROM objects WHERE hash=?", (object_hash,)).fetchone()
+        if row is not None and row[0] != OBJECT_COMPRESSION:
+            raise SproutError(
+                f"unsupported object encoding {row[0]!r}: {object_hash}",
+                code="unsupported_object_encoding",
+                details={"object_hash": object_hash, "encoding": row[0]},
+            )
 
     @staticmethod
     def _read_object(
@@ -1099,6 +1113,7 @@ class Repository:
         return digest.hexdigest(), size
 
     def _copy_verified_object(self, item: FileState, target: BinaryIO | None = None) -> None:
+        self._check_object_encoding(item.object_hash)
         source = self.objects / item.object_hash[:2] / item.object_hash
         if not source.is_file():
             raise SproutError(f"missing object {item.object_hash} for {item.path}")
@@ -1282,6 +1297,7 @@ class Repository:
             self._set_current_commit(db, commit_id)
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
             branch_id = self._branch_id_from_db(db, branch)
+        self.worktree_cache.invalidate(missing)
         return CommitResult(commit_id, tuple(missing), branch, branch_id, created_branch)
 
     @staticmethod
@@ -2662,9 +2678,6 @@ class Repository:
                     "INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)",
                     ((path,) for path in target),
                 )
-                db.executemany(
-                    "DELETE FROM worktree_cache WHERE path=?", ((path,) for path in target)
-                )
             else:
                 db.execute("DELETE FROM tracked_paths")
                 db.executemany(
@@ -2700,6 +2713,7 @@ class Repository:
         current_commit: str | None | object = UNCHANGED,
         _receipt: _MaterializationReceipt | None = None,
     ) -> None:
+        self.worktree_cache.invalidate()
         current = self.tracked()
         plan = self._restore_plan(target, partial=partial)
         self._verify_manifest(target)
@@ -3126,6 +3140,8 @@ class Repository:
         """Replace the whole working tree, first keeping unsaved changes as a bud."""
         self._validate_restore_inputs(target)
         self._restore_plan(target, partial=False)
+        for item in target.values():
+            self._check_object_encoding(item.object_hash)
         stashed = self._save_bud() if self._has_unsaved_changes() else None
         receipt = _MaterializationReceipt()
         try:
