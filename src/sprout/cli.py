@@ -765,11 +765,25 @@ def diff(
         str | None,
         typer.Argument(help="Second commit; omit to compare against the working tree"),
     ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Show file-level differences between commits or the working tree."""
     repository = repo()
     with _show_progress(repository):
         entries = repository.diff(commit_a, commit_b)
+    if json_output:
+        _echo_json([
+            {
+                "state": entry.state,
+                "path": entry.path,
+                "old_size": entry.old_size,
+                "new_size": entry.new_size,
+            }
+            for entry in entries
+        ])
+        return
     if not entries:
         typer.echo("No differences")
         return

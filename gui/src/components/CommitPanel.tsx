@@ -29,6 +29,7 @@ interface CommitPanelProps {
   onSetThumbnail: (commitId: string) => void;
   onUpdateMessage: (commitId: string, message: string) => void;
   onExport: (commitId: string) => void;
+  onCompare: (commitId: string) => void;
   onDelete: (commitId: string) => void;
   onClose: () => void;
   annotations: Pick<ComponentProps<typeof CommitAnnotations>, "onSaveNote" | "onAddLabel" | "onRemoveLabel" | "onCreateTag" | "onSetTagComment" | "onDeleteTag">;
@@ -46,6 +47,7 @@ export default function CommitPanel({
   onSetThumbnail,
   onUpdateMessage,
   onExport,
+  onCompare,
   onDelete,
   onClose,
   annotations,
@@ -111,6 +113,7 @@ export default function CommitPanel({
         <div><dt>ID</dt><dd className="mono">{detail.id.slice(0, 12)}</dd></div>
       </dl>
       <div className="panel-actions">
+        <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
         <button className="button primary" onClick={() => onGo(detail.id)} disabled={busy || current}>
           {current ? "この芽にいます" : "ここへ移動"}
         </button>

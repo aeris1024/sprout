@@ -1148,4 +1148,21 @@ describe("Sprout GUI operations", () => {
     await user.keyboard("{Enter}");
     expect(within(screen.getByRole("region", { name: "選択中のブランチ" })).getByRole("heading", { name: "copy" })).toBeTruthy();
   });
+  it("selects comparison snapshots from the map without moving the working tree", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [commitEntry, { ...commitEntry, id: "b".repeat(64), message: "Second design" }]);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", files: [], attachments: [], thumbnail: null });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "比較元にする" }));
+    await user.click(screen.getByRole("button", { name: "Second design" }));
+    mocks.runSprout.mockResolvedValueOnce([]);
+    await user.click(screen.getByRole("button", { name: "比較する" }));
+    await screen.findByText("差分はありません");
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["diff", commitEntry.id, "b".repeat(64)], "");
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show", "diff"]);
+  });
 });

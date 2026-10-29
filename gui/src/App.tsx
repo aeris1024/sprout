@@ -3,6 +3,7 @@ import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import BranchPanel from "./components/BranchPanel";
 import BudPanel from "./components/BudPanel";
+import ComparePanel from "./components/ComparePanel";
 import CommitPanel from "./components/CommitPanel";
 import FilePanel from "./components/FilePanel";
 import ProjectMenu, { RecentProjectList, projectName } from "./components/ProjectMenu";
@@ -66,6 +67,8 @@ function App() {
   const [graph, setGraph] = useState<CommitGraph>(emptyGraph);
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
   const [selection, setSelection] = useState<MapSelection>(null);
+  const [comparison, setComparison] = useState<{ source: string; target: string } | null>(null);
+  useEffect(() => { setComparison(null); }, [projectDir]);
   const [filesOpen, setFilesOpen] = useState(false);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
@@ -139,6 +142,7 @@ function App() {
   }
 
   async function loadProject(path: string) {
+    setComparison(null);
     setInitCandidate("");
     setCommitDetail(null);
     setSelection(null);
@@ -309,6 +313,8 @@ function App() {
 
   function selectCommit(commitId: string) {
     if (!projectDir) return;
+    if (operationActive.current) return;
+    if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
     setSelection({ kind: "commit", id: commitId });
     setFilesOpen(false);
     void execute(async () => {
@@ -317,11 +323,13 @@ function App() {
   }
 
   function selectBud(budId: string) {
+    setComparison(null);
     setSelection({ kind: "bud", id: budId });
     setFilesOpen(false);
   }
 
   function selectBranch(branchId: string) {
+    setComparison(null);
     setSelection({ kind: "branch", id: branchId });
     setFilesOpen(false);
   }
@@ -359,6 +367,7 @@ function App() {
   }
 
   function selectUnsaved() {
+    setComparison(null);
     setSelection({ kind: "unsaved" });
     setFilesOpen(false);
   }
@@ -439,7 +448,7 @@ function App() {
 
   /** Ctrl+V with an image sets the thumbnail of the open save form or commit; text pastes pass through. */
   function pasteThumbnail(event: ClipboardEvent) {
-    if (!projectDir || !status || filesOpen || operationActive.current) return;
+    if (comparison || !projectDir || !status || filesOpen || operationActive.current) return;
     const commitId = selection?.kind === "commit" && commitDetail?.id === selection.id ? commitDetail.id : null;
     const saveForm = selection === null || selection.kind === "unsaved";
     if (!commitId && !saveForm) return;
@@ -593,6 +602,7 @@ function App() {
   }
 
   function openSaveForm() {
+    setComparison(null);
     setFilesOpen(false);
     setSelection({ kind: "unsaved" });
   }
@@ -636,12 +646,13 @@ function App() {
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
 
   function sidePanel() {
+    if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
       return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} onClose={() => setFilesOpen(false)} />;
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
+      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
         onSaveNote: saveNote,
         onAddLabel: addLabel,
         onRemoveLabel: removeLabel,
@@ -689,7 +700,7 @@ function App() {
         {status && (
           <>
             <button className="button ghost" onClick={refreshProject} disabled={busy}>更新</button>
-            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => setFilesOpen(!filesOpen)} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
+            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => { setComparison(null); setFilesOpen(!filesOpen); }} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
             <button className="button primary" onClick={openSaveForm} disabled={busy}>保存</button>
           </>
         )}

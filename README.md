@@ -604,7 +604,7 @@ sprout commit -m "ファイルを移動"
 | `message COMMIT TEXT [--json]` | コミットIDや保存内容を変えずにコミットメッセージを変更する |
 | `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
 | `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
-| `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
+| `diff [COMMIT_A] [COMMIT_B] [--json]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
 | `preview list\|add\|replace\|delete\|export\|order COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |

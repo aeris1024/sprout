@@ -1837,3 +1837,29 @@ def test_json_reports_branch_identity_for_position_and_branch_edits(tmp_path, mo
     graph = run(["tree"])
     assert {c["branch_id"] for c in graph["commits"] if c["message"] == "second"} == {side_id}
     assert side_id not in {branch["id"] for branch in graph["branches"]}
+
+
+def test_diff_json_is_read_only(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "changed.bin").write_bytes(b"old")
+    (project / "deleted.bin").write_bytes(b"gone")
+    assert invoke(["track", "changed.bin", "deleted.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout)["id"]
+    (project / "changed.bin").write_bytes(b"updated")
+    (project / "deleted.bin").unlink()
+    (project / "追加.bin").write_bytes(b"new")
+    assert invoke(["track", "追加.bin"], project, monkeypatch).exit_code == 0
+    second = json.loads(invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout)["id"]
+    before = invoke(["status", "--json"], project, monkeypatch).stdout
+    result = invoke(["diff", first, second, "--json"], project, monkeypatch)
+    assert result.exit_code == 0
+    entries = {entry["path"]: entry for entry in json.loads(result.stdout)}
+    assert entries == {
+        "changed.bin": {"path": "changed.bin", "state": "modified", "old_size": 3, "new_size": 7},
+        "deleted.bin": {"path": "deleted.bin", "state": "deleted", "old_size": 4, "new_size": None},
+        "追加.bin": {"path": "追加.bin", "state": "added", "old_size": None, "new_size": 3},
+    }
+    assert invoke(["status", "--json"], project, monkeypatch).stdout == before
+    assert json.loads(invoke(["diff", second, second, "--json"], project, monkeypatch).stdout) == []
+    assert (project / "changed.bin").read_bytes() == b"updated"

@@ -295,3 +295,10 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
   .detail-panel { border-left: 0; border-top: 1px solid var(--line); max-height: 50vh; }
   .settings-panel { grid-template-columns: 1fr; }
 }
+/* Snapshot comparison keeps long paths and commit names inside the side panel. */
+.field select { min-width: 0; width: 100%; padding: 8px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.panel-section[aria-label="スナップショットの比較"] { display: grid; gap: 12px; }
+.panel-section[aria-label="スナップショットの比較"] .file-list { margin: 0; padding: 0; list-style: none; }
+.panel-section[aria-label="スナップショットの比較"] .file-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; }
+.panel-section[aria-label="スナップショットの比較"] .file-row span { overflow-wrap: anywhere; }
+.panel-section[aria-label="スナップショットの比較"] .file-row small { grid-column: 2; color: var(--muted); }
