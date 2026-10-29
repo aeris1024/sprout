@@ -439,6 +439,21 @@ class PruneResult:
 
 
 @dataclass(frozen=True)
+class CommitDeletion:
+    """What deleting one commit changes, or would change with dry_run."""
+
+    commit: PruneCommit
+    dry_run: bool
+    parent_id: str | None
+    moved_branches: tuple[BranchReference, ...]
+    moved_current: bool
+    reconnected_children: tuple[str, ...]
+    rebased_buds: tuple[str, ...]
+    reclaimable_objects: tuple[str, ...]
+    reclaimable_bytes: int
+
+
+@dataclass(frozen=True)
 class DoctorIssue:
     kind: str
     detail: str
@@ -2346,6 +2361,133 @@ class Repository:
             current = parents[current]
         return current
 
+    def _reclaimable_objects(
+        self, db: sqlite3.Connection, removed: set[str]
+    ) -> tuple[tuple[str, ...], int]:
+        """Objects referenced only by the removed commits, and their stored size."""
+        removed_references: set[str] = set()
+        retained_references: set[str] = set()
+        for row in db.execute(
+            "SELECT commit_id, object_hash FROM commit_files "
+            "UNION ALL "
+            "SELECT commit_id, object_hash FROM commit_attachments"
+        ):
+            target = (
+                removed_references
+                if row["commit_id"] in removed
+                else retained_references
+            )
+            target.add(row["object_hash"])
+        stored_sizes = {
+            row["hash"]: row["stored_size"]
+            for row in db.execute("SELECT hash, stored_size FROM objects")
+        }
+        reclaimable = tuple(
+            sorted(
+                object_hash
+                for object_hash in removed_references - retained_references
+                if object_hash in stored_sizes and self._object_path(object_hash).is_file()
+            )
+        )
+        return reclaimable, sum(stored_sizes[object_hash] for object_hash in reclaimable)
+
+    @locked
+    def delete_commit(self, value: str, *, dry_run: bool = False) -> CommitDeletion:
+        """Delete one untagged commit, moving every reference to it onto its parent.
+
+        Branch tips, the current position and bud bases move to the parent and
+        children are reconnected to it. Working files are never touched, so a
+        deleted current snapshot remains as unsaved changes.
+        """
+        commit_id = self.resolve_commit(value)
+        try:
+            with self.connect() as db:
+                db.execute("BEGIN" if dry_run else "BEGIN IMMEDIATE")
+                row = db.execute(
+                    "SELECT id, parent_id, created_at, message FROM commits WHERE id=?",
+                    (commit_id,),
+                ).fetchone()
+                if row is None:
+                    raise SproutError(f"unknown commit: {commit_id}")
+                tags = [
+                    tag[0]
+                    for tag in db.execute(
+                        "SELECT name FROM tags WHERE commit_id=? ORDER BY name", (commit_id,)
+                    )
+                ]
+                if tags:
+                    raise SproutError(
+                        f"commit {commit_id[:12]} is tagged ({', '.join(tags)}); "
+                        "delete its tags first",
+                        code="tagged_commit",
+                        details={"commit_id": commit_id, "tags": tags},
+                    )
+                parent_id = row["parent_id"]
+                current_branch = db.execute(
+                    "SELECT head_branch_id FROM repository_state WHERE id=1"
+                ).fetchone()[0]
+                moved_branches = tuple(
+                    BranchReference(
+                        id=branch["id"],
+                        name=branch["name"],
+                        commit_id=parent_id,
+                        comment=branch["comment"],
+                        current=branch["id"] == current_branch,
+                    )
+                    for branch in db.execute(
+                        "SELECT id, name, comment FROM branches "
+                        "WHERE commit_id=? AND deleted=0 ORDER BY name",
+                        (commit_id,),
+                    )
+                )
+                moved_current = self._current_commit_from_db(db) == commit_id
+                children = tuple(
+                    child[0]
+                    for child in db.execute(
+                        "SELECT id FROM commits WHERE parent_id=? ORDER BY seq", (commit_id,)
+                    )
+                )
+                buds = tuple(
+                    bud[0]
+                    for bud in db.execute(
+                        "SELECT id FROM buds WHERE base_commit_id=? ORDER BY seq", (commit_id,)
+                    )
+                )
+                reclaimable, reclaimable_bytes = self._reclaimable_objects(db, {commit_id})
+
+                if not dry_run:
+                    # Deleted branches keep their identity rows; they follow too.
+                    db.execute(
+                        "UPDATE branches SET commit_id=? WHERE commit_id=?", (parent_id, commit_id)
+                    )
+                    if moved_current:
+                        self._set_current_commit(db, parent_id)
+                    db.execute(
+                        "UPDATE buds SET base_commit_id=? WHERE base_commit_id=?",
+                        (parent_id, commit_id),
+                    )
+                    db.execute(
+                        "UPDATE commits SET parent_id=? WHERE parent_id=?", (parent_id, commit_id)
+                    )
+                    db.execute("DELETE FROM commits WHERE id=?", (commit_id,))
+
+            return CommitDeletion(
+                commit=PruneCommit(row["id"], row["created_at"], row["message"]),
+                dry_run=dry_run,
+                parent_id=parent_id,
+                moved_branches=moved_branches,
+                moved_current=moved_current,
+                reconnected_children=children,
+                rebased_buds=buds,
+                reclaimable_objects=reclaimable,
+                reclaimable_bytes=reclaimable_bytes,
+            )
+        except sqlite3.Error as exc:
+            raise SproutError(
+                f"delete-commit failed; repository unchanged: {exc}",
+                code="delete_commit_failed",
+            ) from exc
+
     @locked
     def prune(
         self,
@@ -2418,31 +2560,7 @@ class Repository:
                     if parents[commit_id] in candidates
                 ]
 
-                removed_references: set[str] = set()
-                retained_references: set[str] = set()
-                for row in db.execute(
-                    "SELECT commit_id, object_hash FROM commit_files "
-                    "UNION ALL "
-                    "SELECT commit_id, object_hash FROM commit_attachments"
-                ):
-                    target = (
-                        removed_references
-                        if row["commit_id"] in candidates
-                        else retained_references
-                    )
-                    target.add(row["object_hash"])
-                stored_sizes = {
-                    row["hash"]: row["stored_size"]
-                    for row in db.execute("SELECT hash, stored_size FROM objects")
-                }
-                reclaimable = tuple(
-                    sorted(
-                        object_hash
-                        for object_hash in removed_references - retained_references
-                        if object_hash in stored_sizes and self._object_path(object_hash).is_file()
-                    )
-                )
-                reclaimable_bytes = sum(stored_sizes[object_hash] for object_hash in reclaimable)
+                reclaimable, reclaimable_bytes = self._reclaimable_objects(db, candidates)
                 removed_commits = tuple(
                     PruneCommit(row["id"], row["created_at"], row["message"])
                     for row in commit_rows

@@ -20,6 +20,7 @@ from .repository import (
     Bud,
     CommitAnnotations,
     CommitAttachment,
+    CommitDeletion,
     CommitGraph,
     FileState,
     GraphCommit,
@@ -376,6 +377,27 @@ def _prune_json(result: PruneResult) -> dict[str, Any]:
             }
             for commit in result.commits
         ],
+        "reclaimable_objects": list(result.reclaimable_objects),
+        "reclaimable_bytes": result.reclaimable_bytes,
+    }
+
+
+def _delete_commit_json(result: CommitDeletion) -> dict[str, Any]:
+    return {
+        "dry_run": result.dry_run,
+        "commit": {
+            "id": result.commit.id,
+            "created_at": result.commit.created_at,
+            "message": result.commit.message,
+        },
+        "parent_id": result.parent_id,
+        "moved_branches": [
+            {"id": branch.id, "name": branch.name, "current": branch.current}
+            for branch in result.moved_branches
+        ],
+        "moved_current": result.moved_current,
+        "reconnected_children": list(result.reconnected_children),
+        "rebased_buds": list(result.rebased_buds),
         "reclaimable_objects": list(result.reclaimable_objects),
         "reclaimable_bytes": result.reclaimable_bytes,
     }
@@ -1780,6 +1802,58 @@ def prune(
     action = "Would remove" if dry_run else "Removed"
     typer.echo(
         f"{action} {len(result.commits)} commits; "
+        f"{len(result.reclaimable_objects)} objects "
+        f"({result.reclaimable_bytes} bytes) become reclaimable"
+    )
+    if not dry_run and result.reclaimable_objects:
+        typer.echo("Run 'sprout gc' to reclaim object storage")
+
+
+@app.command(name="delete-commit")
+def delete_commit(
+    commit: Annotated[
+        str,
+        typer.Argument(
+            help="Commit ID, prefix, branch, or tag",
+            autocompletion=_complete_references,
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show what would change without deleting"),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Confirm the irreversible deletion"),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """Delete one untagged commit and move its references to its parent."""
+    if not dry_run and not yes:
+        raise SproutError(
+            "delete-commit is irreversible; review --dry-run, then rerun with --yes"
+        )
+    result = repo().delete_commit(commit, dry_run=dry_run)
+    if json_output:
+        _echo_json(_delete_commit_json(result))
+        return
+    parent = result.parent_id[:12] if result.parent_id else "no commit"
+    typer.echo(f"commit  {result.commit.id[:12]} {result.commit.message}")
+    for branch in result.moved_branches:
+        typer.echo(f"branch  {branch.name} -> {parent}")
+    if result.moved_current:
+        typer.echo(
+            f"current -> {parent} (working files are unchanged and stay as unsaved changes)"
+        )
+    if result.reconnected_children:
+        typer.echo(f"children reconnected to {parent}: {len(result.reconnected_children)}")
+    if result.rebased_buds:
+        typer.echo(f"buds rebased onto {parent}: {len(result.rebased_buds)}")
+    action = "Would delete" if dry_run else "Deleted"
+    typer.echo(
+        f"{action} commit {result.commit.id[:12]}; "
         f"{len(result.reclaimable_objects)} objects "
         f"({result.reclaimable_bytes} bytes) become reclaimable"
     )

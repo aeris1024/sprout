@@ -29,6 +29,7 @@ interface CommitPanelProps {
   onSetThumbnail: (commitId: string) => void;
   onUpdateMessage: (commitId: string, message: string) => void;
   onExport: (commitId: string) => void;
+  onDelete: (commitId: string) => void;
   onClose: () => void;
   annotations: Pick<ComponentProps<typeof CommitAnnotations>, "onSaveNote" | "onAddLabel" | "onRemoveLabel" | "onCreateTag" | "onSetTagComment" | "onDeleteTag">;
 }
@@ -45,6 +46,7 @@ export default function CommitPanel({
   onSetThumbnail,
   onUpdateMessage,
   onExport,
+  onDelete,
   onClose,
   annotations,
 }: CommitPanelProps) {
@@ -136,6 +138,14 @@ export default function CommitPanel({
           {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
         </button>
         <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
+        <button
+          className="button danger"
+          onClick={() => onDelete(detail.id)}
+          disabled={busy || commitTags.length > 0}
+          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、枝先・いまここ・子の芽は親へ移します"}
+        >
+          この葉を削除
+        </button>
       </div>
       <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       {!current && unsavedCount > 0 && (

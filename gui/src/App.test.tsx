@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import type { BranchInfo, CommitGraph, CommitLogEntry, SproutStatus } from "./lib/sprout";
+import type { BranchInfo, CommitDeletion, CommitGraph, CommitLogEntry, SproutStatus } from "./lib/sprout";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -921,6 +921,73 @@ describe("Sprout GUI operations", () => {
       expect(await screen.findByText("タグ 提出版 を削除しました")).toBeTruthy();
       expect(sentArgs()).toContainEqual(["tag", "--delete", "提出版"]);
       expect(tagRegion().getByText("タグはありません")).toBeTruthy();
+    });
+
+    const deletion = (dryRun: boolean): CommitDeletion => ({
+      dry_run: dryRun,
+      commit: { id, created_at: commitEntry.created_at, message: "Initial design" },
+      parent_id: null,
+      moved_branches: [{ id: "main", name: "main", current: true }],
+      moved_current: true,
+      reconnected_children: [],
+      rebased_buds: [],
+      reclaimable_objects: ["f".repeat(64)],
+      reclaimable_bytes: 12,
+    });
+
+    it("deletes a snapshot only after confirming its previewed effects", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      const deleteButton = () => screen.getByRole("button", { name: "この葉を削除" });
+
+      mocks.runSprout.mockResolvedValueOnce(deletion(true));
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(deleteButton());
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+      const [message, options] = mocks.confirm.mock.calls[0];
+      expect(message).toContain("Initial design");
+      expect(message).toContain("ブランチ main はコミットなしへ移ります");
+      expect(message).toContain("作業ファイルは変わらず、未保存の変更として残ります");
+      expect(message).toContain("sprout gc");
+      expect(options).toEqual(expect.objectContaining({ kind: "warning", okLabel: "削除" }));
+      expect(sentArgs()).toContainEqual(["delete-commit", id, "--dry-run"]);
+      expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
+      expect(screen.getByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();
+
+      mocks.runSprout.mockResolvedValueOnce(deletion(true)).mockResolvedValueOnce(deletion(false));
+      mockWorkspace({ ...cleanStatus, current_commit: null }, [], [{ ...mainBranch[0], commit_id: null }], {
+        current_commit: null, at_branch_tip: true, commits: [], tags: [], buds: [],
+        branches: [{ ...mainBranch[0], commit_id: null }],
+      });
+      await user.click(deleteButton());
+      expect(await screen.findByText(`スナップショット ${id.slice(0, 12)} を削除しました`)).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["delete-commit", id, "--yes"]);
+      expect(screen.queryByRole("region", { name: "選択中のスナップショット" })).toBeNull();
+    });
+
+    it("reports a refused deletion preview without asking", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      mocks.runSprout.mockRejectedValueOnce({ code: "tagged_commit", message: "commit is tagged", details: {} });
+      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      expect(await screen.findByText("commit is tagged")).toBeTruthy();
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
+    });
+
+    it("disables deleting a tagged snapshot and says why", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      const tag = { name: "提出版", commit_id: id, comment: "", created_at: "2026-10-29T00:00:00+00:00" };
+      const tagRegion = within(screen.getByRole("region", { name: "タグ" }));
+      await user.type(tagRegion.getByRole("textbox", { name: "新しいタグの名前" }), "提出版");
+      mockEdit(tag, {}, [tag]);
+      await user.click(tagRegion.getByRole("button", { name: "タグを付ける" }));
+      await screen.findByText("タグ 提出版 を付けました");
+
+      const deleteButton = screen.getByRole("button", { name: "この葉を削除" });
+      expect(deleteButton.hasAttribute("disabled")).toBe(true);
+      expect(deleteButton.getAttribute("title")).toContain("タグ付きの葉は削除できません");
     });
   });
 

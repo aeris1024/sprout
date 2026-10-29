@@ -263,6 +263,27 @@ sprout prune --all --yes
 
 `prune`は取り消せません。実行には`--yes`が必要で、削除後は残したコミットの親が元の履歴上で最も近い残存祖先へ接続されます。部分復元などで作業ツリーの内容が削除対象の過去コミットと一致する場合は、そのコミットへタグを付けるかブランチを作成するまで実行を拒否します。コミット削除だけではobjectsのファイルやSQLiteデータベース自体のサイズは縮まらないため、表示された容量を実際に回収するには続けて`sprout gc`を実行してください。SQLiteの`VACUUM`は行いません。
 
+## 葉を1枚だけ削除する
+
+失敗した保存や不要になった1枚のコミットだけを消す場合は`delete-commit`を使います。コミットID・接頭辞・ブランチ名・タグ名で指定できますが、タグ付きのコミットは削除できません（先にタグを外してください）。
+
+```powershell
+# 変更せずに影響（移るブランチ・いまここ・つなぎ直す子・付け替えるつぼみ）と回収可能な容量を確認
+sprout delete-commit 3f2a9c1b --dry-run
+
+# 確認した内容で削除する
+sprout delete-commit 3f2a9c1b --yes
+```
+
+削除するコミットを指していた参照は、すべてその親へ移します。
+
+- 同じコミットを先端とするすべてのブランチと「いまここ」は親へ移ります。作業ファイルは変更しないため、削除したスナップショットとの差分は未保存の変更として残ります。
+- 子のコミットは親へつなぎ直します。ルートのコミットを削除すると子がルートになり、親がない場合はブランチと現在位置がコミットなしになります。
+- そのコミットを起点にしたつぼみは、内容を変えず起点を親へ付け替えます。
+- そのコミットのファイル一覧・添付・メモ・ラベルは削除されます。他のコミットの内容は変わりません。
+
+`delete-commit`は取り消せないため、実行には`--yes`が必要です。`--dry-run`は何も変更せず、実際の削除と同じ影響を報告します。途中で失敗した場合はリポジトリを変更しません。`prune`と同じく、オブジェクトの容量を実際に回収するには続けて`sprout gc`を実行してください。
+
 ## 過去の状態へ戻る
 
 ブランチを切り替える場合は`switch`、特定のコミットを作業フォルダへ復元する場合は`restore`を使います。
@@ -601,6 +622,7 @@ sprout commit -m "ファイルを移動"
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
 | `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
+| `delete-commit COMMIT [--dry-run] [--yes] [--json]` | タグなしのコミットを1件削除し、ブランチ先端・現在位置・つぼみ・子を親へ移す |
 | `gc [--dry-run] [--json]` | どのコミットからも参照されないオブジェクトを削除する |
 | `doctor [--json]` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
 | `stats [--json]` | リポジトリの件数・容量と重複排除による節約量を表示する |
@@ -615,13 +637,14 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`・`archive`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`・`delete-commit`・`archive`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
 sprout log -n 5 --json
 sprout tree --json
 sprout prune first-draft submitted --dry-run --json
+sprout delete-commit <commit-id> --dry-run --json
 sprout show <commit-id> --json
 sprout branch --json
 sprout commit -m "first" --json
@@ -653,6 +676,19 @@ prune:
   "start_tag": string | null,
   "end_tag": string | null,
   "removed_commits": [{"id": string, "created_at": string, "message": string}],
+  "reclaimable_objects": [string],
+  "reclaimable_bytes": number
+}
+
+delete-commit:
+{
+  "dry_run": boolean,
+  "commit": {"id": string, "created_at": string, "message": string},
+  "parent_id": string | null,
+  "moved_branches": [{"id": string, "name": string, "current": boolean}],
+  "moved_current": boolean,
+  "reconnected_children": [string],
+  "rebased_buds": [string],
   "reclaimable_objects": [string],
   "reclaimable_bytes": number
 }

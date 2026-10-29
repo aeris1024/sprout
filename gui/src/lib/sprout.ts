@@ -128,6 +128,19 @@ export interface GoResult {
   changes: StatusChange[];
 }
 
+/** What `delete-commit` changes, or would change with --dry-run. */
+export interface CommitDeletion {
+  dry_run: boolean;
+  commit: { id: string; created_at: string; message: string };
+  parent_id: string | null;
+  moved_branches: { id: string; name: string; current: boolean }[];
+  moved_current: boolean;
+  reconnected_children: string[];
+  rebased_buds: string[];
+  reclaimable_objects: string[];
+  reclaimable_bytes: number;
+}
+
 export interface SproutCliError {
   code: string;
   message: string;

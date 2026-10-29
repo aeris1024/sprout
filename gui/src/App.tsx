@@ -14,6 +14,7 @@ import {
   normalizeCliError,
   runSprout,
   type Bud,
+  type CommitDeletion,
   type CommitDetail,
   type CommitGraph,
   type CommitResult,
@@ -32,6 +33,25 @@ const UNCHANGED_NOTE = "作業フォルダは変更していません。";
 
 function shortId(value: string | null): string {
   return value ? value.slice(0, 12) : "-";
+}
+
+/** Describe a delete-commit dry run so the confirmation lists every reference it moves. */
+function deletionSummary(preview: CommitDeletion): string {
+  const parent = preview.parent_id ? `親の芽（${shortId(preview.parent_id)}）` : "コミットなし";
+  const lines = [`スナップショット「${preview.commit.message}」（${shortId(preview.commit.id)}）を削除します。元に戻せません。`];
+  if (preview.moved_branches.length > 0) {
+    lines.push(`ブランチ ${preview.moved_branches.map((branch) => branch.name).join(", ")} は${parent}へ移ります。`);
+  }
+  if (preview.moved_current) lines.push(`いまここも${parent}へ移ります。作業ファイルは変わらず、未保存の変更として残ります。`);
+  if (preview.reconnected_children.length > 0) {
+    lines.push(`子の芽 ${preview.reconnected_children.length}件は${preview.parent_id ? "親の芽へつなぎ直されます" : "根になります"}。`);
+  }
+  if (preview.rebased_buds.length > 0) lines.push(`つぼみ ${preview.rebased_buds.length}件の起点は${parent}へ付け替わります。`);
+  if (preview.reclaimable_objects.length > 0) {
+    lines.push(`${preview.reclaimable_objects.length}個のオブジェクト（${preview.reclaimable_bytes} bytes）が sprout gc で回収できるようになります。`);
+  }
+  lines.push("続行しますか？");
+  return lines.join("\n");
 }
 
 /** Report a refused move with its reason and path, and that nothing was changed. */
@@ -592,6 +612,29 @@ function App() {
   const untracked = status?.untracked ?? [];
   const changes = status?.changes ?? [];
   const currentCommit = graph.current_commit;
+  /** Preview the deletion, confirm its effects, then delete; cancelling changes nothing. */
+  async function deleteCommit(commitId: string) {
+    if (!projectDir || operationActive.current) return;
+    let preview = null as CommitDeletion | null;
+    const previewed = await execute(async () => {
+      preview = await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--dry-run"], sproutProgram);
+    });
+    if (!previewed || !preview) return;
+    const accepted = await confirmDialog(deletionSummary(preview), {
+      title: "この葉を削除",
+      kind: "warning",
+      okLabel: "削除",
+      cancelLabel: "キャンセル",
+    });
+    if (!accepted) return;
+    await execute(async () => {
+      await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--yes"], sproutProgram);
+      await fetchWorkspace(projectDir);
+      closeSelection();
+      setNotice({ code: "commit_deleted", message: `スナップショット ${shortId(commitId)} を削除しました`, details: { commit_id: commitId }, kind: "success" });
+    });
+  }
+
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
@@ -602,7 +645,7 @@ function App() {
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onExport={exportFiles} onClose={closeSelection} annotations={{
+      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
         onSaveNote: saveNote,
         onAddLabel: addLabel,
         onRemoveLabel: removeLabel,
