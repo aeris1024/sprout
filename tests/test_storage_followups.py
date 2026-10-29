@@ -1,10 +1,15 @@
+import io
+import json
 import sqlite3
+import sys
 from contextlib import closing
 
 import pytest
+from PIL import Image
 
+from sprout import cli
 from sprout.errors import SproutError
-from sprout.repository import Repository
+from sprout.repository import Repository, utc_timestamp
 
 
 def saved(tmp_path):
@@ -138,3 +143,103 @@ def test_unsafe_cache_path_is_ignored(tmp_path, monkeypatch):
     assert repo.db_path.read_bytes() == before
     assert repo.current_commit() == first
     assert asset.read_bytes() == b"base"
+
+
+def unsupported(repo, digest):
+    with repo.connect() as db:
+        db.execute("UPDATE objects SET encoding='future' WHERE hash=?", (digest,))
+
+
+@pytest.mark.parametrize("operation", ["restore", "partial", "go", "export", "cat", "commit", "bud", "register"])
+def test_unsupported_encoding_rejects_without_changing_files_or_references(tmp_path, monkeypatch, operation):
+    repo, asset, first = saved(tmp_path)
+    monkeypatch.chdir(repo.root)
+    digest = repo.manifest(first)["asset.bin"].object_hash
+    unsupported(repo, digest)
+    output = tmp_path / "output"
+    output.mkdir()
+    existing = output / "asset.bin"
+    existing.write_bytes(b"valuable output")
+    stream = io.BytesIO()
+    if operation in {"restore", "partial", "go"}:
+        asset.write_bytes(b"unsaved work")
+    history = repo.db_path.read_bytes()
+    original = asset.read_bytes()
+    with pytest.raises(SproutError) as error:
+        if operation == "restore":
+            repo.restore(first, discard=True)
+        elif operation == "partial":
+            repo.restore(first, [asset], discard=True)
+        elif operation == "go":
+            repo.go(first)
+        elif operation == "export":
+            repo.export(first, output, force=True)
+        elif operation == "cat":
+            repo.cat(first, asset, stream)
+        elif operation == "commit":
+            repo.commit("reuse")
+        elif operation == "bud":
+            repo.save_bud()
+        else:
+            with repo.connect() as db:
+                repo._register_objects(db, {digest: 4}, utc_timestamp())
+    assert error.value.code == "unsupported_object_encoding"
+    assert error.value.details == {"object_hash": digest, "encoding": "future"}
+    assert digest in str(error.value) and "future" in str(error.value)
+    assert repo.db_path.read_bytes() == history
+    assert asset.read_bytes() == original
+    assert existing.read_bytes() == b"valuable output"
+    assert stream.getvalue() == b""
+    assert not list(repo.tmp.glob("object-*"))
+    assert "unsupported_object_encoding" in {issue.kind for issue in repo.doctor().issues}
+
+
+def test_unsupported_thumbnail_read_and_reuse_are_nonmutating(tmp_path):
+    repo, asset, first = saved(tmp_path)
+    image = repo.root / "art.png"
+    Image.new("RGB", (2, 2), "blue").save(image)
+    repo.set_thumbnail(first, image)
+    digest = repo.thumbnail(first).object_hash
+    unsupported(repo, digest)
+    destination = tmp_path / "thumbnail.png"
+    destination.write_bytes(b"keep")
+    before = repo.db_path.read_bytes()
+    for operation in (lambda: repo.export_thumbnail(first, destination, force=True),
+                      lambda: repo.set_thumbnail(first, image)):
+        with pytest.raises(SproutError) as error:
+            operation()
+        assert error.value.code == "unsupported_object_encoding"
+        assert error.value.details["object_hash"] == digest
+        assert destination.read_bytes() == b"keep"
+        assert repo.db_path.read_bytes() == before
+
+
+def test_zstd_read_and_reuse_remain_supported(tmp_path):
+    repo, asset, first = saved(tmp_path)
+    stream = io.BytesIO()
+    repo.cat(first, asset, stream)
+    assert stream.getvalue() == b"base"
+    other = repo.root / "copy.bin"
+    other.write_bytes(b"base")
+    repo.track([other])
+    repo.commit("reuse")
+    repo.restore(first, discard=True)
+    assert asset.read_bytes() == b"base"
+    assert repo.doctor().ok
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_unsupported_encoding_cli_error(tmp_path, monkeypatch, capsys, json_output):
+    repo, asset, first = saved(tmp_path)
+    digest = repo.manifest(first)["asset.bin"].object_hash
+    unsupported(repo, digest)
+    monkeypatch.chdir(repo.root)
+    monkeypatch.setattr(sys, "argv", ["sprout", "restore", first, "--discard"] + (["--json"] if json_output else []))
+    assert cli.main() == 1
+    captured = capsys.readouterr()
+    if json_output:
+        payload = json.loads(captured.err)
+        assert payload["code"] == "unsupported_object_encoding"
+        assert payload["details"] == {"object_hash": digest, "encoding": "future"}
+    else:
+        assert digest in captured.err and "future" in captured.err

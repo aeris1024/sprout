@@ -1032,6 +1032,7 @@ class Repository:
             object_hash = digest.hexdigest()
             destination = self.objects / object_hash[:2] / object_hash
             destination.parent.mkdir(exist_ok=True)
+            self._check_object_encoding(object_hash)
             if destination.exists():
                 try:
                     existing_hash, existing_size = self._read_object(destination)
@@ -1056,6 +1057,8 @@ class Repository:
         self, db: sqlite3.Connection, objects: dict[str, int], created_at: str
     ) -> None:
         """Record stored object files in the same transaction that references them."""
+        for object_hash in objects:
+            self._check_object_encoding(object_hash, db)
         db.executemany(
             "INSERT INTO objects(hash, size, stored_size, encoding, file_mtime_ns, created_at) "
             "VALUES(?, ?, ?, ?, NULL, ?) ON CONFLICT(hash) DO NOTHING",
@@ -1070,6 +1073,19 @@ class Repository:
                 for object_hash, size in sorted(objects.items())
             ),
         )
+
+    def _check_object_encoding(self, object_hash: str, db: sqlite3.Connection | None = None) -> None:
+        if db is None:
+            with self.connect() as connection:
+                self._check_object_encoding(object_hash, connection)
+            return
+        row = db.execute("SELECT encoding FROM objects WHERE hash=?", (object_hash,)).fetchone()
+        if row is not None and row[0] != OBJECT_COMPRESSION:
+            raise SproutError(
+                f"unsupported object encoding {row[0]!r}: {object_hash}",
+                code="unsupported_object_encoding",
+                details={"object_hash": object_hash, "encoding": row[0]},
+            )
 
     @staticmethod
     def _read_object(
@@ -1097,6 +1113,7 @@ class Repository:
         return digest.hexdigest(), size
 
     def _copy_verified_object(self, item: FileState, target: BinaryIO | None = None) -> None:
+        self._check_object_encoding(item.object_hash)
         source = self.objects / item.object_hash[:2] / item.object_hash
         if not source.is_file():
             raise SproutError(f"missing object {item.object_hash} for {item.path}")
@@ -3123,6 +3140,8 @@ class Repository:
         """Replace the whole working tree, first keeping unsaved changes as a bud."""
         self._validate_restore_inputs(target)
         self._restore_plan(target, partial=False)
+        for item in target.values():
+            self._check_object_encoding(item.object_hash)
         stashed = self._save_bud() if self._has_unsaved_changes() else None
         receipt = _MaterializationReceipt()
         try:
