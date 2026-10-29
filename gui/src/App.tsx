@@ -552,14 +552,45 @@ function App() {
     });
   }
 
-  function exportFiles(commitId: string) {
-    if (!projectDir || operationActive.current) return;
-    void open({ directory: true, multiple: false, title: "書き出し先のフォルダを選択" }).then((selected) => {
+  // Prefix option-like names so CLI argument parsing cannot treat them as flags.
+  function fileArguments(paths: string[]) {
+    return paths.map((path) => path.startsWith("-") ? `./${path}` : path);
+  }
+
+  function exportFiles(commitId: string, paths: string[] = []) {
+    if (!projectDir) return;
+    void execute(async () => {
+      const selected = await open({ directory: true, multiple: false, title: "書き出し先のフォルダを選択" });
       if (typeof selected !== "string") return;
-      void execute(async () => {
-        const result = await runSprout<{ paths: string[]; output: string }>(projectDir, ["export", commitId, "--output", selected], sproutProgram);
-        setNotice({ code: "exported", message: `${result.paths.length}件のファイルを ${result.output} へ書き出しました`, details: {}, kind: "success" });
+      const result = await runSprout<{ paths: string[]; output: string }>(projectDir, ["export", commitId, ...fileArguments(paths), "--output", selected], sproutProgram);
+      setNotice({ code: "exported", message: `${result.paths.length}件のファイルを ${result.output} へ書き出しました`, details: {}, kind: "success" });
+    });
+  }
+
+  function restoreFiles(commitId: string, paths: string[]) {
+    if (!projectDir || paths.length === 0) return;
+    void execute(async () => {
+      const targets = paths.join("\n");
+      const accepted = await confirmDialog(`${shortId(commitId)} の次の${paths.length}件を作業フォルダへ戻します。\n${targets}\n対象の作業ファイルを保存時の内容に置き換えます。選択外のファイル・現在位置・ブランチ先端は変わりません。続行しますか？`, {
+        title: "選択したファイルだけ戻す", kind: "warning", okLabel: "戻す", cancelLabel: "キャンセル",
       });
+      if (!accepted) return;
+      const args = ["restore", commitId, ...fileArguments(paths)];
+      try {
+        await runSprout(projectDir, args, sproutProgram);
+      } catch (cause) {
+        const error = normalizeCliError(cause);
+        if (error.code !== "uncommitted_changes" || error.details.can_discard !== true) throw unchangedError(cause);
+        const discard = await confirmDialog(`対象に未保存の変更があります。\n${targets}\nこの対象の未保存変更を破棄して戻しますか？破棄した変更は元に戻せません。`, {
+          title: "未保存変更の破棄を確認", kind: "warning", okLabel: "変更を破棄して戻す", cancelLabel: "キャンセル",
+        });
+        if (!discard) return;
+        try {
+          await runSprout(projectDir, [...args, "--discard"], sproutProgram);
+        } catch (failure) { throw unchangedError(failure); }
+      }
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "files_restored", message: `${paths.length}件のファイルを戻しました`, details: {}, kind: "success" });
     });
   }
 
@@ -652,7 +683,7 @@ function App() {
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
+      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
         onSaveNote: saveNote,
         onAddLabel: addLabel,
         onRemoveLabel: removeLabel,

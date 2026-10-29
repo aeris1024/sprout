@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentProps } from "react";
+import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
 import { branchIdentity, branchIdentityLabel, type BranchInfo, type CommitAttachment, type CommitDetail, type GraphTag } from "../lib/sprout";
 
@@ -28,7 +29,8 @@ interface CommitPanelProps {
   onGrow: (commitId: string, branchName: string) => void;
   onSetThumbnail: (commitId: string) => void;
   onUpdateMessage: (commitId: string, message: string) => void;
-  onExport: (commitId: string) => void;
+  onExport: (commitId: string, paths?: string[]) => void;
+  onRestoreFiles: (commitId: string, paths: string[]) => void;
   onCompare: (commitId: string) => void;
   onDelete: (commitId: string) => void;
   onClose: () => void;
@@ -47,6 +49,7 @@ export default function CommitPanel({
   onSetThumbnail,
   onUpdateMessage,
   onExport,
+  onRestoreFiles,
   onCompare,
   onDelete,
   onClose,
@@ -150,6 +153,7 @@ export default function CommitPanel({
           この葉を削除
         </button>
       </div>
+      <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />
       <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       {!current && unsavedCount > 0 && (
         <p className="panel-copy">{`移動すると、未保存の変更 ${unsavedCount}件は今の芽につぼみとして残ります。`}</p>

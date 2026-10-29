@@ -1165,4 +1165,100 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["diff", commitEntry.id, "b".repeat(64)], "");
     expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show", "diff"]);
   });
+
+  async function openSavedFiles(user: ReturnType<typeof userEvent.setup>) {
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [
+      { path: "assets/a.bin", size: 123, object_hash: "a", mtime_ns: 0 },
+      { path: "assets/sub/b.bin", size: 456, object_hash: "b", mtime_ns: 0 },
+      { path: "other.bin", size: 789, object_hash: "c", mtime_ns: 0 },
+    ] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await screen.findByRole("region", { name: "保存済みファイル" });
+  }
+
+  it("exports only selected directory files without force or workspace mutation", async () => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    expect(screen.getByText("123 B")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "assets/ 配下を選択" }));
+    mocks.open.mockResolvedValueOnce("C:\\export");
+    mocks.runSprout.mockResolvedValueOnce({ paths: ["assets/a.bin", "assets/sub/b.bin"], output: "C:\\export" });
+    await user.click(screen.getByRole("button", { name: "選択したファイルを取り出す" }));
+    await screen.findByText(/2件のファイルを.*へ書き出しました/);
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["export", commitEntry.id, "assets/a.bin", "assets/sub/b.bin", "--output", "C:\\export"], "");
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show", "export"]);
+  });
+
+  it("restores one file and refreshes changes without moving snapshot references", async () => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
+    mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, paths: ["assets/a.bin"] });
+    mockWorkspace({ ...cleanStatus, changes: [{ state: "modified", path: "assets/a.bin" }] });
+    await user.click(screen.getByRole("button", { name: "選択したファイルだけ戻す" }));
+    await screen.findByText("1件のファイルを戻しました");
+    expect(mocks.confirm.mock.calls[0][0]).toContain("assets/a.bin");
+    expect(mocks.confirm.mock.calls[0][0]).toContain("選択外のファイル・現在位置・ブランチ先端は変わりません");
+    expect(mocks.runSprout.mock.calls.map((call) => call[1])).toEqual([
+      ["status", "--tracked", "--untracked"], ["tree"], ["show", commitEntry.id],
+      ["restore", commitEntry.id, "assets/a.bin"], ["status", "--tracked", "--untracked"], ["tree"],
+    ]);
+    expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
+  });
+
+  it.each(["export", "restore"])("cancels %s before any CLI write", async (operation) => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
+    if (operation === "export") mocks.open.mockResolvedValueOnce(null);
+    else mocks.confirm.mockResolvedValueOnce(false);
+    await user.click(screen.getByRole("button", { name: operation === "export" ? "選択したファイルを取り出す" : "選択したファイルだけ戻す" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show"]);
+  });
+
+  it.each([false, true])("retries with discard only after explicit approval: %s", async (accepted) => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
+    mocks.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(accepted);
+    mocks.runSprout.mockRejectedValueOnce({ code: "uncommitted_changes", message: "Unsaved", details: { can_discard: true } });
+    if (accepted) {
+      mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, paths: ["assets/a.bin"] });
+      mockWorkspace();
+    }
+    await user.click(screen.getByRole("button", { name: "選択したファイルだけ戻す" }));
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
+    const calls = mocks.runSprout.mock.calls.filter((call) => call[1][0] === "restore");
+    expect(calls.map((call) => call[1])).toEqual(accepted
+      ? [["restore", commitEntry.id, "assets/a.bin"], ["restore", commitEntry.id, "assets/a.bin", "--discard"]]
+      : [["restore", commitEntry.id, "assets/a.bin"]]);
+  });
+
+  it.each(["unsafe_restore_path", "untracked_conflict", "restore_path_conflict"])("shows %s without bypassing safety", async (code) => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
+    mocks.runSprout.mockRejectedValueOnce({ code, message: "Cannot restore", details: { path: "assets/a.bin" } });
+    await user.click(screen.getByRole("button", { name: "選択したファイルだけ戻す" }));
+    expect(await screen.findByText(/Cannot restore/)).toBeTruthy();
+    expect(screen.getByText("対象: assets/a.bin")).toBeTruthy();
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "restore")).toHaveLength(1);
+  });
+
+  it("reports an export collision without forcing overwrite", async () => {
+    const user = userEvent.setup();
+    await openSavedFiles(user);
+    await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
+    mocks.open.mockResolvedValueOnce("C:\\export");
+    mocks.runSprout.mockRejectedValueOnce({ code: "output_exists", message: "Already exists", details: { path: "assets/a.bin" } });
+    await user.click(screen.getByRole("button", { name: "選択したファイルを取り出す" }));
+    await screen.findByText("Already exists");
+    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "export")).toHaveLength(1);
+    expect(mocks.runSprout.mock.lastCall?.[1]).not.toContain("--force");
+  });
 });
