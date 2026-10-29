@@ -366,6 +366,42 @@ sprout export <commit-id> assets/ --output ../preview --force
 sprout cat <commit-id> assets/image.png > old-image.png
 ```
 
+## 全履歴を静的アーカイブへ書き出す
+
+Sproutを使わなくなった後も過去のファイルと履歴を参照できるよう、DBに残る全コミットを通常のファイル・HTML・JSONへ一括展開できます。現在のブランチから到達できない、削除済みブランチ由来のコミットも含みます。出力はWebブラウザとファイルマネージャーだけで閲覧でき、サーバー、CDN、JavaScript、Sprout、Pythonを必要としません。フォルダごと別の場所へコピーしても相対リンクで閲覧できます。
+
+```powershell
+# 実行前にコミット数・作成予定ファイル数・推定展開容量・出力先の空き容量を確認
+sprout archive --output ../sprout-archive --dry-run
+
+# 書き出す（出力先は存在しないか空のディレクトリ）
+sprout archive --output ../sprout-archive
+sprout archive --output ../sprout-archive --json
+```
+
+出力構成は次のとおりです。
+
+```text
+sprout-archive/
+  index.html      全コミットの日時・ID・メッセージ・ブランチ・タグ・メモ・ラベル・親子関係
+  archive.json    リポジトリID・作成日時、全ブランチ（削除済みを含む）・タグ・コミットのメタデータ
+  README.txt      アーカイブの説明
+  snapshots/<UTCのコミット日時>_<短縮コミットID>/   例: 20261029T010203.123456Z_0123456789ab
+    index.html    コミットの詳細、サムネイル、保存された表示順のpreview、ファイル一覧
+    commit.json   archive.jsonと同じそのコミットの情報
+    files/        コミット時の相対パス構造のままのファイル
+    attachments/thumbnail/<添付ID>/<元ファイル名>
+    attachments/previews/<表示順3桁>_<添付ID>/<元ファイル名>
+```
+
+JSONにはコミットの親ID・子ID・作成時のブランチ名とID・メモ・ラベル、ファイルのパス・サイズ・SHA-256、添付の添付ID・役割・表示順・元ファイル名・メディア種別・サイズ・SHA-256・アーカイブ内の位置を保存します。`repository_id`と`repository_created_at`により、コピー後も元のリポジトリを一意に識別できます。添付は添付IDごとのフォルダへ置くため、元ファイル名が同じpreviewも上書きされません。ファイル名に使えない文字はアーカイブ上のファイル名でだけ`_`へ置き換え、JSONとHTMLには元の名前を残します。HTMLでは画像を`img`、音声を`audio`、動画を`video`で表示・再生し、その他の形式はリンクから開けます。
+
+`.sprout`では同じ内容を1つの圧縮オブジェクトとして共有しますが、アーカイブでは全コミットの全ファイルを非圧縮のまま個別に書き出すため、容量は「コミット数×各コミットのファイルサイズ」に近くなり、`.sprout`より大幅に増えることがあります。書き出し前に推定容量と空き容量を比較し、不足する場合は何も書かずに`archive_insufficient_space`エラーにします（`--dry-run`では終了コード1）。
+
+既存の空でない出力先やファイルへは書き込みません。書き出しは出力先の隣の`.<出力名>.sprout-archive-incomplete`で行い、完了した時点で出力先へ名前を変えます。この作業フォルダには`SPROUT-ARCHIVE-INCOMPLETE.txt`を置くため、中断された出力を識別できます。同じ出力先で再実行すると、この目印がある作業フォルダだけを削除してやり直します。目印のない同名フォルダがある場合は削除せずエラーにします。展開中にオブジェクトの欠落・破損（SHA-256やサイズの不一致）を検出した場合は、対象のコミット、ファイルパスまたは添付IDを示す`archive_object_invalid`エラーで失敗し、作業フォルダを削除します。完成したように見えるアーカイブは残りません。
+
+コミットのファイル更新日時は`export`と同じく復元しますが、Sproutが保存していない空ディレクトリ、権限、所有者、シンボリックリンク、拡張属性などは再現しません。つぼみ（未コミットの変更）はアーカイブに含みません。
+
 ## コミットのサムネイルを管理する
 
 既存コミットにもサムネイルを後付けできます。画像を置き換えても、最初に登録した日時は維持され、更新日時だけが変わります。
@@ -537,6 +573,7 @@ sprout commit -m "ファイルを移動"
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元・破棄する |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force] [--json]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
+| `archive --output DIR [--dry-run] [--json]` | 削除済みブランチ由来を含む全コミットを、Sprout非依存の静的HTML・JSON・通常ファイルへ一括展開する |
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
 | `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
@@ -554,7 +591,7 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`・`archive`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json

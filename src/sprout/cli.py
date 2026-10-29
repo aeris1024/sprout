@@ -16,6 +16,7 @@ import typer._completion_shared as typer_completion_shared
 from . import __version__
 from .errors import SproutError
 from .repository import (
+    ArchivePlan,
     Bud,
     CommitAnnotations,
     CommitAttachment,
@@ -1647,6 +1648,63 @@ def export_command(
         f"Exported {len(result.paths)} file(s) from {result.commit_id[:12]} "
         f"to {output.resolve()}"
     )
+
+
+def _archive_plan_json(plan: ArchivePlan, *, dry_run: bool) -> dict[str, Any]:
+    return {
+        "dry_run": dry_run,
+        "output": str(plan.output),
+        "commits": plan.commits,
+        "files": plan.files,
+        "estimated_bytes": plan.bytes,
+        "free_bytes": plan.free_bytes,
+        "sufficient_space": plan.sufficient_space,
+        "removes_incomplete": plan.removes_incomplete,
+    }
+
+
+@app.command(name="archive")
+def archive_command(
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output", "-o", help="New or empty directory to write the static archive"
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Show counts, estimated size and free space without writing",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
+    """Expand every commit into static HTML, JSON and plain files."""
+    repository = repo()
+    if dry_run:
+        plan = repository.plan_archive(output)
+    else:
+        with _show_progress(repository, enabled=not json_output):
+            plan = repository.archive(output)
+    if json_output:
+        _echo_json(_archive_plan_json(plan, dry_run=dry_run))
+        return
+    typer.echo(f"Commits:         {plan.commits}")
+    typer.echo(f"Files:           {plan.files}")
+    typer.echo(f"Estimated size:  {plan.bytes} bytes")
+    typer.echo(f"Free space:      {plan.free_bytes} bytes")
+    if plan.removes_incomplete:
+        typer.echo(f"Incomplete archive to replace: {plan.staging}")
+    if dry_run:
+        if not plan.sufficient_space:
+            typer.echo("Not enough free space for this archive")
+            raise typer.Exit(1)
+        typer.echo(f"Would archive {plan.commits} commit(s) to {plan.output}")
+        return
+    typer.echo(f"Archived {plan.commits} commit(s) to {plan.output}")
 
 
 @app.command(name="cat")

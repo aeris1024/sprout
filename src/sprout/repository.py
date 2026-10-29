@@ -14,7 +14,7 @@ import time
 import unicodedata
 import uuid
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
@@ -23,6 +23,8 @@ from typing import Any, BinaryIO, Callable, Iterable, Iterator, TypeVar
 import zstandard
 from PIL import Image, UnidentifiedImageError
 
+from . import __version__
+from . import archive as static_archive
 from .cache import WorktreeCache
 from .errors import SproutError
 
@@ -353,6 +355,32 @@ class CommitGraph:
 class ExportResult:
     commit_id: str
     paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ArchiveCopy:
+    path: str
+    item: FileState
+    details: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ArchivePlan:
+    """What a static archive would write, computed without writing anything."""
+
+    output: Path
+    staging: Path
+    commits: int
+    files: int
+    bytes: int
+    free_bytes: int
+    removes_incomplete: bool
+    texts: dict[str, bytes] = field(repr=False, compare=False)
+    copies: tuple[_ArchiveCopy, ...] = field(repr=False, compare=False)
+
+    @property
+    def sufficient_space(self) -> bool:
+        return self.free_bytes >= self.bytes
 
 
 @dataclass(frozen=True)
@@ -3316,6 +3344,294 @@ class Repository:
         self._copy_verified_object(item)
         self._copy_verified_object(item, target)
         return commit_id
+
+    @staticmethod
+    def _archive_attachment_json(
+        attachment: CommitAttachment, archive_path: str
+    ) -> dict[str, Any]:
+        return {
+            "id": attachment.id,
+            "role": attachment.role,
+            "position": attachment.position,
+            "original_name": attachment.original_name,
+            "media_type": attachment.media_type,
+            "size": attachment.size,
+            "sha256": attachment.object_hash,
+            "created_at": attachment.created_at,
+            "updated_at": attachment.updated_at,
+            "archive_path": archive_path,
+        }
+
+    def _archive_model(self) -> tuple[dict[str, Any], list[_ArchiveCopy]]:
+        """Read every commit, including unreachable ones, from one SQLite snapshot."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            metadata = {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM meta")}
+            commit_rows = list(db.execute("SELECT * FROM commits ORDER BY seq DESC"))
+            commit_ids = [row["id"] for row in commit_rows]
+            files: dict[str, list[FileState]] = {commit_id: [] for commit_id in commit_ids}
+            for row in db.execute(
+                "SELECT f.commit_id, f.path, f.object_hash, f.size, o.file_mtime_ns "
+                "FROM commit_files f JOIN objects o ON o.hash=f.object_hash ORDER BY f.commit_id, f.path"
+            ):
+                files[row["commit_id"]].append(
+                    FileState(row["path"], row["object_hash"], row["size"], row["file_mtime_ns"] or 0)
+                )
+            attachments = self._attachments_many_from_db(db, commit_ids)
+            annotations = self._annotations_many_from_db(db, commit_ids)
+            branch_rows = list(
+                db.execute("SELECT id, name, commit_id, comment, deleted FROM branches ORDER BY deleted, name, id")
+            )
+            tag_rows = list(db.execute("SELECT name, commit_id, comment, created_at FROM tags ORDER BY name"))
+            state = db.execute(
+                "SELECT head_branch_id, current_commit_id FROM repository_state WHERE id=1"
+            ).fetchone()
+
+        short_names = [
+            static_archive.snapshot_directory_name(row["created_at"], row["id"]) for row in commit_rows
+        ]
+        children: dict[str, list[str]] = {commit_id: [] for commit_id in commit_ids}
+        for row in reversed(commit_rows):
+            if row["parent_id"] is not None and row["parent_id"] in children:
+                children[row["parent_id"]].append(row["id"])
+
+        copies: list[_ArchiveCopy] = []
+        commits: list[dict[str, Any]] = []
+        for row, short_name in zip(commit_rows, short_names):
+            commit_id = row["id"]
+            name = (
+                short_name
+                if short_names.count(short_name) == 1
+                else static_archive.snapshot_directory_name(row["created_at"], commit_id, len(commit_id))
+            )
+            directory = f"snapshots/{name}"
+            file_entries = []
+            for item in files[commit_id]:
+                parts = item.path.split("/")
+                if Path(item.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+                    raise SproutError(f"commit {commit_id[:12]} has an unsafe path: {item.path}")
+                archive_path = f"{directory}/files/{item.path}"
+                file_entries.append(
+                    {"path": item.path, "size": item.size, "sha256": item.object_hash, "archive_path": archive_path}
+                )
+                copies.append(
+                    _ArchiveCopy(
+                        archive_path,
+                        item,
+                        {"commit_id": commit_id, "path": item.path, "object_hash": item.object_hash},
+                    )
+                )
+            thumbnail = None
+            previews = []
+            for attachment in attachments[commit_id]:
+                file_name = static_archive.safe_file_name(attachment.original_name)
+                if attachment.role == THUMBNAIL_ROLE:
+                    archive_path = f"{directory}/attachments/thumbnail/{attachment.id}/{file_name}"
+                    thumbnail = self._archive_attachment_json(attachment, archive_path)
+                else:
+                    archive_path = (
+                        f"{directory}/attachments/previews/"
+                        f"{attachment.position + 1:03d}_{attachment.id}/{file_name}"
+                    )
+                    previews.append(self._archive_attachment_json(attachment, archive_path))
+                copies.append(
+                    _ArchiveCopy(
+                        archive_path,
+                        FileState(attachment.original_name, attachment.object_hash, attachment.size, 0),
+                        {
+                            "commit_id": commit_id,
+                            "attachment_id": attachment.id,
+                            "role": attachment.role,
+                            "original_name": attachment.original_name,
+                            "object_hash": attachment.object_hash,
+                        },
+                    )
+                )
+            commits.append(
+                {
+                    "id": commit_id,
+                    "seq": row["seq"],
+                    "parent_id": row["parent_id"],
+                    "children_ids": children[commit_id],
+                    "branch_id": row["branch_id"],
+                    "branch_name": row["branch_name"],
+                    "created_at": row["created_at"],
+                    "message": row["message"],
+                    "note": annotations[commit_id].note,
+                    "note_updated_at": annotations[commit_id].note_updated_at,
+                    "labels": list(annotations[commit_id].labels),
+                    "directory": directory,
+                    "files": file_entries,
+                    "thumbnail": thumbnail,
+                    "previews": previews,
+                }
+            )
+
+        model = {
+            "format": static_archive.ARCHIVE_FORMAT,
+            "format_version": static_archive.ARCHIVE_FORMAT_VERSION,
+            "generator": f"sprout {__version__}",
+            "generated_at": utc_timestamp(),
+            "repository": {
+                "repository_id": metadata["repository_id"],
+                "repository_created_at": metadata["repository_created_at"],
+                "schema_version": metadata["schema_version"],
+            },
+            "current_branch_id": state["head_branch_id"],
+            "current_commit_id": state["current_commit_id"],
+            "branches": [
+                {
+                    "id": branch["id"],
+                    "name": branch["name"],
+                    "commit_id": branch["commit_id"],
+                    "comment": branch["comment"],
+                    "deleted": bool(branch["deleted"]),
+                }
+                for branch in branch_rows
+            ],
+            "tags": [
+                {
+                    "name": tag["name"],
+                    "commit_id": tag["commit_id"],
+                    "comment": tag["comment"],
+                    "created_at": tag["created_at"],
+                }
+                for tag in tag_rows
+            ],
+            "commits": commits,
+        }
+        return model, copies
+
+    def plan_archive(self, output: Path) -> ArchivePlan:
+        """Validate the destination and size every file a static archive would write."""
+        output_root = output.resolve(strict=False)
+        if output_root == self.control or self.control in output_root.parents:
+            raise SproutError("cannot archive into Sprout metadata")
+        if output_root == self.root or output_root in self.root.parents:
+            raise SproutError("archive output must not contain the project")
+        if output_root.exists() and not output_root.is_dir():
+            raise SproutError(f"archive output is not a directory: {output}", code="archive_output_exists")
+        if output_root.is_dir() and any(output_root.iterdir()):
+            raise SproutError(
+                f"archive output is not empty: {output}",
+                code="archive_output_not_empty",
+                details={"output": str(output_root)},
+            )
+        staging = output_root.with_name(f".{output_root.name}{static_archive.INCOMPLETE_SUFFIX}")
+        removes_incomplete = False
+        if staging.exists() or staging.is_symlink():
+            if staging.is_symlink() or not (staging / static_archive.INCOMPLETE_MARKER).is_file():
+                raise SproutError(
+                    f"unrecognized path where the incomplete archive is staged: {staging}",
+                    code="archive_staging_conflict",
+                    details={"staging": str(staging)},
+                )
+            removes_incomplete = True
+
+        model, copies = self._archive_model()
+        view = {
+            **model,
+            "commits_by_id": {commit["id"]: commit for commit in model["commits"]},
+            "branches_by_id": {branch["id"]: branch for branch in model["branches"]},
+        }
+        texts = {
+            "index.html": static_archive.render_index(view),
+            "archive.json": static_archive.to_json(model),
+            "README.txt": static_archive.render_readme(model),
+        }
+        for commit in model["commits"]:
+            texts[f"{commit['directory']}/index.html"] = static_archive.render_commit(view, commit)
+            texts[f"{commit['directory']}/commit.json"] = static_archive.to_json(commit)
+        encoded = {path: text.encode("utf-8") for path, text in texts.items()}
+        total = sum(len(data) for data in encoded.values()) + sum(copy.item.size for copy in copies)
+
+        existing = output_root
+        while not existing.exists():
+            existing = existing.parent
+        return ArchivePlan(
+            output=output_root,
+            staging=staging,
+            commits=len(model["commits"]),
+            files=len(encoded) + len(copies),
+            bytes=total,
+            free_bytes=shutil.disk_usage(existing).free,
+            removes_incomplete=removes_incomplete,
+            texts=encoded,
+            copies=tuple(copies),
+        )
+
+    @staticmethod
+    def _extended_path(path: Path) -> Path:
+        if os.name != "nt":
+            return path
+        text = str(path)
+        if text.startswith("\\\\?\\"):
+            return path
+        if text.startswith("\\\\"):
+            return Path("\\\\?\\UNC\\" + text[2:])
+        return Path("\\\\?\\" + text)
+
+    def archive(self, output: Path) -> ArchivePlan:
+        """Expand every commit into a static archive that appears only when complete."""
+        plan = self.plan_archive(output)
+        if not plan.sufficient_space:
+            raise SproutError(
+                f"not enough free space for archive: needs {plan.bytes} bytes, "
+                f"{plan.free_bytes} bytes available",
+                code="archive_insufficient_space",
+                details={"required_bytes": plan.bytes, "free_bytes": plan.free_bytes},
+            )
+        # Deep snapshot paths easily exceed MAX_PATH on Windows.
+        staging = self._extended_path(plan.staging)
+        output = self._extended_path(plan.output)
+        if plan.removes_incomplete:
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
+        marker = staging / static_archive.INCOMPLETE_MARKER
+        marker.write_bytes(
+            b"This Sprout archive was interrupted before completion and is incomplete.\n"
+            b"Rerun 'sprout archive' with the same output to replace it.\n"
+        )
+        try:
+            extracted: dict[tuple[str, int], Path] = {}
+            for copy in plan.copies:
+                destination = staging / copy.path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                key = (copy.item.object_hash, copy.item.size)
+                if key in extracted:
+                    shutil.copyfile(extracted[key], destination)
+                else:
+                    try:
+                        with destination.open("xb") as target:
+                            self._copy_verified_object(copy.item, target)
+                    except SproutError as exc:
+                        subject = (
+                            f"file {copy.details['path']}"
+                            if "path" in copy.details
+                            else f"{copy.details['role']} {copy.details['attachment_id']} "
+                            f"({copy.details['original_name']})"
+                        )
+                        raise SproutError(
+                            f"archive aborted: {subject} of commit "
+                            f"{copy.details['commit_id'][:12]}: {exc}",
+                            code="archive_object_invalid",
+                            details=copy.details,
+                        ) from exc
+                    extracted[key] = destination
+                if copy.item.mtime_ns:
+                    os.utime(destination, ns=(copy.item.mtime_ns, copy.item.mtime_ns))
+            for relative, data in plan.texts.items():
+                destination = staging / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+            marker.unlink()
+            if output.is_dir():
+                output.rmdir()
+            os.rename(staging, output)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return plan
 
     @locked
     def restore(
