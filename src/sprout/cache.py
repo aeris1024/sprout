@@ -91,12 +91,32 @@ class WorktreeCache:
         except (OSError, sqlite3.Error, SproutError, InvalidCache):
             return None
 
+    def lookup(self, paths: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Read many observations through one connection; unusable caches read as empty."""
+        try:
+            with closing(self._connect()) as db:
+                rows = (db.execute("SELECT * FROM worktree_cache WHERE path=?", (p,)).fetchone()
+                        for p in paths)
+                return {row["path"]: dict(row) for row in rows if row is not None}
+        except (OSError, sqlite3.Error, SproutError, InvalidCache):
+            return {}
+
     def put(self, path: str, *, size: int, mtime_ns: int, ctime_ns: int,
             file_id: str, object_hash: str, recorded_ns: int) -> None:
+        self.record([{"path": path, "size": size, "mtime_ns": mtime_ns, "ctime_ns": ctime_ns,
+                      "file_id": file_id, "object_hash": object_hash, "recorded_ns": recorded_ns}])
+
+    def record(self, entries: Iterable[dict[str, Any]]) -> None:
+        entries = list(entries)
+        if not entries:
+            return
         try:
             with closing(self._connect()) as db, db:
-                db.execute("INSERT OR REPLACE INTO worktree_cache VALUES(?,?,?,?,?,?,?)",
-                           (path, size, mtime_ns, ctime_ns, file_id, object_hash, recorded_ns))
+                db.executemany(
+                    "INSERT OR REPLACE INTO worktree_cache VALUES"
+                    "(:path,:size,:mtime_ns,:ctime_ns,:file_id,:object_hash,:recorded_ns)",
+                    entries,
+                )
         except (OSError, sqlite3.Error, SproutError, InvalidCache):
             pass
 

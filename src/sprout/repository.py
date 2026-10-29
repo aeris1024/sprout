@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import time
 import unicodedata
 import uuid
 from contextlib import closing, contextmanager
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterator, TypeVar
+from typing import Any, BinaryIO, Callable, Iterable, Iterator, TypeVar
 
 import zstandard
 from PIL import Image, UnidentifiedImageError
@@ -32,6 +33,8 @@ RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
 IO_CHUNK_SIZE = 1024 * 1024
+# Coarsest common modification-time granularity (FAT keeps 2 seconds).
+RACY_MARGIN_NS = 2_000_000_000
 THUMBNAIL_ROLE = "thumbnail"
 THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 THUMBNAIL_MAX_DIMENSION = 4096
@@ -865,6 +868,53 @@ class Repository:
         return digest.hexdigest(), size
 
     @staticmethod
+    def _file_signature(info: os.stat_result) -> dict[str, Any]:
+        return {
+            "size": info.st_size,
+            "mtime_ns": info.st_mtime_ns,
+            "ctime_ns": info.st_ctime_ns,
+            "file_id": f"{info.st_dev}:{info.st_ino}",
+        }
+
+    def _hash_worktree_files(
+        self, relatives: Iterable[str], *, progress: bool = True
+    ) -> dict[str, tuple[str, int]]:
+        """Hash present working files, skipping files whose observed metadata is unchanged.
+
+        A cached hash is reused only when size, times and file identity all match and
+        the file was last modified at least RACY_MARGIN_NS before it was observed. A
+        later rewrite then always lands in a newer timestamp granule, so it cannot keep
+        the recorded modification time. Anything else is hashed again.
+        """
+        relatives = sorted(relatives)
+        if not relatives:
+            return {}
+        cached = self.worktree_cache.lookup(relatives)
+        result: dict[str, tuple[str, int]] = {}
+        observed: list[dict[str, Any]] = []
+        for relative in relatives:
+            path = self.root / Path(relative)
+            recorded_ns = time.time_ns()
+            signature = self._file_signature(path.stat())
+            row = cached.get(relative)
+            if (
+                row is not None
+                and all(row[key] == value for key, value in signature.items())
+                and row["recorded_ns"] - row["mtime_ns"] >= RACY_MARGIN_NS
+            ):
+                result[relative] = (row["object_hash"], row["size"])
+                continue
+            digest, size = self.hash_file(path, self.progress if progress else None, relative)
+            result[relative] = (digest, size)
+            # A file that changed while it was read is hashed again next time.
+            if size == signature["size"] and self._file_signature(path.stat()) == signature:
+                observed.append(
+                    {"path": relative, **signature, "object_hash": digest, "recorded_ns": recorded_ns}
+                )
+        self.worktree_cache.record(observed)
+        return result
+
+    @staticmethod
     def _branch_id_from_db(db: sqlite3.Connection, name: str) -> str:
         row = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
         if row is None:
@@ -950,17 +1000,18 @@ class Repository:
     def status(self) -> list[StatusEntry]:
         tracked = self.tracked()
         head = self.manifest(self.current_commit())
+        present = {relative for relative in tracked if (self.root / Path(relative)).is_file()}
+        hashes = self._hash_worktree_files(present & set(head))
         result: list[StatusEntry] = []
         for relative in sorted(tracked | set(head)):
-            path = self.root / Path(relative)
-            if relative not in tracked or not path.is_file():
+            if relative not in present:
                 if relative in head:
                     result.append(StatusEntry("deleted", relative))
                 continue
             if relative not in head:
                 result.append(StatusEntry("added", relative))
                 continue
-            digest, size = self.hash_file(path, self.progress, relative)
+            digest, size = hashes[relative]
             if digest != head[relative].object_hash or size != head[relative].size:
                 result.append(StatusEntry("modified", relative))
         return result
@@ -985,14 +1036,11 @@ class Repository:
         return result
 
     def _working_tree_manifest(self) -> dict[str, FileState]:
-        result: dict[str, FileState] = {}
-        for relative in self.tracked():
-            path = self.root / Path(relative)
-            if not path.is_file():
-                continue
-            digest, size = self.hash_file(path, self.progress, relative)
-            result[relative] = FileState(relative, digest, size, 0)
-        return result
+        present = (relative for relative in self.tracked() if (self.root / Path(relative)).is_file())
+        return {
+            relative: FileState(relative, digest, size, 0)
+            for relative, (digest, size) in self._hash_worktree_files(present).items()
+        }
 
     def diff(
         self, commit_a: str | None = None, commit_b: str | None = None
@@ -2070,15 +2118,9 @@ class Repository:
                     tracked = {
                         row[0] for row in db.execute("SELECT path FROM tracked_paths")
                     }
-                    working_signature: dict[str, tuple[str, int]] | None = {}
-                    for relative in sorted(tracked):
-                        path = self.root / Path(relative)
-                        if not path.is_file():
-                            working_signature = None
-                            break
-                        working_signature[relative] = self.hash_file(
-                            path, self.progress, relative
-                        )
+                    working_signature: dict[str, tuple[str, int]] | None = None
+                    if all((self.root / Path(relative)).is_file() for relative in tracked):
+                        working_signature = self._hash_worktree_files(tracked)
                     if working_signature is not None:
                         current_tip = db.execute(
                             "SELECT b.commit_id FROM branches b "
@@ -2485,8 +2527,9 @@ class Repository:
             if any(self._path_key(p.as_posix()) in selected for p in Path(relative).parents):
                 raise SproutError(f"conflicting paths in snapshot: {relative}")
         actions: list[dict[str, Any]] = []
+        hashes = self._hash_worktree_files(originals, progress=False)
         for relative, path in sorted(originals.items()):
-            digest, size = self.hash_file(path)
+            digest, size = hashes[relative]
             actions.append({"kind": "backup", "path": relative, "hash": digest,
                             "size": size, "mtime_ns": path.stat().st_mtime_ns})
         actions.extend({"kind": "rmdir", "path": p} for p in sorted(remove_dirs, key=lambda p: (-len(Path(p).parts), p)))
@@ -2713,9 +2756,10 @@ class Repository:
         current_commit: str | None | object = UNCHANGED,
         _receipt: _MaterializationReceipt | None = None,
     ) -> None:
-        self.worktree_cache.invalidate()
         current = self.tracked()
         plan = self._restore_plan(target, partial=partial)
+        # Planning only reads the working tree; forget observations before rewriting it.
+        self.worktree_cache.invalidate()
         self._verify_manifest(target)
 
         operation_id = "restore-" + uuid.uuid4().hex
@@ -2811,13 +2855,9 @@ class Repository:
             status_paths = paths
             exact = False
 
-        signature: dict[str, tuple[str, int]] | None = {}
-        for relative in sorted(hash_paths):
-            path = self.root / Path(relative)
-            if not path.is_file():
-                signature = None
-                break
-            signature[relative] = self.hash_file(path, self.progress, relative)
+        signature: dict[str, tuple[str, int]] | None = None
+        if all((self.root / Path(relative)).is_file() for relative in hash_paths):
+            signature = self._hash_worktree_files(hash_paths)
 
         has_changes = False
         for relative in sorted(status_paths):
