@@ -43,6 +43,22 @@ const graph: CommitGraph = {
 };
 
 describe("layoutSproutMap", () => {
+  it.each([0, 1])("preserves creation order across branches when clocks repeat or roll back (%s)", (minute) => {
+    const a = commit("a", null, "main", 1);
+    const b = commit("b", "a", "main", 1);
+    const c = commit("c", "a", "side", minute);
+    const commits = [c, b, a];
+    expect(layoutSproutMap(tree(commits)).leaves.map((leaf) => leaf.commit.id)).toEqual(["a", "b", "c"]);
+    expect(commits).toEqual([c, b, a]);
+    expect(c.created_at).toBe(commit("c", "a", "side", minute).created_at);
+  });
+
+  it("places a parent first even when the supplied array puts it before its child", () => {
+    expect(layoutSproutMap(tree([
+      commit("a", null, "main", 2), commit("b", "a", "main", 0),
+    ])).leaves.map((leaf) => leaf.commit.id)).toEqual(["a", "b"]);
+  });
+
   it("keeps branch identity across renames and reuses names on distinct lanes", () => {
     const root = { ...commit("root", null, "original-id", 1), branch_name: "old-name" };
     const renamed = { ...commit("renamed", "root", "original-id", 2), branch_name: "new-name" };

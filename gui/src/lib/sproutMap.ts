@@ -118,14 +118,11 @@ export interface SproutMapLayout {
 }
 
 /**
- * Order commits oldest first. The CLI lists newest first, so within one second the
- * later array position is older; parents are always placed before their children.
+ * The CLI lists commits newest first by creation sequence, independent of clocks.
+ * Parents are always placed before their children.
  */
 function oldestFirst(commits: GraphCommit[]): GraphCommit[] {
-  const sorted = commits
-    .map((commit, index) => ({ commit, index }))
-    .sort((a, b) => a.commit.created_at.localeCompare(b.commit.created_at) || b.index - a.index)
-    .map((item) => item.commit);
+  const sorted = [...commits].reverse();
   const byId = new Map(sorted.map((commit) => [commit.id, commit]));
   const placed = new Set<string>();
   const result: GraphCommit[] = [];
