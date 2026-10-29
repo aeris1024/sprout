@@ -17,6 +17,30 @@ Sproutはファイルの差分ではなく、その時点のファイル構成�
 
 ## インストール
 
+### まとめてインストール（Windows）
+
+リポジトリのルートにある`install.cmd`をダブルクリックすると、CLIのインストール、GUIのビルド、GUIのインストールをまとめて行います。ターミナルからは次のコマンドでも実行できます。
+
+```powershell
+.\install.cmd
+```
+
+[uv](https://docs.astral.sh/uv/)、Node.js 20.19以降、pnpm、Rust stable（MSVC）、Visual Studio 2022のC++ビルドツールが必要です。足りないツールがある場合は、導入方法を表示して中止します。GUIはユーザー単位でインストールされるため、管理者権限は不要です。GUIの初回ビルドには数分かかります。
+
+再実行すると、現在のコードでCLIとGUIを更新します。GUIを起動中の場合は終了してから実行してください。次のオプションも使えます。
+
+```powershell
+# CLIだけをインストールする（Node.jsやRustは不要）
+.\install.cmd -CliOnly
+
+# GUIはインストールせず、インストーラーの作成までにする
+.\install.cmd -BuildOnly
+```
+
+CLIのインストール先がPATHにない場合は警告が出ます。`uv tool update-shell`を実行してターミナルを開き直してください。
+
+### 個別にインストール
+
 Python 3.12以降が必要です。[uv](https://docs.astral.sh/uv/)を利用すると、次のコマンドで開発環境を準備できます。
 
 ```powershell
@@ -61,7 +85,7 @@ sprout --show-completion
 
 ## デスクトップGUI
 
-`gui/`にはTauri 2 + React + TypeScript + Viteで構築したWindows向けGUIがあります。GUIはSproutの管理データへ直接触れず、PATHまたは設定画面で指定したCLIを`--json`付きで呼び出します。
+`gui/`にはTauri 2 + React + TypeScript + Viteで構築したWindows向けGUIがあります。GUIはSproutの管理データへ直接触れず、PATHまたは設定画面で指定したCLIを`--json`付きで呼び出します。インストールは前述の`install.cmd`でまとめて行えます。開発中は次のコマンドで起動します。
 
 ```powershell
 cd gui

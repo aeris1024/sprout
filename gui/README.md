@@ -12,7 +12,9 @@ GUIは`.sprout`を直接操作せず、Rust側の共通IPCコマンドから`spr
 - Visual Studio 2022のDesktop development with C++とWindows SDK
 - PATH上のSprout CLI、またはGUIの「CLI設定」で指定する実行ファイル
 
-リポジトリのルートからSprout CLIをインストールする場合は次を実行します。
+リポジトリのルートで`install.cmd`を実行すると、CLIのインストールとGUIのビルド・インストールをまとめて行えます。CLIだけなら`.\install.cmd -CliOnly`、インストーラーの作成までなら`.\install.cmd -BuildOnly`です。詳しくはルートの[README.md](../README.md#まとめてインストールwindows)を参照してください。
+
+CLIだけを手動でインストールする場合は、リポジトリのルートで次を実行します。
 
 ```powershell
 uv tool install .
