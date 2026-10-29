@@ -220,7 +220,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
     assert metadata["schema_version"] == "1"
     assert tables == {
         "meta", "objects", "commits", "commit_files", "commit_attachments", "commit_notes",
-        "commit_labels", "branches", "tags", "tracked_paths", "worktree_cache", "buds",
+        "commit_labels", "branches", "tags", "tracked_paths", "buds",
         "bud_files", "repository_state",
     }
     assert metadata["object_compression"] == "zstd"

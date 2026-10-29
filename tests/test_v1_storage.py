@@ -152,9 +152,7 @@ def test_database_rejects_invalid_identity_size_and_references(tmp_path, stateme
     "DROP INDEX idx_single_thumbnail",
     "ALTER TABLE commits DROP COLUMN message",
     "DROP TABLE objects",
-    "DROP TABLE worktree_cache",
     "DROP INDEX idx_commit_files_object",
-    "ALTER TABLE worktree_cache DROP COLUMN file_id",
 ])
 def test_incomplete_v1_is_rejected_without_repair(tmp_path, statement):
     repo = Repository.init(tmp_path / "project")
@@ -187,17 +185,13 @@ def test_failure_after_same_position_finalize_keeps_backup_bud(tmp_path, monkeyp
 
 
 def cache_row(repo, relative):
-    with repo.connect() as db:
-        db.execute(
-            "INSERT INTO worktree_cache(path, size, mtime_ns, ctime_ns, file_id, object_hash, recorded_ns) "
-            "VALUES(?, 1, 1, 1, '1', ?, 1)",
-            (relative, "0" * 64),
-        )
+    repo.worktree_cache.put(relative, size=1, mtime_ns=1, ctime_ns=1,
+                            file_id="1", object_hash="0" * 64, recorded_ns=1)
 
 
 def cached_paths(repo):
-    with repo.connect() as db:
-        return {row[0] for row in db.execute("SELECT path FROM worktree_cache")}
+    # Read through the public cache API so expired history bindings are honored.
+    return {p for p in ("asset.bin", "other.bin", "moved.bin") if repo.worktree_cache.get(p)}
 
 
 def test_every_foreign_key_is_backed_by_an_index(tmp_path):
@@ -278,8 +272,6 @@ def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path)
     "UPDATE objects SET stored_size=-1",
     "UPDATE commits SET created_at='2026-10-29T00:00:00+00:00'",
     "UPDATE commits SET seq=0",
-    "INSERT INTO worktree_cache(path, size, mtime_ns, ctime_ns, file_id, object_hash, recorded_ns) "
-    f"VALUES('untracked.bin', 1, 1, 1, '1', '{'0' * 64}', 1)",
 ])
 def test_database_rejects_invalid_objects_times_order_and_cache(tmp_path, statement):
     repo, _, _ = committed_repo(tmp_path)
@@ -349,7 +341,7 @@ def test_worktree_cache_is_cleared_by_untrack_move_restore_and_missing_files(tmp
     cache_row(repo, "other.bin")
 
     repo.restore(first, [asset], discard=True)
-    assert cached_paths(repo) == {"other.bin"}
+    assert cached_paths(repo) == set()  # History writes conservatively expire all observations.
     repo.move(other, repo.root / "moved.bin")
     assert cached_paths(repo) == set()
     cache_row(repo, "moved.bin")
