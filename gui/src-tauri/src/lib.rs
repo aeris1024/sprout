@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const THUMBNAIL_MAX_BYTES: usize = 2 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const PASTE_DIR_PREFIX: &str = "sprout-gui-paste-";
 
 #[derive(Debug, Serialize)]
 struct SproutCliError {
@@ -358,13 +359,98 @@ fn read_sprout_thumbnail(
     thumbnail_data_url(&media_type, &bytes?)
 }
 
+fn pasted_thumbnail_extension(media_type: &str) -> Result<&'static str, SproutCliError> {
+    match media_type {
+        "image/png" => Ok("png"),
+        "image/jpeg" => Ok("jpg"),
+        "image/webp" => Ok("webp"),
+        _ => Err(SproutCliError::new(
+            "unsupported_thumbnail_type",
+            "貼り付けた画像はサムネイルに使えない形式です（PNG・JPEG・WebPに対応）",
+            json!({ "media_type": media_type }),
+        )),
+    }
+}
+
+/// Write pasted image bytes to a fresh directory so the CLI records a plain file name.
+fn write_pasted_thumbnail(root: &Path, media_type: &str, data: &str) -> Result<PathBuf, SproutCliError> {
+    let extension = pasted_thumbnail_extension(media_type)?;
+    let bytes = BASE64.decode(data).map_err(|error| {
+        SproutCliError::new(
+            "invalid_clipboard_image",
+            "貼り付けた画像を読み込めませんでした",
+            json!({ "reason": error.to_string() }),
+        )
+    })?;
+    if bytes.is_empty() {
+        return Err(SproutCliError::new("invalid_clipboard_image", "貼り付けた画像が空です", json!({})));
+    }
+    if bytes.len() > THUMBNAIL_MAX_BYTES {
+        return Err(SproutCliError::new(
+            "thumbnail_too_large",
+            "貼り付けた画像がサムネイルの上限（2 MiB）を超えています",
+            json!({ "size": bytes.len(), "limit": THUMBNAIL_MAX_BYTES }),
+        ));
+    }
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let directory = root.join(format!("{PASTE_DIR_PREFIX}{}-{sequence}", std::process::id()));
+    let path = directory.join(format!("clipboard.{extension}"));
+    let written = fs::create_dir(&directory).and_then(|()| fs::write(&path, &bytes));
+    if let Err(error) = written {
+        let _ = fs::remove_dir_all(&directory);
+        return Err(SproutCliError::new(
+            "clipboard_image_write_failed",
+            "貼り付けた画像を一時ファイルへ保存できませんでした",
+            json!({ "reason": error.to_string() }),
+        ));
+    }
+    Ok(path)
+}
+
+/// Remove a file created by write_pasted_thumbnail; other paths are refused.
+fn remove_pasted_thumbnail(root: &Path, path: &Path) -> Result<(), SproutCliError> {
+    let directory = path.parent().filter(|directory| {
+        directory.parent() == Some(root)
+            && directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(PASTE_DIR_PREFIX))
+    });
+    let Some(directory) = directory else {
+        return Err(SproutCliError::new(
+            "invalid_request",
+            "貼り付け用の一時ファイルではありません",
+            json!({ "path": path.to_string_lossy() }),
+        ));
+    };
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir(directory);
+    Ok(())
+}
+
+#[tauri::command]
+fn save_pasted_thumbnail(media_type: String, data: String) -> Result<String, SproutCliError> {
+    write_pasted_thumbnail(&std::env::temp_dir(), &media_type, &data)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn discard_pasted_thumbnail(path: String) -> Result<(), SproutCliError> {
+    remove_pasted_thumbnail(&std::env::temp_dir(), Path::new(&path))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ServeState::default())
-        .invoke_handler(tauri::generate_handler![run_sprout, read_sprout_thumbnail])
+        .invoke_handler(tauri::generate_handler![
+            run_sprout,
+            read_sprout_thumbnail,
+            save_pasted_thumbnail,
+            discard_pasted_thumbnail
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
 }
@@ -430,5 +516,30 @@ mod tests {
         );
         let error = thumbnail_data_url("video/mp4", &[1]).unwrap_err();
         assert_eq!(error.code, "unsupported_thumbnail_type");
+    }
+
+    #[test]
+    fn writes_and_discards_pasted_thumbnails() {
+        let root = std::env::temp_dir().join(format!("sprout-gui-paste-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+
+        let path = write_pasted_thumbnail(&root, "image/png", "AQID").unwrap();
+        assert_eq!(path.file_name().unwrap(), "clipboard.png");
+        assert_eq!(fs::read(&path).unwrap(), vec![1, 2, 3]);
+        remove_pasted_thumbnail(&root, &path).unwrap();
+        assert!(!path.exists());
+        assert!(!path.parent().unwrap().exists());
+
+        let other = root.join("keep.png");
+        fs::write(&other, [1]).unwrap();
+        assert_eq!(remove_pasted_thumbnail(&root, &other).unwrap_err().code, "invalid_request");
+        assert!(other.exists());
+
+        assert_eq!(write_pasted_thumbnail(&root, "image/gif", "AQID").unwrap_err().code, "unsupported_thumbnail_type");
+        assert_eq!(write_pasted_thumbnail(&root, "image/png", "!!").unwrap_err().code, "invalid_clipboard_image");
+        let large = BASE64.encode(vec![0; THUMBNAIL_MAX_BYTES + 1]);
+        assert_eq!(write_pasted_thumbnail(&root, "image/png", &large).unwrap_err().code, "thumbnail_too_large");
+        fs::remove_dir_all(&root).unwrap();
     }
 }
