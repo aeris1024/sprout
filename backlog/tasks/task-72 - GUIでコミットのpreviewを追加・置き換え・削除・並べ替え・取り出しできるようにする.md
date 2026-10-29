@@ -4,6 +4,7 @@ title: GUIでコミットのpreviewを追加・置き換え・削除・並べ替
 status: To Do
 assignee: []
 created_date: '2026-10-29T14:58:00Z'
+updated_date: '2026-10-29T16:35:00Z'
 labels: []
 dependencies:
   - TASK-38
@@ -12,7 +13,7 @@ references:
   - gui/src/components/CommitPanel.tsx
   - gui/src/App.tsx
   - gui/src/lib/clipboard.ts
-priority: low
+priority: high
 type: feature
 ordinal: 72000
 ---
