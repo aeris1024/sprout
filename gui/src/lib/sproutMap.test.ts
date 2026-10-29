@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAP, SIDE_LABEL, branchLabelText, estimateChipText, lanePath, layoutSproutMap, tagChip } from "./sproutMap";
+import { BRANCH_LABEL, LABEL_LINE, MAP, branchLabelText, estimateChipText, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip } from "./sproutMap";
 import type { BranchInfo, CommitGraph, GraphCommit, GraphTag } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {
@@ -82,38 +82,45 @@ describe("layoutSproutMap", () => {
     ]);
   });
 
-  it("puts older snapshots lower and alternates leaves along each stem", () => {
+  it("puts older snapshots to the left, one column each, with leaves above the stem", () => {
     const layout = layoutSproutMap(graph);
     const byId = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
 
-    expect(byId.a.y).toBeGreaterThan(byId.b.y);
-    expect(byId.b.y).toBeGreaterThan(byId.c.y);
-    expect(byId.c.y).toBeGreaterThan(byId.d.y);
-    expect([byId.a.side, byId.b.side, byId.c.side, byId.d.side]).toEqual([-1, 1, -1, 1]);
-    expect(byId.a.leafX).toBe(byId.a.x - MAP.gap - MAP.leafWidth);
-    expect(byId.b.leafX).toBe(byId.b.x + MAP.gap);
-    expect(layout.groundY).toBeGreaterThan(byId.a.y);
+    expect(layout.leaves.map((leaf) => leaf.x)).toEqual(layout.leaves.map((_, index) => MAP.left + index * MAP.column));
+    expect(byId.b.x).toBeGreaterThan(byId.a.x);
+    expect(byId.c.x).toBeGreaterThan(byId.b.x);
+    expect(byId.d.x).toBeGreaterThan(byId.c.x);
+    expect(new Set(layout.leaves.map((leaf) => leaf.x)).size).toBe(layout.leaves.length);
+    expect([byId.b.y, byId.c.y, byId.d.y]).toEqual([byId.a.y, byId.a.y, byId.a.y]);
+    expect(byId.a.leafX).toBe(byId.a.x - MAP.leafWidth / 2);
+    expect(byId.a.leafY + MAP.leafHeight + MAP.caption + MAP.stalk).toBe(byId.a.y);
+    expect(byId.a.leafY).toBeGreaterThanOrEqual(0);
   });
 
-  it("grows branches from their fork point and marks deleted origins", () => {
+  it("grows branches from their fork point on rows below and marks deleted origins", () => {
     const layout = layoutSproutMap(graph);
     const lanes = Object.fromEntries(layout.lanes.map((lane) => [lane.name, lane]));
     const byId = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
 
     expect(lanes.main.fork).toBeNull();
-    expect(lanes.side.fork).toEqual({ x: byId.b.x, y: byId.b.y, side: byId.b.side });
-    expect(lanes.side.x).toBeGreaterThan(lanes.main.x);
+    expect(lanes.side.fork).toEqual({ x: byId.b.x, y: byId.b.y });
+    expect(lanes.side.y).toBeGreaterThan(lanes.main.y);
+    expect(byId.x.y).toBe(lanes.side.y);
+    // A row below starts after the leaves of the row above it.
+    expect(lanes.side.y - MAP.above).toBeGreaterThanOrEqual(lanes.main.y);
+    expect([lanes.main.startX, lanes.main.endX]).toEqual([byId.a.x, byId.d.x]);
     expect(lanes.gone.live).toBe(false);
     expect(lanes.side.live).toBe(true);
+    expect([0, 1, 4, 5].map(laneColor)).toEqual([1, 2, 5, 1]);
   });
 
-  it("routes a fork from a right-side leaf above that leaf", () => {
-    const lane = { id: "x", name: "x", x: 500, fork: { x: 100, y: 400, side: 1 as const }, bottomY: 300, topY: 100, live: true };
-    const path = lanePath(lane, 900);
-    const turnY = 400 - MAP.leafHeight / 2 - 12;
-    expect(path.startsWith(`M100 400 V${turnY} C`)).toBe(true);
-    expect(lanePath({ ...lane, fork: { ...lane.fork, side: -1 } }, 900).startsWith("M100 400 V400 C")).toBe(true);
-    expect(lanePath({ ...lane, fork: null }, 900)).toBe("M500 900 V100");
+  it("curves a fork down to its row before the next column", () => {
+    const lane = { id: "x", name: "x", y: 400, fork: { x: 100, y: 200 }, startX: 248, endX: 544, live: true };
+    expect(lanePath(lane)).toBe("M100 200 C140 200 120 400 180 400 H544");
+    expect(lanePath({ ...lane, fork: null })).toBe(`M${MAP.groundX} 400 H544`);
+    const from = { x: 100, y: 200 };
+    expect(pendingPath({ x: 248, y: 200, leafX: 0, leafY: 0, from, fork: false })).toBe("M100 200 H248");
+    expect(pendingPath({ x: 248, y: 400, leafX: 0, leafY: 0, from, fork: true })).toBe("M100 200 C140 200 120 400 180 400 H248");
   });
 
   it("labels branch tips, tags, buds, and the current position", () => {
@@ -134,11 +141,13 @@ describe("layoutSproutMap", () => {
     expect(layoutSproutMap(tree([], [])).leaves).toEqual([]);
   });
 
-  it("places buds kept before the first commit on the ground", () => {
+  it("places buds kept before the first commit below the map", () => {
     const rootBud = (id: string) => ({ id, base_commit_id: null, branch_id: "main", branch_name: "main", created_at: "", changes: [], files: [] });
     const layout = layoutSproutMap({ ...graph, buds: [...graph.buds, rootBud("r1"), rootBud("r2")] });
     expect(layout.rootBuds.map((item) => item.bud.id)).toEqual(["r1", "r2"]);
-    expect(layout.rootBuds.every((item) => item.y > layout.groundY)).toBe(true);
+    const lowest = Math.max(...layout.lanes.map((lane) => lane.y));
+    expect(layout.rootBuds.every((item) => item.y > lowest)).toBe(true);
+    expect(layout.height).toBeGreaterThanOrEqual(layout.rootBuds[0].y + MAP.budHeight);
     expect(layout.rootBuds[1].x - layout.rootBuds[0].x).toBeGreaterThanOrEqual(MAP.budWidth);
     expect(layout.leaves.flatMap((leaf) => leaf.buds.map((bud) => bud.id))).toEqual(["bud"]);
 
@@ -184,43 +193,43 @@ describe("layoutSproutMap", () => {
     expect(shortened.width).toBe(6 * 14 + 12);
   });
 
-  it("puts names of branches whose tip is partway up a stem beside it, away from the leaf", () => {
+  it("puts names after stem ends and hangs names of tips partway along a stem below their buds", () => {
     const chain = [commit("c", "b", "main", 2), commit("b", "a", "main", 1), commit("a", null, "main", 0)];
     const branch = (id: string, tip: string, current = false) => ({ id, name: id, commit_id: tip, comment: "", current });
-    const layout = layoutSproutMap(tree(chain, [branch("main", "c"), branch("分岐2", "b", true), branch("copy", "b"), branch("early", "a")]));
+    const branches = [branch("main", "c"), branch("分岐2", "b", true), branch("copy", "b")];
+    const bud = { id: "bud", base_commit_id: "b", branch_id: "main", branch_name: "main", created_at: "", changes: [], files: [] };
+    const plain = layoutSproutMap(tree(chain, [branch("main", "c")]));
+    const layout = layoutSproutMap({ ...tree(chain, branches), buds: [bud] });
     const leaves = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
     const byNames = Object.fromEntries(layout.labels.map((label) => [label.branches.map((item) => item.name).join(","), label]));
 
-    expect(byNames.main.placement).toBe("top");
+    expect(byNames.main).toMatchObject({ placement: "end", y: leaves.c.y });
+    expect(byNames.main.x).toBeGreaterThan(leaves.c.leafX + MAP.leafWidth);
     const mid = byNames["分岐2,copy"];
-    expect(mid).toMatchObject({ placement: "side", x: leaves.b.x, y: leaves.b.y, current: true });
-    // The leaf of b is on the right, so the names sprout to the left and do not cover it.
-    expect(leaves.b.side).toBe(1);
-    expect(mid.placement === "side" && mid.direction).toBe(-1);
-    const early = byNames.early;
-    expect(leaves.a.side).toBe(-1);
-    expect(early.placement === "side" && early.direction).toBe(1);
+    expect(mid).toMatchObject({ placement: "below", x: leaves.b.x - MAP.underRight, nodeY: leaves.b.y, current: true });
+    // The first name starts under the bud of b, so neither covers the other or a leaf.
+    expect(mid.y - LABEL_LINE).toBeGreaterThanOrEqual(leaves.b.y + MAP.underGap + MAP.budStep - 8);
+    // The row grows to fit the bud and both names.
+    expect(layout.height).toBeGreaterThan(plain.height);
+    expect(layout.height).toBeGreaterThanOrEqual(mid.y + LABEL_LINE);
   });
 
-  it("makes room for side names at both edges of the map", () => {
+  it("makes room for long names at both edges of the map", () => {
     const chain = [commit("c", "b", "main", 2), commit("b", "a", "main", 1), commit("a", null, "main", 0)];
     const longName = "とても長い名前の分岐ブランチ";
     const plain = layoutSproutMap(tree(chain, [{ id: "main", name: "main", commit_id: "c", comment: "", current: true }]));
     const shifted = layoutSproutMap(tree(chain, [
-      { id: "main", name: "main", commit_id: "c", comment: "", current: false },
-      { id: "left", name: longName, commit_id: "b", comment: "", current: true },
-      { id: "right", name: longName, commit_id: "a", comment: "", current: false },
+      { id: "main", name: longName, commit_id: "c", comment: "", current: false },
+      { id: "left", name: longName, commit_id: "a", comment: "", current: true },
     ]));
     expect(plain.leaves[0].x).toBe(MAP.left);
     const shift = shifted.leaves[0].x - MAP.left;
     expect(shift).toBeGreaterThan(0);
-    expect(shifted.lanes[0].x).toBe(MAP.left + shift);
     const leftLabel = shifted.labels.find((label) => label.branches[0].id === "left")!;
-    const textStart = leftLabel.x - (SIDE_LABEL.stubEnd + SIDE_LABEL.textGap);
-    expect(textStart - estimateChipText(branchLabelText(leftLabel.branches[0])) * SIDE_LABEL.fontScale).toBeGreaterThanOrEqual(SIDE_LABEL.margin - 1);
-    const rightLabel = shifted.labels.find((label) => label.branches[0].id === "right")!;
-    const textEnd = rightLabel.x + SIDE_LABEL.stubEnd + SIDE_LABEL.textGap + estimateChipText(longName) * SIDE_LABEL.fontScale;
-    expect(shifted.width).toBeGreaterThanOrEqual(textEnd);
+    const width = estimateChipText(branchLabelText(leftLabel.branches[0])) * BRANCH_LABEL.fontScale;
+    expect(leftLabel.x - width).toBeGreaterThanOrEqual(BRANCH_LABEL.margin - 1);
+    const endLabel = shifted.labels.find((label) => label.branches[0].id === "main")!;
+    expect(shifted.width).toBeGreaterThanOrEqual(endLabel.x + estimateChipText(longName) * BRANCH_LABEL.fontScale);
   });
 
   it("handles hundreds of snapshots", () => {
@@ -231,6 +240,41 @@ describe("layoutSproutMap", () => {
     const layout = layoutSproutMap(tree(many, [{ id: "main", name: "main", commit_id: "c499", comment: "", current: true }]));
     expect(performance.now() - started).toBeLessThan(200);
     expect(layout.leaves).toHaveLength(500);
-    expect(layout.height).toBe(MAP.top + MAP.bottom + 500 * MAP.row);
+    expect(layout.leaves[499].x).toBe(MAP.left + 499 * MAP.column);
+    expect(layout.height).toBe(MAP.top + MAP.above + MAP.below + MAP.bottom);
+  });
+
+  it("continues the current branch's stem with unsaved changes at its tip", () => {
+    const chain = [commit("c", "b", "main", 2), commit("b", "a", "main", 1), commit("a", null, "main", 0)];
+    const atTip = { ...tree(chain, [{ id: "main", name: "main", commit_id: "c", comment: "", current: true }]), current_commit: "c" };
+    expect(layoutSproutMap(atTip).pending).toBeNull();
+    const layout = layoutSproutMap(atTip, { unsaved: true });
+    const c = layout.leaves.find((leaf) => leaf.commit.id === "c")!;
+    expect(layout.pending).toMatchObject({ x: c.x + MAP.column, y: c.y, fork: false, from: { x: c.x, y: c.y } });
+    // The branch name moves past the unsaved leaf.
+    expect(layout.labels[0].x).toBeGreaterThan(layout.pending!.leafX + MAP.leafWidth);
+    expect(layout.width).toBeGreaterThanOrEqual(layout.pending!.leafX + MAP.leafWidth);
+  });
+
+  it("grows unsaved changes as a new branch row from a snapshot partway along a stem", () => {
+    const layout = layoutSproutMap(graph, { unsaved: true });
+    const byId = Object.fromEntries(layout.leaves.map((leaf) => [leaf.commit.id, leaf]));
+    const lanes = Object.fromEntries(layout.lanes.map((lane) => [lane.name, lane]));
+    const pending = layout.pending!;
+    expect(pending).toMatchObject({ x: byId.b.x + MAP.column, fork: true, from: { x: byId.b.x, y: byId.b.y } });
+    // The new row sits right under the current row and pushes the later rows down.
+    expect(pending.y).toBeGreaterThan(lanes.main.y);
+    expect(lanes.side.y).toBeGreaterThan(pending.y);
+    expect(lanes.side.y).toBeGreaterThan(layoutSproutMap(graph).lanes[1].y);
+    // A different branch on the current snapshot also means saving grows a new branch.
+    const copy = layoutSproutMap({ ...graph, current_commit: "x", branches: graph.branches.map((item) => ({ ...item, current: item.id === "copy" })) }, { unsaved: true });
+    expect(copy.pending?.fork).toBe(true);
+  });
+
+  it("shortens leaf messages that do not fit under the leaf", () => {
+    expect(leafCaption("線画")).toBe("線画");
+    const long = leafCaption("背景と人物の色をまとめて調整した版");
+    expect(long.endsWith("…")).toBe(true);
+    expect(estimateChipText(long) * (12 / 11)).toBeLessThanOrEqual(MAP.leafWidth - 12);
   });
 });

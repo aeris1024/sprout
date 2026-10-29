@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprout GUI Final</title>
+<style>
+/* ===== Theme tokens: 朝霧 (light) / 夜霧 (dark). Swap palettes by redefining these only. ===== */
+:root {
+  --paper:#f3f6f8; --panel:#e8eef2; --surface:#ffffff; --ink:#1f2d3a; --muted:#667788; --line:#d3dde4; --leaf-line:#d3dde4;
+  --leaf-shadow:none; --thumb-filter:saturate(.88) brightness(.98);
+  --branch-1:#3a8f7d; --branch-2:#7b6cc4; --branch-3:#c9577f;
+  --tag-1:#cdeee5; --tag-2:#d9d3fa; --tag-3:#f8d5e1; --on-tag:#1f2d3a;
+  --current:#2b6cb0; --here-bg:#cfe3fa; --on-here:#16406e;
+  --bud:#c27c1a; --on-bud:#fff; --bud-bg:#fbf0dc;
+  --chip-bg:#e1e9ef; --chip-ink:#1f2d3a; --primary:#1f2d3a; --on-primary:#fff; --sel:#1f2d3a; --on-sel:#fff;
+  --field:#ffffff; --focus:rgba(43,108,176,.28);
+  --radius:8px; --font-ui:"Yu Gothic UI", "Segoe UI Variable", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --paper:#151c23; --panel:#1b242c; --surface:#212c36; --ink:#e3eaf0; --muted:#8b9aa8; --line:#2c3843; --leaf-line:#2c3843;
+  --leaf-shadow:none; --thumb-filter:brightness(.85) saturate(.9);
+  --branch-1:#5cc3ac; --branch-2:#a99cf0; --branch-3:#ea8bad; --tag-1:#5cc3ac; --tag-2:#a99cf0; --tag-3:#ea8bad; --on-tag:#10141a;
+  --current:#74aef0; --here-bg:#74aef0; --on-here:#0b1a2c; --bud:#e9a94e; --on-bud:#2a1a04; --bud-bg:#2e2412;
+  --chip-bg:#263240; --chip-ink:#d5dee6; --primary:#e3eaf0; --on-primary:#151c23; --sel:#e3eaf0; --on-sel:#151c23; --field:#151c23; --focus:rgba(116,174,240,.35); color-scheme: dark; } }
+:root[data-theme="dark"] { --paper:#151c23; --panel:#1b242c; --surface:#212c36; --ink:#e3eaf0; --muted:#8b9aa8; --line:#2c3843; --leaf-line:#2c3843;
+  --leaf-shadow:none; --thumb-filter:brightness(.85) saturate(.9);
+  --branch-1:#5cc3ac; --branch-2:#a99cf0; --branch-3:#ea8bad; --tag-1:#5cc3ac; --tag-2:#a99cf0; --tag-3:#ea8bad; --on-tag:#10141a;
+  --current:#74aef0; --here-bg:#74aef0; --on-here:#0b1a2c; --bud:#e9a94e; --on-bud:#2a1a04; --bud-bg:#2e2412;
+  --chip-bg:#263240; --chip-ink:#d5dee6; --primary:#e3eaf0; --on-primary:#151c23; --sel:#e3eaf0; --on-sel:#151c23; --field:#151c23; --focus:rgba(116,174,240,.35); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font-ui); background: var(--paper); color: var(--ink); }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--current); outline-offset: 2px; }
+
+/* ---------- mockup control (not part of the design) ---------- */
+.mock { position: fixed; right: 14px; bottom: 14px; z-index: 99; display: flex; gap: 4px; background: #1d1d1b; padding: 5px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.3); font-size: 12.5px; }
+.mock button { border: 0; background: transparent; color: #ccc; padding: 5px 10px; border-radius: 6px; }
+.mock button.on { background: #f1efe8; color: #1d1d1b; }
+
+/* ---------- shell ---------- */
+.app { height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; color: var(--branch-1); }
+.brand span { color: var(--ink); }
+.brand svg { width: 22px; height: 22px; }
+.proj { border: 0; background: transparent; padding: 4px 8px; border-radius: var(--radius); font-weight: 600; }
+.proj:hover { background: var(--chip-bg); }
+.chip { display: inline-flex; align-items: center; gap: 5px; background: var(--chip-bg); color: var(--chip-ink); padding: 3px 10px; border-radius: 999px; font-size: 12.5px; }
+.chip.bud { background: var(--bud-bg); color: var(--bud); font-weight: 600; }
+.chip.ok { color: var(--muted); }
+.spacer { flex: 1; }
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; border-radius: var(--radius); font-size: 13px; white-space: nowrap; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+.btn.danger { color: #c0504d; }
+.icon-btn { width: 32px; padding: 6px 0; text-align: center; }
+
+.body { display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+.map-wrap { overflow: auto; }
+
+/* ---------- map ---------- */
+.map { position: relative; width: 980px; height: 660px; }
+.map svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.stem { fill: none; stroke-width: 4px; stroke-linecap: round; }
+.stem.pending { stroke: var(--bud); stroke-width: 3px; opacity: .6; }
+.ground { stroke: var(--line); stroke-width: 2; }
+.node { fill: var(--paper); stroke-width: 3; }
+.node.cur { stroke: var(--current) !important; fill: var(--current); }
+.bname { font-size: 13px; font-weight: 600; }
+.root-label { font-size: 12px; fill: var(--muted); }
+
+.leaf { position: absolute; width: 124px; background: var(--surface); border-radius: var(--radius); padding: 4px; border: 1px solid var(--leaf-line); box-shadow: var(--leaf-shadow); cursor: pointer; text-align: left; }
+.leaf:hover { transform: translateY(-2px); }
+.leaf .thumb { height: 78px; border-radius: 5px; overflow: hidden; filter: var(--thumb-filter); }
+.thumb svg, .big svg { width: 100%; height: 100%; display: block; }
+.leaf .msg { font-size: 12px; padding: 4px 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { position: absolute; font-size: 11px; padding: 1px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+.leaf .tag { top: -9px; left: -6px; color: var(--on-tag); }
+.leaf .here { right: -6px; top: -10px; background: var(--here-bg); color: var(--on-here); font-weight: 700; z-index: 1; }
+.leaf .selmark { display: none; left: -6px; bottom: -10px; background: var(--sel); color: var(--on-sel); }
+.leaf.cur { outline: 3px solid var(--current); outline-offset: 2px; }
+.leaf.sel { border: 2px solid var(--sel); padding: 3px; }
+.leaf.sel .selmark { display: block; }
+.leaf.unsaved { background: var(--bud-bg); color: var(--bud); border: 2px solid var(--bud); padding: 0 3px 3px; box-shadow: none; }
+.leaf.unsaved.sel { border-color: var(--sel); }
+.leaf.unsaved .band { display: block; margin: 0 -3px 4px; background: var(--bud); color: var(--on-bud); font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 5px 5px 0 0; }
+.leaf.unsaved .thumb { height: 60px; display: grid; place-items: center; filter: none; }
+.budtag { position: absolute; font-size: 11.5px; font-weight: 600; background: var(--bud-bg); color: var(--bud); border: 1px solid var(--bud); padding: 1px 9px; border-radius: 999px; cursor: pointer; }
+.budtag.sel { border: 2px solid var(--sel); color: var(--ink); }
+
+/* ---------- detail panel ---------- */
+.detail { background: var(--panel); border-left: 1px solid var(--line); padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.detail .kicker { font-size: 12px; color: var(--muted); }
+.detail h2 { margin: 0; font-size: 18px; }
+.detail .big { height: 165px; border-radius: var(--radius); overflow: hidden; flex: none; }
+.detail .big.pending { background: var(--bud-bg); border: 1px solid var(--bud); display: grid; place-items: center; color: var(--bud); }
+.meta { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font-size: 13px; margin: 0; }
+.meta dt { color: var(--muted); } .meta dd { margin: 0; }
+.actions { display: flex; flex-direction: column; gap: 7px; }
+.actions .btn { text-align: left; }
+.bdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+.files { margin: 0; padding: 0; list-style: none; font-size: 13px; display: grid; gap: 4px; }
+.files b { display: inline-block; width: 18px; color: var(--bud); font-family: Consolas, monospace; }
+.note { font-size: 12.5px; color: var(--muted); background: var(--chip-bg); padding: 8px 10px; border-radius: var(--radius); }
+input.field { width: 100%; border: 1px solid var(--line); background: var(--field); border-radius: var(--radius); padding: 8px 10px; font-size: 13px; outline: none; }
+input.field:focus { border-color: var(--current); box-shadow: 0 0 0 3px var(--focus); }
+
+@media (max-width: 900px) {
+  .body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .detail { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh; }
+}
+</style>
+</head>
+<body>
+<div class="mock" id="mock"><button data-t="auto">表示: OSに合わせる</button><button data-t="light">ライト</button><button data-t="dark">ダーク</button></div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22V10"/><path d="M12 13c-4 0-7-2.5-7-7 4 0 7 2.5 7 7z" fill="currentColor" fill-opacity=".25"/><path d="M12 10c0-4 3-7 7-7 0 4-3 7-7 7z" fill="currentColor" fill-opacity=".25"/></svg><span>Sprout</span></div>
+    <button class="proj">イラスト課題 ▾</button>
+    <span class="chip">⑂ main</span>
+    <span class="chip bud" id="status">● 未保存の変更 3</span>
+    <span class="spacer"></span>
+    <button class="btn">ファイル</button>
+    <button class="btn primary" id="saveTop">保存</button>
+    <button class="btn icon-btn" title="設定">⚙</button>
+  </header>
+  <div class="body">
+    <main class="map-wrap" id="mapWrap"></main>
+    <aside class="detail" id="detail"></aside>
+  </div>
+</div>
+
+<script>
+const B = {
+  main: { name: "main", y: 250, n: 1 },
+  sub: { name: "提出版", y: 420, n: 2, from: 3 },
+  alt: { name: "配色違い", y: 590, n: 3, from: 2 },
+};
+const C = {
+  1: { x: 120, b: "main", msg: "ラフ案", date: "2026/10/20 21:14", files: 4 },
+  2: { x: 260, b: "main", msg: "線画", date: "2026/10/22 23:02", files: 6 },
+  3: { x: 400, b: "main", msg: "色塗り 1回目", tag: "#下塗り", date: "2026/10/24 20:40", files: 9 },
+  4: { x: 540, b: "main", msg: "影を追加", date: "2026/10/26 22:18", files: 11 },
+  5: { x: 680, b: "main", msg: "仕上げ", cur: true, date: "2026/10/28 00:31", files: 12 },
+  6: { x: 560, b: "sub", msg: "提出用に縮小", date: "2026/10/25 18:05", files: 10 },
+  7: { x: 700, b: "sub", msg: "提出版 完成", tag: "#提出", date: "2026/10/25 19:47", files: 10 },
+  8: { x: 420, b: "alt", msg: "夜の配色", date: "2026/10/23 22:10", files: 7 },
+};
+const tip = b => Object.keys(C).filter(k => C[k].b === b).sort((a, z) => C[z].x - C[a].x)[0];
+const bc = b => `var(--branch-${B[b].n})`;
+
+function thumb(i) {
+  const p = [["#f9d976","#f39f86","#5b8c5a"], ["#a1c4fd","#c2e9fb","#3d7c6b"], ["#fbc2eb","#a6c1ee","#6d5a9c"], ["#84fab0","#8fd3f4","#2f6f4f"],
+    ["#ffecd2","#fcb69f","#a0522d"], ["#cfd9df","#e2ebf0","#56707f"], ["#fddb92","#d1fdff","#4f8a8b"], ["#1e2a4a","#4b4e9e","#0d1326"]][i % 8];
+  const cx = 20 + (i * 37) % 80, r = 9 + (i % 3) * 3;
+  return `<svg viewBox="0 0 124 78" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${p[0]}"/><stop offset="1" stop-color="${p[1]}"/></linearGradient></defs>
+  <rect width="124" height="78" fill="url(#g${i})"/><circle cx="${cx}" cy="22" r="${r}" fill="#fff" opacity=".75"/>
+  <path d="M0 58 Q 30 ${38 + i % 4 * 4} 62 54 T 124 50 V78 H0Z" fill="${p[2]}" opacity=".85"/><path d="M0 68 Q 40 56 80 66 T 124 64 V78 H0Z" fill="${p[2]}"/></svg>`;
+}
+const budIcon = `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 21v-7"/><path d="M12 14c-3.5 0-5-3-5-6 2.5 0 5 1.5 5 6zM12 14c3.5 0 5-3 5-6-2.5 0-5 1.5-5 6z" fill="currentColor" fill-opacity=".2"/></svg>`;
+
+let sel = "3";
+
+function renderMap() {
+  const Y = B.main.y;
+  let svg = `<line class="ground" x1="40" y1="120" x2="40" y2="620"/><text class="root-label" x="40" y="642" text-anchor="middle">根元</text>
+    <path class="stem" stroke="${bc("main")}" d="M40 ${Y} H680"/><path class="stem pending" d="M680 ${Y} H800"/>
+    <text class="bname" fill="var(--current)" x="820" y="${Y + 5}">main</text>`;
+  for (const k of ["sub", "alt"]) {
+    const b = B[k], fx = C[b.from].x, last = C[tip(k)].x;
+    svg += `<path class="stem" stroke="${bc(k)}" d="M${fx} ${Y} C${fx + 40} ${Y}, ${fx + 20} ${b.y}, ${fx + 80} ${b.y} H${last}"/>
+      <text class="bname" fill="${bc(k)}" x="${last + 18}" y="${b.y + 5}">${b.name}</text>`;
+  }
+  let html = "";
+  for (const [id, c] of Object.entries(C)) {
+    const y = B[c.b].y;
+    svg += `<circle class="node ${c.cur ? "cur" : ""}" cx="${c.x}" cy="${y}" r="7" stroke="${bc(c.b)}"/>`;
+    html += `<button class="leaf ${c.cur ? "cur" : ""} ${sel === id ? "sel" : ""}" data-id="${id}" style="left:${c.x - 62}px;top:${y - 145}px" aria-label="${c.msg}">
+      ${c.tag ? `<span class="badge tag" style="background:var(--tag-${B[c.b].n})">${c.tag}</span>` : ""}
+      ${c.cur ? `<span class="badge here">いまここ</span>` : ""}<span class="badge selmark">選択中</span>
+      <div class="thumb">${thumb(+id)}</div><div class="msg">${c.msg}</div></button>`;
+  }
+  html += `<button class="leaf unsaved ${sel === "u" ? "sel" : ""}" data-id="u" style="left:738px;top:${Y - 145}px" aria-label="未保存の芽">
+    <span class="band">未保存 · 3件の変更</span><span class="badge selmark">選択中</span><div class="thumb">${budIcon}</div><div class="msg">未保存の芽</div></button>`;
+  html += `<button class="budtag ${sel === "bud" ? "sel" : ""}" data-id="bud" style="left:510px;top:${Y + 16}px">つぼみ 1</button>`;
+  document.getElementById("mapWrap").innerHTML = `<div class="map"><svg viewBox="0 0 980 660" width="980" height="660">${svg}</svg>${html}</div>`;
+}
+
+function renderDetail() {
+  const d = document.getElementById("detail");
+  if (sel === "u") {
+    d.innerHTML = `<div class="kicker">未保存の芽</div><div class="big pending">${budIcon}</div>
+      <h2>3件の変更</h2>
+      <ul class="files"><li><b>M</b>scene.psd</li><li><b>M</b>refs/pose.png</li><li><b>A</b>notes.txt</li></ul>
+      <input class="field" placeholder="メッセージ（例: 背景を描き込み）">
+      <div class="actions"><button class="btn">サムネイルを付ける（任意）</button><button class="btn primary" style="text-align:center">保存</button></div>
+      <div class="note">「仕上げ」の続きとして main に新しい葉が付きます。</div>`;
+    return;
+  }
+  if (sel === "bud") {
+    d.innerHTML = `<div class="kicker">つぼみ</div><h2>「影を追加」から退避した変更</h2>
+      <dl class="meta"><dt>退避日時</dt><dd>2026/10/27 01:12</dd><dt>変更</dt><dd>2ファイル</dd></dl>
+      <div class="actions"><button class="btn primary">このつぼみに戻る</button><button class="btn danger">つぼみを捨てる…</button></div>
+      <div class="note">戻すと、いまの未保存の変更は先につぼみへ退避されます。</div>`;
+    return;
+  }
+  const c = C[sel], b = B[c.b], isTip = tip(c.b) === sel;
+  d.innerHTML = `<div class="kicker">選択中の葉</div><div class="big">${thumb(+sel)}</div><h2>${c.msg}</h2>
+    <dl class="meta"><dt>日時</dt><dd>${c.date}</dd>
+      <dt>ブランチ</dt><dd><span class="bdot" style="background:${bc(c.b)}"></span>${b.name}${isTip ? "（枝先）" : ""}</dd>
+      <dt>ファイル</dt><dd>${c.files}件</dd>${c.tag ? `<dt>タグ</dt><dd>${c.tag}</dd>` : ""}
+      ${c.cur ? `<dt>状態</dt><dd style="color:var(--current);font-weight:600">いまここ</dd>` : ""}</dl>
+    <div class="actions">${c.cur ? "" : `<button class="btn primary">ここへ移動</button>`}
+      <button class="btn">ここから枝を伸ばす</button><button class="btn">サムネイルを変更</button><button class="btn">ファイルを取り出す</button><button class="btn">メッセージを編集</button></div>
+    ${c.cur ? "" : `<div class="note">未保存の変更はつぼみとして自動で退避されます。</div>`}`;
+}
+
+function render() { renderMap(); renderDetail(); }
+document.getElementById("mapWrap").onclick = e => { const t = e.target.closest("[data-id]"); if (t) { sel = t.dataset.id; render(); } };
+document.getElementById("saveTop").onclick = () => { sel = "u"; render(); document.querySelector(".field")?.focus(); };
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); document.getElementById("saveTop").click(); } });
+
+const mock = document.getElementById("mock");
+function setTheme(t) {
+  if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = t;
+  mock.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+}
+mock.onclick = e => { const b = e.target.closest("button"); if (b) setTheme(b.dataset.t); };
+setTheme("auto");
+render();
+</script>
+</body>
+</html>

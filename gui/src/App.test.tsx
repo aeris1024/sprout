@@ -1025,7 +1025,7 @@ describe("Sprout GUI operations", () => {
     });
   });
 
-  it("selects branch names placed beside a stem by click and keyboard", async () => {
+  it("selects branch names hanging below a stem by click and keyboard", async () => {
     const user = userEvent.setup();
     const rootId = "d".repeat(64);
     const midId = "e".repeat(64);
@@ -1053,9 +1053,9 @@ describe("Sprout GUI operations", () => {
     await screen.findByRole("heading", { name: "sprout-project" });
 
     const fork = screen.getByRole("button", { name: "ブランチ 分岐2" });
-    expect(fork.closest(".branch-label")?.classList.contains("side")).toBe(true);
+    expect(fork.closest(".branch-label")?.classList.contains("below")).toBe(true);
     expect(fork.textContent).toBe("分岐2（現在のブランチ）");
-    expect(screen.getByRole("button", { name: "ブランチ main" }).closest(".branch-label")?.classList.contains("top")).toBe(true);
+    expect(screen.getByRole("button", { name: "ブランチ main" }).closest(".branch-label")?.classList.contains("end")).toBe(true);
 
     await user.click(fork);
     expect(within(screen.getByRole("region", { name: "選択中のブランチ" })).getByRole("heading", { name: "分岐2" })).toBeTruthy();

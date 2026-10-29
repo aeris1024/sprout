@@ -1,32 +1,52 @@
-/* Theme: "Night greenhouse". Swap palettes by redefining these tokens only. */
+/* Theme: "Morning mist" (light) / "Night mist" (dark). Swap palettes by redefining these tokens only. */
 :root {
-  --paper: #eef4e6;
-  --panel: #e3edd6;
-  --surface: #f7faf2;
-  --ink: #173404;
-  --ink-2: #3b6d11;
-  --muted: #5c7a48;
-  --line: #c0dd97;
-  --stem: #27500a;
-  --branch: #3b6d11;
-  --current: #185fa5;
-  --bud: #854f0b;
-  --bud-bg: #faeeda;
-  --chip-bg: #d5e8be;
-  --chip-ink: #173404;
-  --primary: #173404;
-  --on-primary: #eaf3de;
-  --empty-leaf: #ffffff;
+  --paper: #f3f6f8;
+  --panel: #e8eef2;
+  --surface: #ffffff;
+  --ink: #1f2d3a;
+  --ink-2: #3d5164;
+  --muted: #667788;
+  --line: #d3dde4;
+  --stem: #3a8f7d;
+  --branch: #7b6cc4;
+  --current: #2b6cb0;
+  --bud: #a8650f;
+  --bud-bg: #fbf0dc;
+  --on-bud: #ffffff;
+  --chip-bg: #e1e9ef;
+  --chip-ink: #1f2d3a;
+  --primary: #1f2d3a;
+  --on-primary: #ffffff;
+  --empty-leaf: #eef2f5;
   --danger: #a32d2d;
   --danger-bg: #fcebeb;
-  --success: #27500a;
-  --success-bg: #eaf3de;
-  --warning: #854f0b;
-  --warning-bg: #faeeda;
-  --focus: rgba(24, 95, 165, .28);
-  --shadow: 0 12px 30px rgba(0, 0, 0, .18);
+  --success: #2c7564;
+  --success-bg: #e3f3ee;
+  --warning: #8a5a0b;
+  --warning-bg: #fbf0dc;
+  --focus: rgba(43, 108, 176, .28);
+  /* Stems of each branch row, and the chips of leaves on them. */
+  --branch-1: #3a8f7d;
+  --branch-2: #7b6cc4;
+  --branch-3: #c9577f;
+  --branch-4: #4f86c6;
+  --branch-5: #a7832a;
+  --tag-1: #cdeee5;
+  --tag-2: #d9d3fa;
+  --tag-3: #f8d5e1;
+  --tag-4: #d3e4f7;
+  --tag-5: #f1e6c6;
+  --on-tag: #1f2d3a;
+  --here-bg: #cfe3fa;
+  --on-here: #16406e;
+  --selected: #1f2d3a;
+  --on-selected: #ffffff;
+  --leaf-line: #d3dde4;
+  /* Thumbnails on the map stay a little quieter than the rest of the work. */
+  --thumb-filter: saturate(.88) brightness(.98);
+  --shadow: 0 12px 30px rgba(20, 35, 50, .18);
   --radius: 10px;
-  --leaf-radius: 10px;
+  --leaf-radius: 8px;
   --gap: 12px;
   --font-ui: "Yu Gothic UI", "Segoe UI Variable", "Hiragino Sans", "Noto Sans JP", sans-serif;
   color-scheme: light;
@@ -37,30 +57,48 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0f2416;
-    --panel: #142d1c;
-    --surface: #18331f;
-    --ink: #e1f5ee;
-    --ink-2: #9fe1cb;
-    --muted: #7fb8a3;
-    --line: #24482f;
-    --stem: #5dcaa5;
-    --branch: #9fe1cb;
-    --current: #85b7eb;
-    --bud: #ef9f27;
-    --bud-bg: #412402;
-    --chip-bg: #1d3b27;
-    --chip-ink: #9fe1cb;
-    --primary: #5dcaa5;
-    --on-primary: #04342c;
-    --empty-leaf: #1d3b27;
+    --paper: #151c23;
+    --panel: #1b242c;
+    --surface: #212c36;
+    --ink: #e3eaf0;
+    --ink-2: #b8c6d2;
+    --muted: #8b9aa8;
+    --line: #2c3843;
+    --stem: #5cc3ac;
+    --branch: #a99cf0;
+    --current: #74aef0;
+    --bud: #e9a94e;
+    --bud-bg: #2e2412;
+    --on-bud: #2a1a04;
+    --chip-bg: #263240;
+    --chip-ink: #d5dee6;
+    --primary: #e3eaf0;
+    --on-primary: #151c23;
+    --empty-leaf: #263240;
     --danger: #f09595;
     --danger-bg: #3a1717;
-    --success: #9fe1cb;
-    --success-bg: #12342a;
-    --warning: #ef9f27;
-    --warning-bg: #412402;
-    --focus: rgba(133, 183, 235, .35);
+    --success: #7fd3bd;
+    --success-bg: #16302a;
+    --warning: #e9a94e;
+    --warning-bg: #2e2412;
+    --focus: rgba(116, 174, 240, .35);
+    --branch-1: #5cc3ac;
+    --branch-2: #a99cf0;
+    --branch-3: #ea8bad;
+    --branch-4: #7fb0ea;
+    --branch-5: #d9b458;
+    --tag-1: #5cc3ac;
+    --tag-2: #a99cf0;
+    --tag-3: #ea8bad;
+    --tag-4: #7fb0ea;
+    --tag-5: #d9b458;
+    --on-tag: #10141a;
+    --here-bg: #74aef0;
+    --on-here: #0b1a2c;
+    --selected: #e3eaf0;
+    --on-selected: #151c23;
+    --leaf-line: #2c3843;
+    --thumb-filter: brightness(.85) saturate(.9);
     color-scheme: dark;
   }
 }
@@ -165,48 +203,56 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .map-area { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .sprout-map { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .map-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 12px; color: var(--muted); }
-.map-scroll { flex: 1; min-height: 0; overflow: auto; }
-.map-canvas { display: block; margin: 0 auto; }
+.map-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; }
+.map-canvas { display: block; flex: none; margin: auto 0; }
 .map-empty { margin: auto; text-align: center; color: var(--muted); padding: 48px 16px; }
-.ground { stroke: var(--line); stroke-width: 1.5; }
+.ground { stroke: var(--line); stroke-width: 2; stroke-linecap: round; }
 .ground-label, .lane-label { fill: var(--muted); font-size: 12px; }
-.stem path { fill: none; stroke: var(--branch); stroke-width: 4; stroke-linecap: round; }
-.stem.main path { stroke: var(--stem); stroke-width: 5; }
-.branch-label text { fill: var(--muted); font-size: 13px; }
-.branch-label line { stroke: var(--line); stroke-width: 2; stroke-dasharray: 2 5; }
+.stem path { fill: none; stroke: var(--lane); stroke-width: 4; stroke-linecap: round; }
+.pending-stem { fill: none; stroke: var(--bud); stroke-width: 3; stroke-linecap: round; opacity: .6; }
+.branch-label text { fill: var(--muted); font-size: 13px; font-weight: 600; }
+.branch-label path { fill: none; stroke: var(--line); stroke-width: 2; stroke-linecap: round; }
 .branch-name { cursor: pointer; outline: none; }
-.branch-label .sprout-tip { fill: var(--paper); stroke: var(--line); stroke-width: 2; }
-.branch-label.side line { stroke-dasharray: 3 4; }
 .branch-name.current text { fill: var(--current); font-weight: 700; }
 .branch-name:hover text, .branch-name.selected text, .branch-name:focus-visible text { text-decoration: underline; fill: var(--ink); }
 .leaf { cursor: pointer; outline: none; }
-.leaf-stalk { stroke: var(--branch); stroke-width: 2; }
-.node { fill: var(--stem); }
-.leaf.here .node { fill: var(--current); }
-.leaf-box { fill: var(--empty-leaf); rx: var(--leaf-radius); }
-.leaf-image { clip-path: inset(0 round var(--leaf-radius)); }
-.leaf-frame { fill: none; stroke: var(--line); stroke-width: 1; rx: var(--leaf-radius); }
+.leaf-stalk { stroke: var(--lane, var(--bud)); stroke-width: 2; }
+.node { fill: var(--paper); stroke: var(--lane); stroke-width: 3; }
+.leaf.here .node { fill: var(--current); stroke: var(--current); }
+.leaf-card { fill: var(--surface); rx: var(--leaf-radius); }
+.leaf-box { fill: var(--empty-leaf); clip-path: inset(0 round var(--leaf-radius) var(--leaf-radius) 0 0); }
+.leaf-image { clip-path: inset(0 round var(--leaf-radius) var(--leaf-radius) 0 0); filter: var(--thumb-filter); }
+.leaf-frame { fill: none; stroke: var(--leaf-line); stroke-width: 1; rx: var(--leaf-radius); }
 .leaf:hover .leaf-frame { stroke: var(--ink-2); }
-.leaf.selected .leaf-frame { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 5 3; }
-.leaf.here .leaf-frame { stroke: var(--current); stroke-width: 3; stroke-dasharray: none; }
-.leaf:focus-visible .leaf-frame { stroke: var(--current); stroke-width: 3; }
+.leaf.selected .leaf-frame, .leaf:focus-visible .leaf-frame { stroke: var(--selected); stroke-width: 2; }
+.here-ring { fill: none; stroke: var(--current); stroke-width: 3; rx: calc(var(--leaf-radius) + 4px); }
 .leaf-placeholder { fill: var(--muted); font-size: 11px; }
 .leaf-message { fill: var(--ink); font-size: 12px; }
-.here-label { fill: var(--current); font-size: 12px; }
-.tag-chip rect { fill: var(--bud-bg); rx: 9px; }
-.tag-chip text { fill: var(--bud); font-size: 11px; }
+.tag-chip rect { fill: var(--lane-tag); rx: 9px; }
+.tag-chip text { fill: var(--on-tag); font-size: 11px; font-weight: 600; }
+.map-badge rect { rx: 9px; }
+.map-badge text { font-size: 11px; font-weight: 600; }
+.here-badge rect { fill: var(--here-bg); }
+.here-badge text { fill: var(--on-here); font-weight: 700; }
+.selected-badge rect { fill: var(--selected); }
+.selected-badge text { fill: var(--on-selected); }
 
 .bud, .unsaved-bud { cursor: pointer; outline: none; }
 .bud rect { fill: var(--bud-bg); stroke: var(--bud); stroke-width: 1.2; rx: 11px; }
-.bud text, .unsaved-bud text { fill: var(--bud); font-size: 12px; }
-.bud.selected rect, .bud:focus-visible rect { stroke: var(--ink); stroke-width: 2; }
+.bud text { fill: var(--bud); font-size: 12px; font-weight: 600; }
+.bud.selected rect, .bud:focus-visible rect { stroke: var(--selected); stroke-width: 2; }
 .root-bud-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
-.bud-button { border: 1.2px solid var(--bud); border-radius: 11px; background: var(--bud-bg); color: var(--bud); font: inherit; font-size: 12px; padding: 3px 14px; cursor: pointer; }
-.bud-button.selected, .bud-button:focus-visible { border-color: var(--ink); outline: none; }
+.bud-button { border: 1.2px solid var(--bud); border-radius: 11px; background: var(--bud-bg); color: var(--bud); font: inherit; font-size: 12px; font-weight: 600; padding: 3px 14px; cursor: pointer; }
+.bud-button.selected, .bud-button:focus-visible { border-color: var(--selected); outline: none; }
+.unsaved-bud .node { stroke: var(--bud); }
+.unsaved-frame { fill: var(--bud-bg); stroke: var(--bud); stroke-width: 2; rx: var(--leaf-radius); }
+.unsaved-bud.selected .unsaved-frame, .unsaved-bud:focus-visible .unsaved-frame { stroke: var(--selected); }
+.unsaved-band { fill: var(--bud); }
+.unsaved-band-text { fill: var(--on-bud); font-size: 11px; font-weight: 700; }
+.unsaved-text { fill: var(--bud); font-size: 12px; font-weight: 600; }
+.unsaved-note { fill: var(--bud); font-size: 11px; }
 .attachment-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .attachment-list li { display: flex; flex-wrap: wrap; gap: 4px 8px; }
-.unsaved-bud rect { fill: var(--paper); stroke: var(--bud); stroke-width: 2; stroke-dasharray: 5 4; rx: 14px; }
-.unsaved-bud.selected rect, .unsaved-bud:focus-visible rect { fill: var(--bud-bg); }
 .grow-note { color: var(--bud); }
 .grow-form { display: grid; gap: 8px; }
 .grow-form input { color: var(--ink); }
