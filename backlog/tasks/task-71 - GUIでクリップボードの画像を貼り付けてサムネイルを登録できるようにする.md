@@ -1,11 +1,11 @@
 ---
 id: TASK-71
 title: GUIでクリップボードの画像を貼り付けてサムネイルを登録できるようにする
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29T14:27:00Z'
-updated_date: '2026-10-29T14:33:00Z'
+updated_date: '2026-10-29T15:13:00Z'
 labels: []
 dependencies: []
 references:
@@ -47,6 +47,8 @@ GUIでサムネイルを登録する際、ファイル選択に加えてCtrl+V�
 - Rust: save_pasted_thumbnail（base64を検証し一時フォルダのsprout-gui-paste-*/clipboard.<ext>へ書き出し）、discard_pasted_thumbnail（そのディレクトリ配下のみ削除）。
 - フロント: windowのpasteで画像を含む場合だけpreventDefault。保存パネルとコミット詳細表示中のみ反応。
 - 検証: pnpm test 57件、cargo test 6件、tsc --noEmit 成功。実機（Tauri/WebView2）での手動確認は未実施。
+
+2026-10-30: main（PR #50マージ後）でpnpm test 57件成功を再確認し、Doneにした。実機での手動確認は未実施のまま。
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
