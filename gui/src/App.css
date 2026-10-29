@@ -314,3 +314,6 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .preview-list { padding-left: 20px; }
 .preview-list li { margin: 12px 0; overflow-wrap: anywhere; }
 .preview-name { margin: 4px 0; font-size: 13px; }
+.preview-image { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.preview-image h4 { margin: 4px 0; overflow-wrap: anywhere; }
+.preview-image img { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; object-fit: contain; background: repeating-conic-gradient(#eee 0% 25%, white 0% 50%) 0 / 16px 16px; }

@@ -1,4 +1,5 @@
-import type { ClipboardEvent } from "react";
+import { useState, type ClipboardEvent } from "react";
+import PreviewImage from "./PreviewImage";
 import type { CommitAttachment } from "../lib/sprout";
 
 export interface PreviewActions {
@@ -10,8 +11,12 @@ export interface PreviewActions {
   export: (id: string, name: string) => void;
   order: (ids: string[]) => void;
 }
-export default function PreviewPanel({ attachments, busy, actions }: { attachments: CommitAttachment[]; busy: boolean; actions: PreviewActions }) {
+export default function PreviewPanel({ attachments, busy, actions, projectDir, program, commitId }: { attachments: CommitAttachment[]; busy: boolean; actions: PreviewActions; projectDir: string; program: string; commitId: string }) {
+  const [selected, setSelected] = useState<string | null>(null);
   const previews = attachments.filter((item) => item.role === "preview").sort((a, b) => a.position - b.position);
+  const context = `${projectDir}\0${commitId}\0${program}`;
+  const imageKey = (item: CommitAttachment) => `${context}\0${item.id}\0${item.object_hash}`;
+  const image = previews.find((item) => imageKey(item) === selected);
   function paste(event: ClipboardEvent) {
     const files = Array.from(event.clipboardData.files ?? []);
     if (!files.length) { if (!busy) actions.pastePaths(); return; }
@@ -30,9 +35,11 @@ export default function PreviewPanel({ attachments, busy, actions }: { attachmen
     <button className="button secondary" disabled={busy} onClick={actions.add}>プレビューを追加</button>
     <div className="preview-paste" role="group" aria-label="プレビュー貼り付け領域" tabIndex={0} onPaste={paste}>ここを選んで Ctrl+V：画像・ファイルをプレビューに追加（この領域の外では画像をサムネイルに使用）</div>
     {!previews.length && <p className="muted">プレビューはありません。</p>}
+    {image && <PreviewImage key={imageKey(image)} projectDir={projectDir} program={program} attachment={image} onClose={() => setSelected(null)} />}
     <ol className="preview-list">{previews.map((item, index) => <li key={item.id}>
       <p className="preview-name">{item.original_name}</p><p className="panel-copy">{item.media_type} · {item.size.toLocaleString()} B</p>
       <div className="action-row">
+        {(item.media_type.startsWith("image/") || /\.(png|jpe?g|webp|bmp)$/i.test(item.original_name)) && <button disabled={busy} aria-pressed={imageKey(item) === selected} onClick={() => setSelected(imageKey(item))} aria-label={`${item.original_name}を表示`}>画像を表示</button>}
         <button disabled={busy} onClick={() => actions.replace(item.id)} aria-label={`${item.original_name}を置き換え`}>置き換え</button>
         <button disabled={busy} onClick={() => actions.export(item.id, item.original_name)} aria-label={`${item.original_name}を取り出す`}>取り出す</button>
         <button disabled={busy} onClick={() => actions.remove(item.id)} aria-label={`${item.original_name}を削除`}>削除</button>

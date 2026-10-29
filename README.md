@@ -501,6 +501,8 @@ sprout preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
 
 previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
 
+GUI向けの `sprout preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
+
 ## コミットメッセージを変更する
 
 ```powershell
@@ -607,7 +609,7 @@ sprout commit -m "ファイルを移動"
 | `diff [COMMIT_A] [COMMIT_B] [--json]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
-| `preview list\|add\|replace\|delete\|export\|order COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
+| `preview list\|image\|add\|replace\|delete\|export\|order COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
 | `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
 | `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |

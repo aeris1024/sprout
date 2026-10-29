@@ -1065,6 +1065,22 @@ def preview_list(
         typer.echo(f"   Created: {item.created_at}  Updated: {item.updated_at}")
 
 
+@preview_app.command(name="image")
+def preview_image(
+    commit: PreviewCommitArgument,
+    attachment_id: PreviewIdArgument,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Return a bounded static PNG rendering of a preview for the GUI."""
+    from .preview_image import render_preview_image
+
+    result = render_preview_image(repo(), commit, attachment_id)
+    if json_output:
+        _echo_json(result)
+    else:
+        typer.echo(result["data_url"])
+
+
 @preview_app.command(name="add")
 def preview_add(
     commit: PreviewCommitArgument,

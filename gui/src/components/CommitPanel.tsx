@@ -21,6 +21,8 @@ function attachmentLabel(attachment: CommitAttachment): string {
 
 interface CommitPanelProps {
   detail: CommitDetail;
+  projectDir: string;
+  program: string;
   branches: BranchInfo[];
   tags: GraphTag[];
   current: boolean;
@@ -41,6 +43,8 @@ interface CommitPanelProps {
 
 export default function CommitPanel({
   detail,
+  projectDir,
+  program,
   branches,
   tags,
   current,
@@ -156,7 +160,7 @@ export default function CommitPanel({
           この葉を削除
         </button>
       </div>
-      <PreviewPanel attachments={detail.attachments} busy={busy} actions={previews} />
+      <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} busy={busy} actions={previews} />
       <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />
       <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       {!current && unsavedCount > 0 && (

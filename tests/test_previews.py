@@ -302,3 +302,86 @@ def test_preview_cli_large_file_requires_yes(tmp_path, monkeypatch):
     accepted = invoke(["preview", "add", commit, str(large), "--yes"], repo.root, monkeypatch)
     assert accepted.exit_code == 0
     assert len(repo.previews(commit)) == 1
+
+
+def test_static_image_preview_formats_are_read_only(tmp_path, monkeypatch):
+    import base64
+    import io
+    from sprout.preview_image import render_preview_image
+
+    repo, asset, commit = committed_repo(tmp_path)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    before = asset.read_bytes()
+    for image_format, extension in [("PNG", "png"), ("JPEG", "jpg"), ("WEBP", "webp"), ("BMP", "bmp")]:
+        source = tmp_path / f"image.{extension}"
+        Image.new("RGB", (24, 12), "red").save(source, format=image_format)
+        original = source.read_bytes()
+        attachment = repo.add_previews(commit, [source])[0]
+        saved = snapshot(repo, commit)
+        result = render_preview_image(repo, commit, attachment.id)
+        with Image.open(io.BytesIO(base64.b64decode(result["data_url"].split(",", 1)[1]))) as displayed:
+            assert displayed.format == "PNG"
+            assert displayed.size == (24, 12)
+            red, green, blue, alpha = displayed.convert("RGBA").getpixel((0, 0))
+            assert red > 200 and green < 10 and blue < 10 and alpha == 255
+        assert result["width"] == 24
+        assert result["height"] == 12
+        assert snapshot(repo, commit) == saved
+        assert source.read_bytes() == original
+        assert asset.read_bytes() == before
+        assert not list(tmp_path.glob("sprout-preview-image-*"))
+
+
+def test_static_image_preview_resizes_without_changing_source(tmp_path):
+    from sprout.preview_image import render_preview_image
+    repo, _, commit = committed_repo(tmp_path)
+    source = tmp_path / "large.png"
+    Image.new("RGB", (3000, 1500), "green").save(source)
+    attachment = repo.add_previews(commit, [source])[0]
+    result = render_preview_image(repo, commit, attachment.id)
+    assert (result["width"], result["height"]) == (3000, 1500)
+    assert (result["display_width"], result["display_height"]) == (2048, 1024)
+    with Image.open(source) as image:
+        assert image.size == (3000, 1500)
+
+
+@pytest.mark.parametrize("kind,code", [
+    ("broken", "invalid_preview_image"),
+    ("gif", "unsupported_preview_image"),
+    ("animated", "animated_preview_image"),
+    ("bytes", "preview_image_too_large"),
+    ("pixels", "preview_image_too_large"),
+])
+def test_static_image_preview_errors_keep_attachments_and_cleanup(tmp_path, monkeypatch, kind, code):
+    from sprout import preview_image
+    repo, _, commit = committed_repo(tmp_path)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    source = tmp_path / "input.png"
+    if kind == "broken":
+        source.write_bytes(b"not an image")
+    elif kind == "animated":
+        Image.new("RGB", (4, 4), "red").save(source, save_all=True, append_images=[Image.new("RGB", (4, 4), "blue")])
+    else:
+        Image.new("RGB", (4, 4), "red").save(source, format="GIF" if kind == "gif" else "PNG")
+    attachment = repo.add_previews(commit, [source])[0]
+    saved = snapshot(repo, commit)
+    if kind == "bytes": monkeypatch.setattr(preview_image, "MAX_IMAGE_BYTES", 1)
+    if kind == "pixels": monkeypatch.setattr(preview_image, "MAX_IMAGE_PIXELS", 1)
+    with pytest.raises(SproutError) as error:
+        preview_image.render_preview_image(repo, commit, attachment.id)
+    assert error.value.code == code
+    assert snapshot(repo, commit) == saved
+    assert not list(tmp_path.glob("sprout-preview-image-*"))
+
+
+def test_static_image_preview_cli_returns_json(tmp_path, monkeypatch):
+    repo, _, commit = committed_repo(tmp_path)
+    source = tmp_path / "image.png"
+    Image.new("RGB", (3, 2), "blue").save(source)
+    attachment = repo.add_previews(commit, [source])[0]
+    monkeypatch.chdir(repo.root)
+    result = runner.invoke(app, ["preview", "image", commit, attachment.id, "--json"])
+    assert result.exit_code == 0, result.stdout
+    reply = json.loads(result.stdout)
+    assert reply["data_url"].startswith("data:image/png;base64,")
+    assert (reply["width"], reply["height"]) == (3, 2)
