@@ -22,6 +22,7 @@ from .repository import (
     CommitGraph,
     FileState,
     GraphCommit,
+    PreviewPlan,
     PruneResult,
     Repository,
 )
@@ -396,11 +397,16 @@ def _tree_commit_text(
         f"branch:{branch}" for branch in branches_by_commit.get(commit.id, [])
     )
     markers.extend(f"tag:{tag}" for tag in tags_by_commit.get(commit.id, []))
+    preview_count = 0
     for attachment in commit.attachments:
         if attachment.role == "thumbnail":
             markers.append("thumbnail")
+        elif attachment.role == "preview":
+            preview_count += 1
         else:
             markers.append(f"attachment:{attachment.role}")
+    if preview_count:
+        markers.append(f"previews:{preview_count}")
     if commit.note is not None:
         markers.append("note")
     if commit.labels:
@@ -807,8 +813,11 @@ def show(
             f"Thumbnail: {thumbnail.original_name} "
             f"({thumbnail.media_type}, {thumbnail.size} bytes)"
         )
+    previews = [item for item in attachments if item.role == "preview"]
+    for index, attachment in enumerate(previews, start=1):
+        typer.echo(f"Preview {_preview_text(index, attachment)}")
     for attachment in attachments:
-        if attachment.role != "thumbnail":
+        if attachment.role not in {"thumbnail", "preview"}:
             typer.echo(
                 f"Attachment: {attachment.id} [{attachment.role}:{attachment.position}] "
                 f"{attachment.original_name} ({attachment.media_type}, {attachment.size} bytes)"
@@ -920,6 +929,218 @@ def thumbnail(
     typer.echo(f"Size:    {attachment.size}")
     typer.echo(f"Created: {attachment.created_at}")
     typer.echo(f"Updated: {attachment.updated_at}")
+
+
+preview_app = typer.Typer(
+    help="List, add, replace, delete, export, or reorder commit previews.",
+    no_args_is_help=True,
+)
+app.add_typer(preview_app, name="preview")
+
+PreviewCommitArgument = Annotated[
+    str,
+    typer.Argument(
+        help="Commit ID, prefix, branch, or tag",
+        autocompletion=_complete_references,
+    ),
+]
+PreviewIdArgument = Annotated[
+    str, typer.Argument(help="Preview attachment ID or unique prefix")
+]
+PreviewMediaTypeOption = Annotated[
+    str | None,
+    typer.Option(
+        "--media-type",
+        help="Media type to record instead of guessing from the file name",
+    ),
+]
+PreviewYesOption = Annotated[
+    bool,
+    typer.Option("--yes", "-y", help="Confirm registering large preview files"),
+]
+PreviewDryRunOption = Annotated[
+    bool,
+    typer.Option("--dry-run", help="Show size and storage impact without saving"),
+]
+PreviewJsonOption = Annotated[
+    bool, typer.Option("--json", help="Output structured preview metadata")
+]
+
+
+def _preview_plan_json(plan: PreviewPlan) -> dict[str, Any]:
+    return {
+        "source": plan.source,
+        "original_name": plan.original_name,
+        "media_type": plan.media_type,
+        "size": plan.size,
+        "object_hash": plan.object_hash,
+        "already_stored": plan.already_stored,
+        "additional_bytes": plan.additional_bytes,
+        "requires_confirmation": plan.requires_confirmation,
+    }
+
+
+def _echo_preview_plans(plans: list[PreviewPlan], json_output: bool) -> None:
+    if json_output:
+        _echo_json(
+            {
+                "previews": [_preview_plan_json(plan) for plan in plans],
+                "additional_bytes": sum(plan.additional_bytes for plan in plans),
+                "requires_confirmation": any(
+                    plan.requires_confirmation for plan in plans
+                ),
+            }
+        )
+        return
+    for plan in plans:
+        stored = "already stored" if plan.already_stored else f"+{plan.additional_bytes} bytes"
+        warning = "  [needs --yes]" if plan.requires_confirmation else ""
+        typer.echo(
+            f"{plan.original_name}  {plan.media_type}  {plan.size} bytes  ({stored}){warning}"
+        )
+    typer.echo(
+        f"Up to {sum(plan.additional_bytes for plan in plans)} bytes before compression"
+    )
+
+
+def _preview_text(index: int, attachment: CommitAttachment) -> str:
+    return (
+        f"{index}. {attachment.id}  {attachment.original_name} "
+        f"({attachment.media_type}, {attachment.size} bytes)"
+    )
+
+
+@preview_app.command(name="list")
+def preview_list(
+    commit: PreviewCommitArgument,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """List previews in their saved display order."""
+    previews = repo().previews(commit)
+    if json_output:
+        _echo_json([_attachment_json(item) for item in previews])
+        return
+    if not previews:
+        typer.echo("No previews")
+        return
+    for index, item in enumerate(previews, start=1):
+        typer.echo(_preview_text(index, item))
+        typer.echo(f"   Created: {item.created_at}  Updated: {item.updated_at}")
+
+
+@preview_app.command(name="add")
+def preview_add(
+    commit: PreviewCommitArgument,
+    files: Annotated[
+        list[Path], typer.Argument(help="Files of any format to append as previews")
+    ],
+    media_type: PreviewMediaTypeOption = None,
+    yes: PreviewYesOption = False,
+    dry_run: PreviewDryRunOption = False,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Append previews after the existing ones; all files are added or none are."""
+    repository = repo()
+    if dry_run:
+        repository.resolve_commit(commit)
+        _echo_preview_plans(repository.plan_previews(files, media_type), json_output)
+        return
+    with _show_progress(repository, enabled=not json_output):
+        added = repository.add_previews(
+            commit, files, media_type=media_type, confirm_large=yes
+        )
+    if json_output:
+        _echo_json([_attachment_json(item) for item in added])
+        return
+    for item in added:
+        typer.echo(f"Added preview {_preview_text(item.position + 1, item)}")
+
+
+@preview_app.command(name="replace")
+def preview_replace(
+    commit: PreviewCommitArgument,
+    attachment_id: PreviewIdArgument,
+    file: Annotated[Path, typer.Argument(help="New preview file of any format")],
+    media_type: PreviewMediaTypeOption = None,
+    yes: PreviewYesOption = False,
+    dry_run: PreviewDryRunOption = False,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Replace one preview's content, keeping its ID and position."""
+    repository = repo()
+    if dry_run:
+        repository.preview(commit, attachment_id)
+        _echo_preview_plans(repository.plan_previews([file], media_type), json_output)
+        return
+    with _show_progress(repository, enabled=not json_output):
+        attachment = repository.replace_preview(
+            commit, attachment_id, file, media_type=media_type, confirm_large=yes
+        )
+    if json_output:
+        _echo_json(_attachment_json(attachment))
+        return
+    typer.echo(f"Replaced preview {_preview_text(attachment.position + 1, attachment)}")
+
+
+@preview_app.command(name="delete")
+def preview_delete(
+    commit: PreviewCommitArgument,
+    attachment_id: PreviewIdArgument,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Delete one preview; the remaining previews keep their relative order."""
+    attachment = repo().delete_preview(commit, attachment_id)
+    if json_output:
+        _echo_json({**_attachment_json(attachment), "deleted": True})
+        return
+    typer.echo(
+        f"Deleted preview {attachment.id} ({attachment.original_name}) "
+        f"from {attachment.commit_id[:12]}"
+    )
+
+
+@preview_app.command(name="export")
+def preview_export(
+    commit: PreviewCommitArgument,
+    attachment_id: PreviewIdArgument,
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Write the preview to this file"),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing output file"),
+    ] = False,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Write one preview's original content to a file outside the tracked files."""
+    repository = repo()
+    with _show_progress(repository, enabled=not json_output):
+        destination = repository.export_preview(
+            commit, attachment_id, output, force=force
+        )
+    if json_output:
+        _echo_json({"output": str(destination)})
+        return
+    typer.echo(f"Exported preview to {destination}")
+
+
+@preview_app.command(name="order")
+def preview_order(
+    commit: PreviewCommitArgument,
+    attachment_ids: Annotated[
+        list[str],
+        typer.Argument(help="Every preview ID of the commit in the new display order"),
+    ],
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Save a new display order for all previews of a commit."""
+    previews = repo().reorder_previews(commit, attachment_ids)
+    if json_output:
+        _echo_json([_attachment_json(item) for item in previews])
+        return
+    for index, item in enumerate(previews, start=1):
+        typer.echo(_preview_text(index, item))
 
 
 @app.command()

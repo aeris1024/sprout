@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -33,6 +34,13 @@ OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
 IO_CHUNK_SIZE = 1024 * 1024
 THUMBNAIL_ROLE = "thumbnail"
+PREVIEW_ROLE = "preview"
+# Previews have no fixed size limit; larger files need explicit confirmation.
+PREVIEW_CONFIRM_BYTES = 100 * 1024 * 1024
+PREVIEW_DEFAULT_MEDIA_TYPE = "application/octet-stream"
+MEDIA_TYPE_PATTERN = re.compile(
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+)
 THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 THUMBNAIL_MAX_DIMENSION = 4096
 NOTE_MAX_CHARS = 20_000
@@ -266,6 +274,20 @@ class CommitAttachment:
     size: int
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class PreviewPlan:
+    """What registering one preview file would store, computed without writing."""
+
+    source: str
+    original_name: str
+    media_type: str
+    size: int
+    object_hash: str
+    already_stored: bool
+    additional_bytes: int
+    requires_confirmation: bool
 
 
 @dataclass(frozen=True)
@@ -1631,11 +1653,17 @@ class Repository:
         attachment = self.thumbnail(value)
         if attachment is None:
             raise SproutError(f"commit has no thumbnail: {self.resolve_commit(value)}")
+        return self._export_attachment(attachment, output, force=force)
+
+    def _export_attachment(
+        self, attachment: CommitAttachment, output: Path, *, force: bool = False
+    ) -> Path:
+        role = attachment.role
         destination = output.resolve(strict=False)
         if destination == self.control or self.control in destination.parents:
-            raise SproutError("cannot export thumbnail into Sprout metadata")
+            raise SproutError(f"cannot export {role} into Sprout metadata")
         if destination.exists() and not destination.is_file():
-            raise SproutError(f"thumbnail output is not a file: {output}")
+            raise SproutError(f"{role} output is not a file: {output}")
         try:
             relative = destination.relative_to(self.root).as_posix()
         except ValueError:
@@ -1643,9 +1671,9 @@ class Repository:
         if relative is not None and self._path_key(relative) in {
             self._path_key(path) for path in self.tracked()
         }:
-            raise SproutError(f"thumbnail output would change tracked file: {relative}")
+            raise SproutError(f"{role} output would change tracked file: {relative}")
         if destination.exists() and not force:
-            raise SproutError(f"thumbnail output already exists: {output}")
+            raise SproutError(f"{role} output already exists: {output}")
 
         item = FileState(
             attachment.original_name,
@@ -1662,7 +1690,7 @@ class Repository:
                     target.flush()
                     os.fsync(target.fileno())
             except FileExistsError as exc:
-                raise SproutError(f"thumbnail output already exists: {output}") from exc
+                raise SproutError(f"{role} output already exists: {output}") from exc
             except Exception:
                 destination.unlink(missing_ok=True)
                 raise
@@ -1670,7 +1698,7 @@ class Repository:
 
         fd, temp_name = tempfile.mkstemp(
             dir=destination.parent,
-            prefix=f".{destination.name}.thumbnail-",
+            prefix=f".{destination.name}.{role}-",
         )
         try:
             with os.fdopen(fd, "wb") as target:
@@ -1682,6 +1710,285 @@ class Repository:
             Path(temp_name).unlink(missing_ok=True)
             raise
         return destination
+
+    @staticmethod
+    def _preview_source(source: Path) -> Path:
+        try:
+            resolved = source.resolve(strict=True)
+        except OSError as exc:
+            raise SproutError(f"preview file does not exist: {source}") from exc
+        if not resolved.is_file():
+            raise SproutError(f"preview is not a file: {source}")
+        return resolved
+
+    @staticmethod
+    def _preview_media_type(source: Path, media_type: str | None) -> str:
+        if media_type is not None:
+            normalized = media_type.strip().lower()
+            if not MEDIA_TYPE_PATTERN.match(normalized):
+                raise SproutError(f"invalid media type: {media_type}")
+            return normalized
+        guessed, _ = mimetypes.guess_type(source.name, strict=False)
+        return guessed or PREVIEW_DEFAULT_MEDIA_TYPE
+
+    def plan_previews(
+        self, sources: list[Path], media_type: str | None = None
+    ) -> list[PreviewPlan]:
+        """Report the size and storage impact of preview files without storing them."""
+        if not sources:
+            raise SproutError("no preview files given")
+        plans: list[PreviewPlan] = []
+        with self.connect() as db:
+            for source in sources:
+                resolved = self._preview_source(source)
+                kind = self._preview_media_type(source, media_type)
+                digest = hashlib.sha256()
+                size = 0
+                with resolved.open("rb") as input_file:
+                    for chunk in iter(lambda: input_file.read(IO_CHUNK_SIZE), b""):
+                        digest.update(chunk)
+                        size += len(chunk)
+                object_hash = digest.hexdigest()
+                already_stored = db.execute(
+                    "SELECT 1 FROM objects WHERE hash=? AND size=?", (object_hash, size)
+                ).fetchone() is not None
+                plans.append(
+                    PreviewPlan(
+                        source=str(source),
+                        original_name=source.name,
+                        media_type=kind,
+                        size=size,
+                        object_hash=object_hash,
+                        already_stored=already_stored,
+                        additional_bytes=0 if already_stored else size,
+                        requires_confirmation=size > PREVIEW_CONFIRM_BYTES,
+                    )
+                )
+        return plans
+
+    def _prepare_previews(
+        self, sources: list[Path], media_type: str | None, confirm_large: bool
+    ) -> list[tuple[str, str, str, int]]:
+        """Validate every source before storing any, then store their objects."""
+        if not sources:
+            raise SproutError("no preview files given")
+        checked: list[tuple[Path, Path, os.stat_result, str]] = []
+        for source in sources:
+            resolved = self._preview_source(source)
+            kind = self._preview_media_type(source, media_type)
+            before = resolved.stat()
+            if before.st_size > PREVIEW_CONFIRM_BYTES and not confirm_large:
+                raise SproutError(
+                    f"preview exceeds {PREVIEW_CONFIRM_BYTES} bytes and needs "
+                    f"confirmation: {source} ({before.st_size} bytes)",
+                    code="preview_confirmation_required",
+                    details={
+                        "source": str(source),
+                        "size": before.st_size,
+                        "threshold": PREVIEW_CONFIRM_BYTES,
+                    },
+                )
+            checked.append((source, resolved, before, kind))
+        prepared: list[tuple[str, str, str, int]] = []
+        for source, resolved, before, kind in checked:
+            object_hash, size = self._store_object(resolved)
+            after = resolved.stat()
+            if (
+                before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or size != after.st_size
+            ):
+                raise SproutError(f"preview changed while reading: {source}")
+            prepared.append((source.name, kind, object_hash, size))
+        return prepared
+
+    @classmethod
+    def _previews_from_db(
+        cls, db: sqlite3.Connection, commit_id: str
+    ) -> list[CommitAttachment]:
+        return [
+            cls._attachment_from_row(row)
+            for row in db.execute(
+                "SELECT * FROM commit_attachments WHERE commit_id=? AND role=? "
+                "ORDER BY position, id",
+                (commit_id, PREVIEW_ROLE),
+            )
+        ]
+
+    def previews(self, value: str) -> list[CommitAttachment]:
+        commit_id = self.resolve_commit(value)
+        with self.connect() as db:
+            return self._previews_from_db(db, commit_id)
+
+    @staticmethod
+    def _match_preview(
+        previews: list[CommitAttachment], commit_id: str, attachment_id: str
+    ) -> CommitAttachment:
+        """Resolve a full preview ID or a unique prefix within one commit."""
+        key = attachment_id.strip().lower()
+        matches = [item for item in previews if key and item.id.startswith(key)]
+        exact = [item for item in matches if item.id == key]
+        if exact:
+            return exact[0]
+        if len(matches) == 1:
+            return matches[0]
+        details = {"commit_id": commit_id, "attachment_id": attachment_id}
+        if matches:
+            raise SproutError(
+                f"ambiguous preview ID: {attachment_id}",
+                code="ambiguous_preview",
+                details=details,
+            )
+        raise SproutError(
+            f"commit has no preview {attachment_id}: {commit_id}",
+            code="unknown_preview",
+            details=details,
+        )
+
+    def preview(self, value: str, attachment_id: str) -> CommitAttachment:
+        commit_id = self.resolve_commit(value)
+        return self._match_preview(self.previews(commit_id), commit_id, attachment_id)
+
+    @staticmethod
+    def _renumber_previews(
+        db: sqlite3.Connection, commit_id: str, ordered_ids: list[str]
+    ) -> None:
+        # Move every row past the current maximum first so UNIQUE(commit_id, role,
+        # position) holds at each step of the renumbering.
+        offset = db.execute(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM commit_attachments "
+            "WHERE commit_id=? AND role=?",
+            (commit_id, PREVIEW_ROLE),
+        ).fetchone()[0]
+        db.executemany(
+            "UPDATE commit_attachments SET position=? WHERE id=?",
+            ((offset + index, item) for index, item in enumerate(ordered_ids)),
+        )
+        db.executemany(
+            "UPDATE commit_attachments SET position=? WHERE id=?",
+            ((index, item) for index, item in enumerate(ordered_ids)),
+        )
+
+    @locked
+    def add_previews(
+        self,
+        value: str,
+        sources: list[Path],
+        *,
+        media_type: str | None = None,
+        confirm_large: bool = False,
+    ) -> list[CommitAttachment]:
+        """Append previews in the given order; either all are added or none are."""
+        commit_id = self.resolve_commit(value)
+        prepared = self._prepare_previews(sources, media_type, confirm_large)
+        now = utc_timestamp()
+        added: list[str] = []
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._register_objects(db, {item[2]: item[3] for item in prepared}, now)
+            position = db.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM commit_attachments "
+                "WHERE commit_id=? AND role=?",
+                (commit_id, PREVIEW_ROLE),
+            ).fetchone()[0]
+            for index, (original_name, kind, object_hash, size) in enumerate(prepared):
+                attachment_id = uuid.uuid4().hex
+                db.execute(
+                    "INSERT INTO commit_attachments("
+                    "id, commit_id, role, position, original_name, media_type, "
+                    "object_hash, size, created_at, updated_at) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        attachment_id,
+                        commit_id,
+                        PREVIEW_ROLE,
+                        position + index,
+                        original_name,
+                        kind,
+                        object_hash,
+                        size,
+                        now,
+                        now,
+                    ),
+                )
+                added.append(attachment_id)
+            stored = {item.id: item for item in self._previews_from_db(db, commit_id)}
+        return [stored[item] for item in added]
+
+    @locked
+    def replace_preview(
+        self,
+        value: str,
+        attachment_id: str,
+        source: Path,
+        *,
+        media_type: str | None = None,
+        confirm_large: bool = False,
+    ) -> CommitAttachment:
+        """Replace one preview's content, keeping its ID, position, and creation time."""
+        commit_id = self.resolve_commit(value)
+        target = self.preview(commit_id, attachment_id)
+        ((original_name, kind, object_hash, size),) = self._prepare_previews(
+            [source], media_type, confirm_large
+        )
+        now = utc_timestamp()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._register_objects(db, {object_hash: size}, now)
+            updated = db.execute(
+                "UPDATE commit_attachments SET original_name=?, media_type=?, "
+                "object_hash=?, size=?, updated_at=? "
+                "WHERE id=? AND commit_id=? AND role=?",
+                (original_name, kind, object_hash, size, now, target.id, commit_id, PREVIEW_ROLE),
+            ).rowcount
+            if updated != 1:
+                raise SproutError(f"commit has no preview {target.id}: {commit_id}")
+        return self.preview(commit_id, target.id)
+
+    @locked
+    def delete_preview(self, value: str, attachment_id: str) -> CommitAttachment:
+        commit_id = self.resolve_commit(value)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previews = self._previews_from_db(db, commit_id)
+            target = self._match_preview(previews, commit_id, attachment_id)
+            db.execute("DELETE FROM commit_attachments WHERE id=?", (target.id,))
+            self._renumber_previews(
+                db, commit_id, [item.id for item in previews if item.id != target.id]
+            )
+        return target
+
+    @locked
+    def reorder_previews(
+        self, value: str, attachment_ids: list[str]
+    ) -> list[CommitAttachment]:
+        """Save a new display order; every preview of the commit is listed once."""
+        commit_id = self.resolve_commit(value)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previews = self._previews_from_db(db, commit_id)
+            ordered = [
+                self._match_preview(previews, commit_id, item).id for item in attachment_ids
+            ]
+            if len(set(ordered)) != len(ordered) or len(ordered) != len(previews):
+                raise SproutError(
+                    "preview order must list every preview of the commit exactly once",
+                    code="invalid_preview_order",
+                    details={
+                        "commit_id": commit_id,
+                        "expected": [item.id for item in previews],
+                        "given": attachment_ids,
+                    },
+                )
+            self._renumber_previews(db, commit_id, ordered)
+            return self._previews_from_db(db, commit_id)
+
+    def export_preview(
+        self, value: str, attachment_id: str, output: Path, *, force: bool = False
+    ) -> Path:
+        return self._export_attachment(
+            self.preview(value, attachment_id), output, force=force
+        )
 
     @staticmethod
     def _commit_path_hash(db: sqlite3.Connection, commit_id: str, path: str) -> str | None:

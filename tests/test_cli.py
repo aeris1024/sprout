@@ -1700,7 +1700,8 @@ def test_json_exposes_branch_identity_and_ordered_attachments(tmp_path, monkeypa
     assert [(a["id"], a["position"]) for a in detail["attachments"]] == [("first", 1), ("second", 8)]
     assert graph["commits"][0]["attachments"] == detail["attachments"]
     text = invoke(["show", commit], repo.root, monkeypatch).stdout
-    assert text.index("first [preview:1]") < text.index("second [preview:8]")
+    assert "Preview 1. first  same.bin (application/x-future, 7 bytes)" in text
+    assert text.index("Preview 1. first") < text.index("Preview 2. second")
 
 
 def test_json_reports_branch_identity_for_position_and_branch_edits(tmp_path, monkeypatch):

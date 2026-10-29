@@ -208,12 +208,12 @@ sprout restore submitted
 sprout tree
 ```
 
-人間向け表示は古いコミットから新しいコミットへ親子関係をASCII枝で示します。`created`はコミット作成時のブランチ名、`branch`と`tag`は現在そのコミットを指す参照です。現在のブランチには`*`が付きます。サムネイル、メモ、ラベルもマーカーで確認できます。
+人間向け表示は古いコミットから新しいコミットへ親子関係をASCII枝で示します。`created`はコミット作成時のブランチ名、`branch`と`tag`は現在そのコミットを指す参照です。現在のブランチには`*`が付きます。サムネイル、previewの件数、メモ、ラベルもマーカーで確認できます。
 
 ```text
 * a12bc34de567 initial [created:main] [tag:baseline]
 |- * b23cd45ef678 main work [created:main] [branch:*main]
-`- * c34de56fa789 side work [created:side] [thumbnail] [note] [labels:Candidate]
+`- * c34de56fa789 side work [created:side] [thumbnail] [previews:2] [note] [labels:Candidate]
 ```
 
 削除したブランチ名は現在の`branch`参照から消えますが、そのブランチで作成したコミットと`created`の値は保持されます。GUIや外部ツールから利用する場合は`tree --json`で平坦なコミット配列と現在の参照を取得できます。人間向けツリーは古い順、JSONの`commits`配列は新しい順です。
@@ -390,6 +390,36 @@ sprout thumbnail <commit-id> --delete
 
 サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
+## コミットのpreviewを管理する
+
+サムネイルは芽のマップへ常時表示する小さな静止画像で、1コミットに1件です。previewはコミットを選んだときに再生・表示するためのファイルで、1コミットに複数登録できます。画像、音声、動画、3Dモデル、文書、未知のバイナリなど形式は問わず、内容をそのまま保存します。media_typeはファイル名から推定し、推定できない場合は`application/octet-stream`になります。`--media-type`で明示することもできます。
+
+```powershell
+# 末尾へ追加（複数指定時はすべて追加されるか、1件も追加されない）
+sprout preview add <commit-id> voice.wav model.stl notes.pdf
+
+# 保存前にサイズと容量への影響を確認
+sprout preview add <commit-id> movie.mp4 --dry-run
+
+# 表示順に一覧
+sprout preview list <commit-id>
+sprout preview list <commit-id> --json
+
+# 添付IDまたは一意な接頭辞で個別に操作
+sprout preview replace <commit-id> <preview-id> voice-v2.wav
+sprout preview export <commit-id> <preview-id> --output ../voice.wav
+sprout preview delete <commit-id> <preview-id>
+
+# 表示順を変更（そのコミットのpreviewをすべて新しい順に並べる）
+sprout preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
+```
+
+各previewは不変の添付IDで識別されます。同じファイル名でも別のpreviewとして登録でき、置き換え・並べ替え・他のpreviewの削除でIDは変わりません。置き換えでは表示順と作成日時を維持し、更新日時だけが変わります。削除すると残りのpreviewは相対順を保ったまま詰められます。表示順はDBに保存され、再オープン後も一覧・`show`・`tree`とそれぞれのJSONが同じ順で返します。
+
+サムネイル向けの2 MiB・画素数の上限はpreviewへ適用しません。ただし100 MiBを超えるファイルは誤登録を防ぐため`--yes`を付けた場合だけ登録し、付けない場合は何も保存せず`preview_confirmation_required`エラーにします。`--dry-run`は各ファイルのサイズ、media_type、既に保存済みの内容か、圧縮前で最大何バイト増えるかを表示し、何も保存しません。
+
+previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
+
 ## コミットメッセージを変更する
 
 ```powershell
@@ -466,7 +496,7 @@ sprout commit -m "ファイルを移動"
 
 ブランチの名前を変えてもIDは変わりません。削除済みの枝の識別情報とコミット・つぼみの作成時の名前は履歴用に保持し、同名で枝を作り直すと新しいIDになります。削除済みの枝は通常のブランチ一覧とpruneの先端保護から外れます。その枝のつぼみを戻すときは現在の有効なブランチを維持し、同名で作り直した別の枝へは接続しません。
 
-添付は不変のIDと表示順positionを持ち、保存層は1コミットに複数のpreviewを保持できます。thumbnailは従来どおり1件に限り、置き換えても添付IDと最初の登録日時を維持します。複数previewの追加・個別操作・並べ替えコマンドは後続のTASK-38で実装します。現段階でもshowとtreeのJSONから保存された添付一覧を取得できます。
+添付は不変のIDと表示順positionを持ち、1コミットに複数のpreviewを保持できます。thumbnailは従来どおり1件に限り、置き換えても添付IDと最初の登録日時を維持します。previewは`sprout preview`で追加・個別操作・並べ替えでき、showとtreeのJSONからも保存された添付一覧を取得できます。
 
 保存したオブジェクトはobjectsテーブルにも登録され、内容のSHA-256、元サイズ、圧縮後の保存サイズ、保存形式（現在はzstdのみ）、登録日時を持ちます。コミットのファイル、添付、つぼみのファイルはobjectsを外部キーで参照するため、未登録の内容を参照する行は保存できません。オブジェクトのファイルを書き込んだ後に登録が失敗・中断した場合は、どこからも参照されない未登録ファイルだけが残り、`doctor`が報告し`gc`が回収します。
 
@@ -494,6 +524,7 @@ sprout commit -m "ファイルを移動"
 | `diff [COMMIT_A] [COMMIT_B]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
+| `preview list\|add\|replace\|delete\|export\|order COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
 | `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
 | `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
@@ -521,7 +552,7 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -534,7 +565,7 @@ sprout commit -m "first" --json
 sprout switch ideas --json
 ```
 
-更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。`tag`の作成とコメント変更はタグ情報、削除は`name`と`deleted`、一覧はタグ情報の配列を返します。
+更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`preview`の`list`・`add`・`order`は添付情報の配列、`replace`は添付情報、`delete`は添付情報に`deleted: true`を加えたオブジェクト、`export`は`{"output": string}`、`--dry-run`は`previews`（各ファイルのsource・original_name・media_type・size・object_hash・already_stored・additional_bytes・requires_confirmation）と合計の`additional_bytes`・`requires_confirmation`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。`tag`の作成とコメント変更はタグ情報、削除は`name`と`deleted`、一覧はタグ情報の配列を返します。
 
 ```text
 init:       {"root": string}
