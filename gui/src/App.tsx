@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import BranchPanel from "./components/BranchPanel";
 import BudPanel from "./components/BudPanel";
@@ -25,7 +25,7 @@ import {
   type SproutStatus,
 } from "./lib/sprout";
 import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } from "./lib/settings";
-import { clipboardImage, discardPastedThumbnail, savePastedThumbnail, thumbnailImageProblem } from "./lib/clipboard";
+import { clipboardImage, discardPastedThumbnail, savePastedPreview, readClipboardFiles, savePastedThumbnail, thumbnailImageProblem } from "./lib/clipboard";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 
@@ -191,7 +191,8 @@ function App() {
     void appWindow
       .onDragDropEvent((event) => {
         if (event.payload.type === "drop" && projectDir && !operationActive.current) {
-          trackPaths(event.payload.paths);
+          if (selection?.kind === "commit" && !filesOpen && !comparison) addPreviews(selection.id, event.payload.paths);
+          else trackPaths(event.payload.paths);
         }
       })
       .then((stop) => {
@@ -203,7 +204,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [projectDir, sproutProgram]);
+  }, [projectDir, sproutProgram, selection, filesOpen, comparison]);
 
   function initializeProject() {
     if (!initCandidate) return;
@@ -448,7 +449,7 @@ function App() {
 
   /** Ctrl+V with an image sets the thumbnail of the open save form or commit; text pastes pass through. */
   function pasteThumbnail(event: ClipboardEvent) {
-    if (comparison || !projectDir || !status || filesOpen || operationActive.current) return;
+    if (event.defaultPrevented || comparison || !projectDir || !status || filesOpen || operationActive.current) return;
     const commitId = selection?.kind === "commit" && commitDetail?.id === selection.id ? commitDetail.id : null;
     const saveForm = selection === null || selection.kind === "unsaved";
     if (!commitId && !saveForm) return;
@@ -594,6 +595,85 @@ function App() {
     });
   }
 
+  type PreviewPlan = { previews: { original_name: string; size: number }[]; additional_bytes: number; requires_confirmation: boolean };
+
+  async function registerPreviews(commitId: string, paths: string[], replacement?: string) {
+    const args = ["preview", replacement ? "replace" : "add", commitId, ...(replacement ? [replacement] : []), ...fileArguments(paths)];
+    const plan = await runSprout<PreviewPlan>(projectDir, [...args, "--dry-run"], sproutProgram);
+    if (plan.requires_confirmation) {
+      const accepted = await confirmDialog(`100 MiBを超えるファイルを含みます。\n${plan.previews.map((item) => `${item.original_name}: ${item.size.toLocaleString()} B`).join("\n")}\n容量は圧縮前で最大 ${plan.additional_bytes.toLocaleString()} B 増加します。登録しますか？`, {
+        title: "大容量プレビューの確認", kind: "warning", okLabel: "登録", cancelLabel: "キャンセル",
+      });
+      if (!accepted) return false;
+    }
+    await runSprout(projectDir, [...args, ...(plan.requires_confirmation ? ["--yes"] : [])], sproutProgram);
+    return true;
+  }
+
+  function previewOperation(commitId: string, operation: () => Promise<boolean>) {
+    void execute(async () => {
+      if (!await operation()) return;
+      await fetchWorkspace(projectDir);
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setNotice({ code: "preview_updated", message: "プレビューの操作が完了しました", details: {}, kind: "success" });
+    });
+  }
+
+  function addPreviews(commitId: string, paths: string[]) {
+    if (paths.length) previewOperation(commitId, () => registerPreviews(commitId, paths));
+  }
+
+  function choosePreviews(commitId: string, replacement?: string) {
+    previewOperation(commitId, async () => {
+      const selected = await open({ multiple: !replacement, title: replacement ? "プレビューを置き換え" : "プレビューを追加" });
+      const paths = typeof selected === "string" ? [selected] : selected;
+      return paths?.length ? registerPreviews(commitId, paths, replacement) : false;
+    });
+  }
+
+  function pastePreviews(commitId: string, files: File[]) {
+    previewOperation(commitId, async () => {
+      const paths: string[] = [];
+      try {
+        for (const file of files) paths.push(await savePastedPreview(file));
+        return await registerPreviews(commitId, paths);
+      } finally {
+        await Promise.all(paths.map((path) => discardPastedThumbnail(path).catch(() => {})));
+      }
+    });
+  }
+
+  function pasteNativePreviews(commitId: string) {
+    previewOperation(commitId, async () => {
+      const paths = await readClipboardFiles();
+      return paths.length ? registerPreviews(commitId, paths) : false;
+    });
+  }
+
+  function deletePreview(commitId: string, id: string) {
+    previewOperation(commitId, async () => {
+      if (!await confirmDialog("このプレビューを削除します。続行しますか？", { title: "プレビューを削除", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" })) return false;
+      await runSprout(projectDir, ["preview", "delete", commitId, id], sproutProgram);
+      return true;
+    });
+  }
+
+  function exportPreview(commitId: string, id: string, name: string) {
+    void execute(async () => {
+      const output = await save({ title: "プレビューを取り出す", defaultPath: name });
+      if (!output) return;
+      await runSprout(projectDir, ["preview", "export", commitId, id, "--output", output], sproutProgram);
+      setNotice({ code: "preview_exported", message: `プレビューを ${output} へ取り出しました`, details: {}, kind: "success" });
+    });
+  }
+
+  function orderPreviews(commitId: string, ids: string[]) {
+    previewOperation(commitId, async () => {
+      await runSprout(projectDir, ["preview", "order", commitId, ...ids], sproutProgram);
+      return true;
+    });
+  }
+
   function restoreBud(budId: string) {
     if (!projectDir) return;
     void execute(async () => {
@@ -683,7 +763,15 @@ function App() {
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} annotations={{
+      return <CommitPanel detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
+        add: () => choosePreviews(commitDetail.id),
+        paste: (files) => pastePreviews(commitDetail.id, files),
+        pastePaths: () => pasteNativePreviews(commitDetail.id),
+        replace: (id) => choosePreviews(commitDetail.id, id),
+        remove: (id) => deletePreview(commitDetail.id, id),
+        export: (id, name) => exportPreview(commitDetail.id, id, name),
+        order: (ids) => orderPreviews(commitDetail.id, ids),
+      }} annotations={{
         onSaveNote: saveNote,
         onAddLabel: addLabel,
         onRemoveLabel: removeLabel,

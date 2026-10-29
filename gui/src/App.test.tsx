@@ -8,6 +8,7 @@ import type { BranchInfo, CommitDeletion, CommitGraph, CommitLogEntry, SproutSta
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
+  save: vi.fn(),
   confirm: vi.fn(),
   onDragDropEvent: vi.fn(),
   invoke: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mocks.open,
+  save: mocks.save,
   confirm: mocks.confirm,
 }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -1260,5 +1262,129 @@ describe("Sprout GUI operations", () => {
     await screen.findByText("Already exists");
     expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "export")).toHaveLength(1);
     expect(mocks.runSprout.mock.lastCall?.[1]).not.toContain("--force");
+  });
+
+  const previewDetail = {
+    ...commitEntry, branch_id: "main", branch_name: "main", files: [], thumbnail: null,
+    attachments: [
+      { id: "p1", role: "preview", position: 0, original_name: "voice.wav", media_type: "audio/wav", size: 12 },
+      { id: "p2", role: "preview", position: 1, original_name: "model.stl", media_type: "application/octet-stream", size: 24 },
+    ],
+  };
+  const smallPreviewPlan = { previews: [{ original_name: "new.bin", size: 12 }], additional_bytes: 12, requires_confirmation: false };
+  async function openPreviewWorkspace(user: ReturnType<typeof userEvent.setup>) {
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce(previewDetail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await screen.findByRole("region", { name: "プレビュー管理" });
+  }
+  function previewRefresh() {
+    mockWorkspace();
+    mocks.runSprout.mockResolvedValueOnce(previewDetail);
+  }
+
+  it.each([false, true])("confirms a large preview before registration: %s", async (accepted) => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.open.mockResolvedValueOnce(["C:\\movie.mp4"]);
+    mocks.runSprout.mockResolvedValueOnce({ ...smallPreviewPlan, requires_confirmation: true, additional_bytes: 200000000, previews: [{ original_name: "movie.mp4", size: 200000000 }] });
+    mocks.confirm.mockResolvedValueOnce(accepted);
+    if (accepted) { mocks.runSprout.mockResolvedValueOnce([]); previewRefresh(); }
+    await user.click(screen.getByRole("button", { name: "プレビューを追加" }));
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mocks.confirm.mock.calls[0][0]).toContain("200,000,000");
+    const calls = mocks.runSprout.mock.calls.filter((call) => call[1][0] === "preview").map((call) => call[1]);
+    expect(calls).toEqual(accepted ? [
+      ["preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"],
+      ["preview", "add", commitEntry.id, "C:\\movie.mp4", "--yes"],
+    ] : [["preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"]]);
+  });
+
+  it("adds multiple preview files from a native drop instead of tracking them", async () => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce(smallPreviewPlan).mockResolvedValueOnce([]);
+    previewRefresh();
+    act(() => mocks.dragHandler?.({ payload: { type: "drop", paths: ["C:\\one.wav", "C:\\two.bin"] } }));
+    await screen.findByText("プレビューの操作が完了しました");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\one.wav", "C:\\two.bin"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "track")).toBe(false);
+  });
+
+  it.each(["replace", "delete", "order"])("uses stable attachment IDs for preview %s", async (action) => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    if (action === "replace") {
+      mocks.open.mockResolvedValueOnce("C:\\new.wav");
+      mocks.runSprout.mockResolvedValueOnce(smallPreviewPlan);
+    }
+    mocks.runSprout.mockResolvedValueOnce([]);
+    previewRefresh();
+    const name = action === "replace" ? "voice.wavを置き換え" : action === "delete" ? "voice.wavを削除" : "voice.wavを下へ";
+    await user.click(screen.getByRole("button", { name }));
+    await screen.findByText("プレビューの操作が完了しました");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, action === "replace"
+      ? ["preview", "replace", commitEntry.id, "p1", "C:\\new.wav"]
+      : action === "delete" ? ["preview", "delete", commitEntry.id, "p1"] : ["preview", "order", commitEntry.id, "p2", "p1"], "");
+  });
+
+  it("exports a preview to a chosen file without force", async () => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.save.mockResolvedValueOnce("C:\\out.wav");
+    mocks.runSprout.mockResolvedValueOnce({ output: "C:\\out.wav" });
+    await user.click(screen.getByRole("button", { name: "voice.wavを取り出す" }));
+    await screen.findByText(/プレビューを.*へ取り出しました/);
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["preview", "export", commitEntry.id, "p1", "--output", "C:\\out.wav"], "");
+  });
+
+  it("preserves the displayed preview order on failure", async () => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "Preview locked", details: {} });
+    await user.click(screen.getByRole("button", { name: "voice.wavを下へ" }));
+    await screen.findByText("Preview locked");
+    const list = within(screen.getByRole("region", { name: "プレビュー管理" })).getByRole("list");
+    expect(within(list).getAllByRole("listitem")[0].textContent).toContain("voice.wav");
+    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "preview")).toHaveLength(1);
+  });
+
+  it.each([false, true])("pastes arbitrary preview files and cleans up after failure=%s", async (failure) => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.invoke.mockImplementation(async (command: string) => command === "save_pasted_preview" ? "C:\\temp\\voice.wav" : undefined);
+    mocks.runSprout.mockResolvedValueOnce(smallPreviewPlan);
+    if (failure) mocks.runSprout.mockRejectedValueOnce({ code: "preview_error", message: "Cannot add", details: {} });
+    else { mocks.runSprout.mockResolvedValueOnce([]); previewRefresh(); }
+    fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(new File(["voice"], "voice.wav", { type: "audio/wav" })) });
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: "C:\\temp\\voice.wav" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("save_pasted_preview", { name: "voice.wav", data: "dm9pY2U=" });
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "thumbnail")).toBe(false);
+    if (failure) await screen.findByText("Cannot add");
+  });
+
+  it("pastes an image as a preview only inside the dedicated area", async () => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.invoke.mockImplementation(async (command: string) => command === "save_pasted_preview" ? "C:\\temp\\image.png" : undefined);
+    mocks.runSprout.mockResolvedValueOnce(smallPreviewPlan).mockResolvedValueOnce([]);
+    previewRefresh();
+    fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(new File(["image"], "image.png", { type: "image/png" })) });
+    await screen.findByText("プレビューの操作が完了しました");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\temp\\image.png"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "thumbnail")).toBe(false);
+  });
+
+  it("adds native Explorer clipboard paths when WebView files are absent", async () => {
+    const user = userEvent.setup();
+    await openPreviewWorkspace(user);
+    mocks.invoke.mockImplementation(async (command: string) => command === "read_clipboard_files" ? ["C:\\source.pdf"] : undefined);
+    mocks.runSprout.mockResolvedValueOnce(smallPreviewPlan).mockResolvedValueOnce([]);
+    previewRefresh();
+    fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(null) });
+    await screen.findByText("プレビューの操作が完了しました");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\source.pdf"], "");
   });
 });

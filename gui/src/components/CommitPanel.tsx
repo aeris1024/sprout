@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentProps } from "react";
+import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
 import { branchIdentity, branchIdentityLabel, type BranchInfo, type CommitAttachment, type CommitDetail, type GraphTag } from "../lib/sprout";
@@ -34,6 +35,7 @@ interface CommitPanelProps {
   onCompare: (commitId: string) => void;
   onDelete: (commitId: string) => void;
   onClose: () => void;
+  previews: PreviewActions;
   annotations: Pick<ComponentProps<typeof CommitAnnotations>, "onSaveNote" | "onAddLabel" | "onRemoveLabel" | "onCreateTag" | "onSetTagComment" | "onDeleteTag">;
 }
 
@@ -54,6 +56,7 @@ export default function CommitPanel({
   onDelete,
   onClose,
   annotations,
+  previews,
 }: CommitPanelProps) {
   const [editingMessage, setEditingMessage] = useState(false);
   const [messageDraft, setMessageDraft] = useState(detail.message);
@@ -153,6 +156,7 @@ export default function CommitPanel({
           この葉を削除
         </button>
       </div>
+      <PreviewPanel attachments={detail.attachments} busy={busy} actions={previews} />
       <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />
       <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       {!current && unsavedCount > 0 && (

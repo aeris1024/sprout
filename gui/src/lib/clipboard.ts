@@ -44,3 +44,13 @@ export async function savePastedThumbnail(file: File): Promise<string> {
 export function discardPastedThumbnail(path: string): Promise<void> {
   return invoke<void>("discard_pasted_thumbnail", { path });
 }
+
+/** Store any pasted file temporarily; unlike thumbnails, previews have no format limit. */
+export async function savePastedPreview(file: File): Promise<string> {
+  return invoke<string>("save_pasted_preview", { name: file.name || "clipboard.bin", data: await readBase64(file) });
+}
+
+/** Native Explorer file references are not always exposed as WebView File objects. */
+export function readClipboardFiles(): Promise<string[]> {
+  return invoke<string[]>("read_clipboard_files");
+}

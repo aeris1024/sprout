@@ -439,6 +439,89 @@ fn discard_pasted_thumbnail(path: String) -> Result<(), SproutCliError> {
     remove_pasted_thumbnail(&std::env::temp_dir(), Path::new(&path))
 }
 
+/// Keep clipboard names inside a dedicated temporary directory, preserving extensions.
+fn write_pasted_preview(root: &Path, name: &str, data: &str) -> Result<PathBuf, SproutCliError> {
+    if name.is_empty() || name == "." || name == ".."
+        || name.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        || name.ends_with('.') || name.ends_with(' ')
+    {
+        return Err(SproutCliError::new("invalid_clipboard_name", "貼り付けたファイル名を使用できません", json!({ "name": name })));
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    if reserved {
+        return Err(SproutCliError::new("invalid_clipboard_name", "予約されたファイル名です", json!({ "name": name })));
+    }
+    let bytes = BASE64.decode(data).map_err(|error| SproutCliError::new(
+        "invalid_clipboard_file", "貼り付けたファイルを読み込めませんでした", json!({ "reason": error.to_string() })
+    ))?;
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let directory = root.join(format!("{PASTE_DIR_PREFIX}{}-{sequence}", std::process::id()));
+    let path = directory.join(name);
+    fs::create_dir(&directory).map_err(|error| SproutCliError::new(
+        "clipboard_file_write_failed", "一時フォルダを作成できませんでした", json!({ "reason": error.to_string() })
+    ))?;
+    if let Err(error) = fs::write(&path, bytes) {
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&directory);
+        return Err(SproutCliError::new("clipboard_file_write_failed", "一時ファイルを保存できませんでした", json!({ "reason": error.to_string() })));
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+fn save_pasted_preview(name: String, data: String) -> Result<String, SproutCliError> {
+    write_pasted_preview(&std::env::temp_dir(), &name, &data)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Explorer exposes copied files as CF_HDROP, which WebView clipboard files may omit.
+#[tauri::command]
+fn read_clipboard_files() -> Result<Vec<String>, SproutCliError> {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn OpenClipboard(owner: *mut c_void) -> i32;
+            fn CloseClipboard() -> i32;
+            fn GetClipboardData(format: u32) -> *mut c_void;
+            fn IsClipboardFormatAvailable(format: u32) -> i32;
+        }
+        #[link(name = "shell32")]
+        unsafe extern "system" {
+            fn DragQueryFileW(drop: *mut c_void, index: u32, file: *mut u16, size: u32) -> u32;
+        }
+        // All clipboard handles are borrowed and remain valid until CloseClipboard.
+        unsafe {
+            if IsClipboardFormatAvailable(15) == 0 { return Ok(vec![]); }
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return Err(SproutCliError::new("clipboard_busy", "クリップボードを開けません。再度貼り付けてください", json!({})));
+            }
+            struct ClipboardGuard;
+            impl Drop for ClipboardGuard {
+                fn drop(&mut self) { unsafe { CloseClipboard(); } }
+            }
+            let _guard = ClipboardGuard;
+            let drop = GetClipboardData(15);
+            if drop.is_null() { return Ok(vec![]); }
+            let count = DragQueryFileW(drop, u32::MAX, std::ptr::null_mut(), 0);
+            let mut paths = Vec::new();
+            for index in 0..count {
+                let length = DragQueryFileW(drop, index, std::ptr::null_mut(), 0);
+                let mut buffer = vec![0u16; length as usize + 1];
+                let copied = DragQueryFileW(drop, index, buffer.as_mut_ptr(), buffer.len() as u32);
+                paths.push(String::from_utf16_lossy(&buffer[..copied as usize]));
+            }
+            return Ok(paths);
+        }
+    }
+    #[cfg(not(windows))]
+    Ok(vec![])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -449,6 +532,8 @@ pub fn run() {
             run_sprout,
             read_sprout_thumbnail,
             save_pasted_thumbnail,
+            save_pasted_preview,
+            read_clipboard_files,
             discard_pasted_thumbnail
         ])
         .run(tauri::generate_context!())
@@ -458,6 +543,27 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_paste_preserves_arbitrary_files_and_cleans_up() {
+        let root = std::env::temp_dir();
+        let path = write_pasted_preview(&root, "voice.wav", &BASE64.encode(b"arbitrary bytes")).unwrap();
+        assert_eq!(path.file_name().unwrap(), "voice.wav");
+        assert_eq!(fs::read(&path).unwrap(), b"arbitrary bytes");
+        remove_pasted_thumbnail(&root, &path).unwrap();
+        assert!(!path.exists());
+        let empty = write_pasted_preview(&root, "empty.bin", "").unwrap();
+        assert_eq!(fs::metadata(&empty).unwrap().len(), 0);
+        remove_pasted_thumbnail(&root, &empty).unwrap();
+    }
+
+    #[test]
+    fn preview_paste_rejects_unsafe_names_and_invalid_base64() {
+        for name in ["../escape.bin", "a\\b", "C:escape", "..", "", "CON.txt", "bad."] {
+            assert!(write_pasted_preview(&std::env::temp_dir(), name, "AA==").is_err());
+        }
+        assert!(write_pasted_preview(&std::env::temp_dir(), "file.bin", "invalid base64!").is_err());
+    }
 
     #[test]
     fn appends_json_once() {
