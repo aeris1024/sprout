@@ -1735,9 +1735,24 @@ def gc(
         bool,
         typer.Option("--dry-run", help="List reclaimable objects without deleting them"),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
 ) -> None:
     """Delete unreferenced objects and leftover temporary object files."""
     result = repo().gc(dry_run=dry_run)
+    if json_output:
+        _echo_json(
+            {
+                "dry_run": result.dry_run,
+                "removed_objects": result.removed_objects,
+                "removed_temps": result.removed_temps,
+                "freed_bytes": result.freed_bytes,
+                "objects": list(result.objects),
+                "temps": list(result.temps),
+            }
+        )
+        return
     if dry_run:
         for object_hash in result.objects:
             typer.echo(f"object  {object_hash}")
@@ -1763,9 +1778,26 @@ def serve() -> None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
     """Inspect repository integrity without changing files."""
     result = repo().doctor()
+    if json_output:
+        _echo_json(
+            {
+                "ok": result.ok,
+                "checked_objects": result.checked_objects,
+                "issues": [
+                    {"kind": issue.kind, "detail": issue.detail} for issue in result.issues
+                ],
+            }
+        )
+        if not result.ok:
+            raise typer.Exit(1)
+        return
     for issue in result.issues:
         typer.echo(f"{issue.kind:<18} {issue.detail}")
     if result.ok:
@@ -1778,9 +1810,28 @@ def doctor() -> None:
 
 
 @app.command()
-def stats() -> None:
+def stats(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output structured JSON")
+    ] = False,
+) -> None:
     """Show repository size and basic counts."""
     result = repo().stats()
+    if json_output:
+        _echo_json(
+            {
+                "commits": result.commits,
+                "branches": result.branches,
+                "tracked_paths": result.tracked_paths,
+                "buds": result.buds,
+                "objects": result.objects,
+                "objects_bytes": result.objects_bytes,
+                "logical_bytes": result.logical_bytes,
+                "unique_bytes": result.unique_bytes,
+                "dedup_saved_bytes": result.dedup_saved_bytes,
+            }
+        )
+        return
     typer.echo(f"Commits:       {result.commits}")
     typer.echo(f"Branches:      {result.branches}")
     typer.echo(f"Tracked paths: {result.tracked_paths}")

@@ -837,6 +837,101 @@ def test_stats_cli_shows_counts_and_dedup(tmp_path: Path, monkeypatch) -> None:
     assert asset.read_bytes() == b"abcd"
 
 
+def maintenance_project(tmp_path: Path, monkeypatch) -> tuple[Path, Repository]:
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    (project / "asset.bin").write_bytes(b"abcd")
+    (project / "twin.bin").write_bytes(b"abcd")
+    assert invoke(["track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["commit", "-m", "shared"], project, monkeypatch).exit_code == 0
+    return project, Repository.discover(project)
+
+
+def run_main(args: list[str], cwd: Path, monkeypatch, capsys) -> tuple[int, str, str]:
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(sys, "argv", ["sprout", *args])
+    code = cli.main()
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def test_doctor_json_reports_health_and_issues(tmp_path: Path, monkeypatch, capsys) -> None:
+    project, repo = maintenance_project(tmp_path, monkeypatch)
+
+    code, out, err = run_main(["doctor", "--json"], project, monkeypatch, capsys)
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {"ok": True, "checked_objects": 1, "issues": []}
+
+    object_hash = repo.manifest(repo.head_commit())["asset.bin"].object_hash
+    (repo.objects / object_hash[:2] / object_hash).unlink()
+    code, out, err = run_main(["doctor", "--json"], project, monkeypatch, capsys)
+    assert (code, err) == (1, "")
+    assert json.loads(out) == {
+        "ok": False,
+        "checked_objects": 1,
+        "issues": [{"kind": "missing_object", "detail": object_hash}],
+    }
+    assert (project / "asset.bin").read_bytes() == b"abcd"
+
+
+def test_stats_json_reports_counts_and_sizes(tmp_path: Path, monkeypatch, capsys) -> None:
+    project, repo = maintenance_project(tmp_path, monkeypatch)
+    object_bytes = sum(path.stat().st_size for path in repo.objects.glob("*/*"))
+
+    code, out, err = run_main(["stats", "--json"], project, monkeypatch, capsys)
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {
+        "commits": 1,
+        "branches": 1,
+        "tracked_paths": 2,
+        "buds": 0,
+        "objects": 1,
+        "objects_bytes": object_bytes,
+        "logical_bytes": 8,
+        "unique_bytes": 4,
+        "dedup_saved_bytes": 4,
+    }
+
+
+def test_gc_json_reports_dry_run_and_removal(tmp_path: Path, monkeypatch, capsys) -> None:
+    project, repo = maintenance_project(tmp_path, monkeypatch)
+    orphan_hash = "ab" * 32
+    orphan = repo.objects / orphan_hash[:2] / orphan_hash
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_bytes(b"orphan")
+    temp = repo.tmp / "object-leftover"
+    temp.write_bytes(b"temp")
+    expected = {
+        "removed_objects": 1,
+        "removed_temps": 1,
+        "freed_bytes": len(b"orphan") + len(b"temp"),
+        "objects": [orphan_hash],
+        "temps": ["object-leftover"],
+    }
+
+    code, out, err = run_main(["gc", "--dry-run", "--json"], project, monkeypatch, capsys)
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {"dry_run": True, **expected}
+    assert orphan.exists() and temp.exists()
+
+    code, out, err = run_main(["gc", "--json"], project, monkeypatch, capsys)
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {"dry_run": False, **expected}
+    assert not orphan.exists() and not temp.exists()
+    assert (project / "asset.bin").read_bytes() == b"abcd"
+
+
+@pytest.mark.parametrize("command", [["doctor"], ["stats"], ["gc"], ["gc", "--dry-run"]])
+def test_maintenance_json_errors_are_structured(
+    tmp_path: Path, monkeypatch, capsys, command: list[str]
+) -> None:
+    code, out, err = run_main([*command, "--json"], tmp_path, monkeypatch, capsys)
+    assert (code, out) == (1, "")
+    payload = json.loads(err)
+    assert payload["code"] == "sprout_error"
+    assert set(payload) == {"code", "message", "details"}
+
+
 def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0

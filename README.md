@@ -540,9 +540,9 @@ sprout commit -m "ファイルを移動"
 | `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
 | `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
 | `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
-| `gc [--dry-run]` | どのコミットからも参照されないオブジェクトを削除する |
-| `doctor` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
-| `stats` | リポジトリの件数・容量と重複排除による節約量を表示する |
+| `gc [--dry-run] [--json]` | どのコミットからも参照されないオブジェクトを削除する |
+| `doctor [--json]` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
+| `stats [--json]` | リポジトリの件数・容量と重複排除による節約量を表示する |
 
 コミットの指定には、完全なコミットID、一意に識別できるIDの先頭部分、ブランチ名、またはタグ名を使用できます。
 
@@ -554,7 +554,7 @@ sprout commit -m "ファイルを移動"
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
@@ -565,6 +565,9 @@ sprout show <commit-id> --json
 sprout branch --json
 sprout commit -m "first" --json
 sprout switch ideas --json
+sprout doctor --json
+sprout stats --json
+sprout gc --dry-run --json
 ```
 
 更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`preview`の`list`・`add`・`order`は添付情報の配列、`replace`は添付情報、`delete`は添付情報に`deleted: true`を加えたオブジェクト、`export`は`{"output": string}`、`--dry-run`は`previews`（各ファイルのsource・original_name・media_type・size・object_hash・already_stored・additional_bytes・requires_confirmation）と合計の`additional_bytes`・`requires_confirmation`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。`tag`の作成とコメント変更はタグ情報、削除は`name`と`deleted`、一覧はタグ情報の配列を返します。
@@ -591,6 +594,42 @@ prune:
   "removed_commits": [{"id": string, "created_at": string, "message": string}],
   "reclaimable_objects": [string],
   "reclaimable_bytes": number
+}
+
+gc / gc --dry-run:
+{
+  "dry_run": boolean,
+  "removed_objects": number,
+  "removed_temps": number,
+  "freed_bytes": number,
+  "objects": [string],
+  "temps": [string]
+}
+```
+
+`gc --dry-run --json`の件数と容量は、削除した場合の値です。`objects`は対象オブジェクトのハッシュ、`temps`は一時ファイル名です。
+
+保守用の読み取り系コマンドのスキーマは次のとおりです。`doctor --json`は問題を検出した場合も結果のJSONをstdoutへ出力し、終了コード1で終了します。`issues`の`kind`は人向け表示の先頭と同じ識別子（`missing_object`、`corrupt_object`、`object_size_mismatch`、`unsupported_object_encoding`、`unregistered_object`、`orphan_temp`、`active_operation`、`missing_current_commit`など）、`detail`は対象のハッシュ・ファイル名・説明です。`stats --json`のサイズはすべてバイト数です。
+
+```text
+doctor:
+{
+  "ok": boolean,
+  "checked_objects": number,
+  "issues": [{"kind": string, "detail": string}]
+}
+
+stats:
+{
+  "commits": number,
+  "branches": number,
+  "tracked_paths": number,
+  "buds": number,
+  "objects": number,
+  "objects_bytes": number,
+  "logical_bytes": number,
+  "unique_bytes": number,
+  "dedup_saved_bytes": number
 }
 ```
 
