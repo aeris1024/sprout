@@ -11,6 +11,7 @@ interface SavePanelProps {
   growsBranch: boolean;
   message: string;
   thumbnailPath: string;
+  thumbnailPasted: boolean;
   busy: boolean;
   onMessageChange: (value: string) => void;
   onChooseThumbnail: () => void;
@@ -23,6 +24,7 @@ export default function SavePanel({
   growsBranch,
   message,
   thumbnailPath,
+  thumbnailPasted,
   busy,
   onMessageChange,
   onChooseThumbnail,
@@ -57,7 +59,11 @@ export default function SavePanel({
       <label className="field">
         サムネイル（任意）
         <div className="path-picker">
-          <input value={thumbnailPath} readOnly placeholder="PNG・JPEG・WebP（2 MiB以下）" />
+          <input
+            value={thumbnailPasted ? "貼り付けた画像" : thumbnailPath}
+            readOnly
+            placeholder="PNG・JPEG・WebP（2 MiB以下）。Ctrl+Vで画像を貼り付け"
+          />
           <button className="button secondary" onClick={onChooseThumbnail} disabled={busy}>
             選択
           </button>

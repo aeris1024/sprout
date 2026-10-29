@@ -23,6 +23,7 @@ import {
   type SproutStatus,
 } from "./lib/sprout";
 import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } from "./lib/settings";
+import { clipboardImage, discardPastedThumbnail, savePastedThumbnail, thumbnailImageProblem } from "./lib/clipboard";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 
@@ -54,6 +55,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [thumbnailPath, setThumbnailPath] = useState("");
+  const pastedThumbnail = useRef("");
+  const pasteHandler = useRef<(event: ClipboardEvent) => void>(() => {});
   const operationActive = useRef(false);
 
   useEffect(() => {
@@ -239,6 +242,14 @@ function App() {
     });
   }
 
+  /** Change the save form's thumbnail, deleting a previously pasted temporary file. */
+  function replaceThumbnailPath(path: string, pasted = false) {
+    const previous = pastedThumbnail.current;
+    if (previous && previous !== path) void discardPastedThumbnail(previous).catch(() => {});
+    pastedThumbnail.current = pasted ? path : "";
+    setThumbnailPath(path);
+  }
+
   function chooseThumbnail() {
     if (operationActive.current) return;
     void open({
@@ -246,7 +257,7 @@ function App() {
       title: "コミットのサムネイルを選択",
       filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
     }).then((selected) => {
-      if (typeof selected === "string") setThumbnailPath(selected);
+      if (typeof selected === "string") replaceThumbnailPath(selected);
     });
   }
 
@@ -262,7 +273,7 @@ function App() {
       if (thumbnailPath) args.push("--thumbnail", thumbnailPath);
       const result = await runSprout<CommitResult>(projectDir, args, sproutProgram);
       setCommitMessage("");
-      setThumbnailPath("");
+      replaceThumbnailPath("");
       await fetchWorkspace(projectDir);
       setSelection(null);
       setNotice({
@@ -395,14 +406,52 @@ function App() {
       filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
     }).then((selected) => {
       if (typeof selected !== "string") return;
-      void execute(async () => {
-        await runSprout(projectDir, ["thumbnail", commitId, selected], sproutProgram);
-        await fetchWorkspace(projectDir);
-        setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
-        setNotice({ code: "thumbnail_saved", message: `${shortId(commitId)} のサムネイルを保存しました`, details: { commit_id: commitId }, kind: "success" });
-      });
+      void execute(() => applyCommitThumbnail(commitId, selected));
     });
   }
+
+  async function applyCommitThumbnail(commitId: string, path: string) {
+    await runSprout(projectDir, ["thumbnail", commitId, path], sproutProgram);
+    await fetchWorkspace(projectDir);
+    setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+    setNotice({ code: "thumbnail_saved", message: `${shortId(commitId)} のサムネイルを保存しました`, details: { commit_id: commitId }, kind: "success" });
+  }
+
+  /** Ctrl+V with an image sets the thumbnail of the open save form or commit; text pastes pass through. */
+  function pasteThumbnail(event: ClipboardEvent) {
+    if (!projectDir || !status || filesOpen || operationActive.current) return;
+    const commitId = selection?.kind === "commit" && commitDetail?.id === selection.id ? commitDetail.id : null;
+    const saveForm = selection === null || selection.kind === "unsaved";
+    if (!commitId && !saveForm) return;
+    const image = clipboardImage(event.clipboardData);
+    if (!image) return;
+    event.preventDefault();
+    const problem = thumbnailImageProblem(image);
+    if (problem) {
+      setNotice({ code: "unsupported_clipboard_image", message: problem, details: { media_type: image.type, size: image.size }, kind: "warning" });
+      return;
+    }
+    void execute(async () => {
+      const path = await savePastedThumbnail(image);
+      if (!commitId) {
+        replaceThumbnailPath(path, true);
+        setNotice({ code: "thumbnail_pasted", message: "貼り付けた画像を保存時のサムネイルにします", details: {}, kind: "success" });
+        return;
+      }
+      try {
+        await applyCommitThumbnail(commitId, path);
+      } finally {
+        await discardPastedThumbnail(path).catch(() => {});
+      }
+    });
+  }
+  pasteHandler.current = pasteThumbnail;
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => pasteHandler.current(event);
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   function updateCommitMessage(commitId: string, message: string) {
     if (!projectDir) return;
@@ -569,7 +618,7 @@ function App() {
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
       return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onClose={closeSelection} />;
     }
-    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => setThumbnailPath("")} onSave={commitChanges} />;
+    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} />;
   }
 
   return (

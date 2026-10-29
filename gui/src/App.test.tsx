@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import type { BranchInfo, CommitGraph, CommitLogEntry, SproutStatus } from "./lib/sprout";
@@ -76,6 +76,19 @@ function mockWorkspace(
     buds: [],
   };
   mocks.runSprout.mockResolvedValueOnce(status).mockResolvedValueOnce(graph);
+}
+
+function clipboardData(file: File | null, text = "") {
+  const items = file ? [{ kind: "file", type: file.type, getAsFile: () => file }] : [{ kind: "string", type: "text/plain", getAsFile: () => null }];
+  return { items, files: file ? [file] : [], getData: () => text, types: file ? ["Files"] : ["text/plain"] };
+}
+
+function mockPasteCommands(tempPath: string) {
+  mocks.invoke.mockImplementation(async (command: string) => {
+    if (command === "save_pasted_thumbnail") return tempPath;
+    if (command === "discard_pasted_thumbnail") return undefined;
+    return "data:image/png;base64,AQID";
+  });
 }
 
 async function openWorkspace(user: ReturnType<typeof userEvent.setup>) {
@@ -241,6 +254,50 @@ describe("Sprout GUI operations", () => {
 
     expect(await screen.findByText(/コミット bbbbbbbbbbbb を作成しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["commit", "-m", "Save design", "--thumbnail", image], "");
+  });
+
+  it("commits with a pasted clipboard image as the thumbnail and discards the temporary file", async () => {
+    const user = userEvent.setup();
+    const tempPath = "C:\temp\sprout-gui-paste-1-0\clipboard.png";
+    mockPasteCommands(tempPath);
+    render(<App />);
+    await openWorkspace(user);
+    await user.type(screen.getByLabelText("メッセージ"), "Save design");
+
+    const image = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+    fireEvent.paste(document.body, { clipboardData: clipboardData(image) });
+
+    expect(await screen.findByDisplayValue("貼り付けた画像")).toBeTruthy();
+    expect(mocks.invoke).toHaveBeenCalledWith("save_pasted_thumbnail", { mediaType: "image/png", data: "AQID" });
+    mocks.runSprout.mockResolvedValueOnce({ id: "b".repeat(64), branch: "main", branch_id: "main", created_branch: false, message: "Save design", removed_paths: [] });
+    mockWorkspace(cleanStatus, [{ ...commitEntry, id: "b".repeat(64), message: "Save design" }, commitEntry]);
+    await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
+
+    expect(await screen.findByText(/コミット bbbbbbbbbbbb を作成しました/)).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["commit", "-m", "Save design", "--thumbnail", tempPath], "");
+    expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: tempPath });
+  });
+
+  it("keeps text pastes and rejects unsupported clipboard images without changing the thumbnail", async () => {
+    const user = userEvent.setup();
+    mockPasteCommands("unused");
+    render(<App />);
+    await openWorkspace(user);
+
+    const message = screen.getByLabelText("メッセージ");
+    const textPaste = fireEvent.paste(message, { clipboardData: clipboardData(null, "hello") });
+    expect(textPaste).toBe(true);
+
+    const gif = new File([new Uint8Array([1])], "anim.gif", { type: "image/gif" });
+    fireEvent.paste(document.body, { clipboardData: clipboardData(gif) });
+    expect(await screen.findByText(/サムネイルに使えない形式です/)).toBeTruthy();
+
+    const large = new File([new Uint8Array(2 * 1024 * 1024 + 1)], "large.png", { type: "image/png" });
+    fireEvent.paste(document.body, { clipboardData: clipboardData(large) });
+    expect(await screen.findByText(/上限（2 MiB）を超えています/)).toBeTruthy();
+
+    expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
+    expect((screen.getByPlaceholderText(/Ctrl\+Vで画像を貼り付け/) as HTMLInputElement).value).toBe("");
   });
 
   it("reports a branch grown from a past snapshot", async () => {
@@ -603,6 +660,28 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", rootId, image], "");
     expect(await screen.findByRole("img", { name: "Past commitのサムネイル" })).toBeTruthy();
+  });
+
+  it("registers a pasted clipboard image as the selected commit's thumbnail", async () => {
+    const user = userEvent.setup();
+    const tempPath = "C:\temp\sprout-gui-paste-1-1\clipboard.webp";
+    mockPasteCommands(tempPath);
+    render(<App />);
+    await openWorkspace(user);
+    const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
+    mocks.runSprout.mockResolvedValueOnce(detail);
+    await user.click(screen.getByRole("button", { name: /Initial design/ }));
+    expect(await screen.findByRole("button", { name: "サムネイルを登録" })).toBeTruthy();
+
+    mocks.runSprout.mockResolvedValueOnce({});
+    mockWorkspace();
+    mocks.runSprout.mockResolvedValueOnce(detail);
+    const image = new File([new Uint8Array([1, 2, 3])], "image.webp", { type: "image/webp" });
+    fireEvent.paste(document.body, { clipboardData: clipboardData(image) });
+
+    expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", commitEntry.id, tempPath], "");
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: tempPath }));
   });
 
   it("selects leaves with the keyboard and zooms the map", async () => {

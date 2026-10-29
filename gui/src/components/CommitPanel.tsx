@@ -132,7 +132,7 @@ export default function CommitPanel({
         ) : (
           <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy}>ここから枝を伸ばす</button>
         )}
-        <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy}>
+        <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy} title="Ctrl+Vでクリップボードの画像も登録できます">
           {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
         </button>
         <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
