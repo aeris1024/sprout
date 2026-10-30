@@ -1306,7 +1306,7 @@ def note(
             )
             return
         if annotations.note is None:
-            typer.echo(f"Deleted note from {annotations.commit_id[:12]}")
+            typer.echo(f"Deleted note from {annotations.commit_id[:12]}; recover it with 'sprout trash'")
         else:
             typer.echo(f"Set note for {annotations.commit_id[:12]}")
         return
@@ -1450,7 +1450,7 @@ def branch(
         if json_output:
             _echo_json({"id": branch_id, "name": delete, "deleted": True})
             return
-        typer.echo(f"Deleted branch {delete}")
+        typer.echo(f"Deleted branch {delete}; recover it with 'sprout trash'")
         return
     if rename is not None:
         if name is None:
@@ -1539,7 +1539,7 @@ def tag(
         if json_output:
             _echo_json({"name": delete, "deleted": True})
             return
-        typer.echo(f"Deleted tag {delete}")
+        typer.echo(f"Deleted tag {delete}; recover it with 'sprout trash'")
         return
     if set_comment is not None:
         if name is None:

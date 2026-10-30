@@ -8,12 +8,13 @@ from .errors import SproutError
 
 TRASH_RECORD_VERSION = 1
 BUD_KINDS = {'bud_delete', 'discard'}
+ANNOTATION_KINDS = {'note_delete', 'tag_delete', 'branch_delete'}
 
 # Ordered parents before dependents; identifiers below are never supplied by records.
 KEYS = {
     'commits': ('id',), 'commit_files': ('commit_id', 'path'),
     'commit_attachments': ('id',), 'preview_assets': ('attachment_id','file_id'), 'commit_notes': ('commit_id',),
-    'commit_labels': ('commit_id', 'label'), 'branches': ('id',),
+    'commit_labels': ('commit_id', 'label'), 'tags': ('name',), 'branches': ('id',),
     'repository_state': ('id',), 'buds': ('id',), 'bud_files': ('bud_id', 'path'),
 }
 
@@ -130,6 +131,20 @@ def validate(db, item):
                           code='invalid_trash_record', details={'trash_id': item['id']}) from exc
 
 
+def check_annotation_target(db, item, patch):
+    """Explain why a deleted note, tag or branch cannot return before touching anything."""
+    before = patch['before']
+    commit_id = before.get('commit_id')
+    if commit_id is not None and not db.execute('SELECT 1 FROM commits WHERE id=?', (commit_id,)).fetchone():
+        conflict(item['id'], 'the snapshot it belonged to no longer exists')
+    if item['kind'] == 'note_delete':
+        if db.execute('SELECT 1 FROM commit_notes WHERE commit_id=?', (commit_id,)).fetchone():
+            conflict(item['id'], 'the snapshot already has a newer note')
+    elif db.execute('SELECT 1 FROM branches WHERE name=? AND deleted=0 UNION ALL SELECT 1 FROM tags WHERE name=?',
+                    (before['name'], before['name'])).fetchone():
+        conflict(item['id'], f"the name {before['name']} is already used by a branch or tag")
+
+
 def conflict(item_id, reason):
     raise SproutError(f'cannot restore trash item: {reason}; no changes applied',
                       code='trash_restore_conflict', details={'trash_id': item_id, 'reason': reason})
@@ -150,6 +165,8 @@ def restore(db, item):
         if sorted(assets, key=lambda r:(r['attachment_id'],r['file_id'])) != sorted(payload.get('assets_after',[]), key=lambda r:(r['attachment_id'],r['file_id'])):
             conflict(item['id'], 'preview material associations changed')
     for patch in payload['patches']:
+        if item['kind'] in ANNOTATION_KINDS:
+            check_annotation_target(db, item, patch)
         if item['kind'] in BUD_KINDS and patch['table'] == 'buds':
             base = patch['before']['base_commit_id']
             if base is not None and not db.execute('SELECT 1 FROM commits WHERE id=?', (base,)).fetchone():

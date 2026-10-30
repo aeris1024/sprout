@@ -21,6 +21,13 @@ it("names dropped buds and discarded work and explains how they come back", () =
   expect(screen.getByText(/つぼみとして戻ります/)).toBeTruthy();
 });
 
+it("names deleted notes, tags and branches", () => {
+  panel([item("note_delete", "メモ"), item("tag_delete", "v1"), item("branch_delete", "side")]);
+  expect(screen.getByText("メモの削除")).toBeTruthy();
+  expect(screen.getByText("タグの削除")).toBeTruthy();
+  expect(screen.getByText("ブランチの削除")).toBeTruthy();
+});
+
 it("describes the files kept with a bud", () => {
   panel([item("discard", "a.txt", [{ table: "bud_files", before: { path: "a.txt", size: 3 }, after: null }])]);
   expect(screen.getByText("つぼみのファイル")).toBeTruthy();

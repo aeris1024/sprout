@@ -3,10 +3,11 @@ import type { TrashItem } from "../lib/sprout";
 const kinds: Record<string, string> = {
   commit: "葉の削除", preview_delete: "プレビューの削除", preview_replace: "プレビューの置き換え前",
   bud_delete: "捨てたつぼみ", discard: "破棄した未保存の変更",
+  note_delete: "メモの削除", tag_delete: "タグの削除", branch_delete: "ブランチの削除",
 };
 const recordNames: Record<string, string> = {
   commits: "葉", commit_files: "保存ファイル", commit_attachments: "添付",
-  commit_notes: "メモ", commit_labels: "ラベル", branches: "ブランチ",
+  commit_notes: "メモ", commit_labels: "ラベル", tags: "タグ", branches: "ブランチ",
   repository_state: "現在位置", buds: "つぼみ", bud_files: "つぼみのファイル",
 };
 const fieldNames: Record<string, string> = {

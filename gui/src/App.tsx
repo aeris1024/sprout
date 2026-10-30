@@ -446,7 +446,7 @@ function App() {
   function deleteBranch(branchId: string) {
     const branch = graph.branches.find((item) => item.id === branchId);
     if (!projectDir || !branch || operationActive.current) return;
-    void confirmDialog(`ブランチ ${branch.name} を削除します。この枝のスナップショットは削除されず、「削除済みブランチ由来」として残ります。続行しますか？`, {
+    void confirmDialog(`ブランチ ${branch.name} を削除します。この枝のスナップショットは削除されず、「削除済みブランチ由来」として残ります。ブランチはゴミ箱から戻せます。続行しますか？`, {
       title: "ブランチを削除",
       kind: "warning",
       okLabel: "削除",
@@ -516,7 +516,7 @@ function App() {
 
   function deleteTag(commitId: string, name: string) {
     if (!projectDir || operationActive.current) return;
-    void confirmDialog(`タグ ${name} を削除します。スナップショットは削除されません。続行しますか？`, {
+    void confirmDialog(`タグ ${name} を削除します。スナップショットは削除されません。タグはゴミ箱から戻せます。続行しますか？`, {
       title: "タグを削除",
       kind: "warning",
       okLabel: "削除",

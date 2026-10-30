@@ -171,7 +171,7 @@ CREATE TABLE objects (
 CREATE TABLE trash_entries (
     id TEXT PRIMARY KEY NOT NULL,
     seq INTEGER NOT NULL UNIQUE CHECK (typeof(seq) = 'integer' AND seq > 0),
-    kind TEXT NOT NULL CHECK (kind IN ('commit', 'preview_delete', 'preview_replace', 'bud_delete', 'discard')),
+    kind TEXT NOT NULL CHECK (kind IN ('commit', 'preview_delete', 'preview_replace', 'bud_delete', 'discard', 'note_delete', 'tag_delete', 'branch_delete')),
     target_id TEXT NOT NULL,
     title TEXT NOT NULL,
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
@@ -1926,7 +1926,11 @@ class Repository:
             raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit")
         with self.connect() as db:
             if not normalized:
+                before = {"commit_notes": recovery.rows(db, "commit_notes", "commit_id=?", (commit_id,))}
                 db.execute("DELETE FROM commit_notes WHERE commit_id=?", (commit_id,))
+                for row in before["commit_notes"]:
+                    title = row["note"].splitlines()[0][:40]
+                    recovery.record(db, before, "note_delete", title, commit_id, utc_timestamp())
             else:
                 updated_at = utc_timestamp()
                 db.execute(
@@ -3233,10 +3237,13 @@ class Repository:
             ).fetchone()[0]
             if name == current:
                 raise SproutError(f"cannot delete current branch: {name}")
+            before = {"branches": recovery.rows(db, "branches", "id=?", (branch[0],))}
+            deleted_at = utc_timestamp()
             db.execute(
                 "UPDATE branches SET deleted=1, commit_id=NULL, deleted_at=? WHERE id=?",
-                (utc_timestamp(), branch[0]),
+                (deleted_at, branch[0]),
             )
+            recovery.record(db, before, "branch_delete", name, branch[0], deleted_at)
         return branch[0]
 
     @locked
@@ -3287,9 +3294,11 @@ class Repository:
     @locked
     def delete_tag(self, name: str) -> None:
         with self.connect() as db:
-            cursor = db.execute("DELETE FROM tags WHERE name=?", (name,))
-            if cursor.rowcount == 0:
+            before = {"tags": recovery.rows(db, "tags", "name=?", (name,))}
+            if not before["tags"]:
                 raise SproutError(f"unknown tag: {name}")
+            db.execute("DELETE FROM tags WHERE name=?", (name,))
+            recovery.record(db, before, "tag_delete", name, before["tags"][0]["commit_id"], utc_timestamp())
 
     @locked
     def set_tag_comment(self, name: str, comment: str) -> None:

@@ -86,7 +86,7 @@ export default function CommitAnnotations({ detail, tags, busy, onSaveNote, onAd
             }}
           >
             <textarea aria-label="メモを編集" value={noteDraft} onChange={(event) => setNoteDraft(event.currentTarget.value)} disabled={busy} />
-            <p className="field-hint">空にして保存するとメモを削除します（20,000文字まで）。</p>
+            <p className="field-hint">空にして保存するとメモをゴミ箱へ移します（20,000文字まで）。</p>
             <div className="action-row">
               <button className="button primary" type="submit" disabled={busy}>保存</button>
               <button className="button secondary" type="button" onClick={() => { setNoteDraft(detail.note ?? ""); setEditingNote(false); }} disabled={busy}>キャンセル</button>

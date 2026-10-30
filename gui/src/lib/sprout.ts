@@ -173,7 +173,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export interface TrashItem {
   id: string;
-  kind: "commit" | "preview_delete" | "preview_replace" | "bud_delete" | "discard";
+  kind: "commit" | "preview_delete" | "preview_replace" | "bud_delete" | "discard" | "note_delete" | "tag_delete" | "branch_delete";
   target_id: string;
   title: string;
   created_at: string;

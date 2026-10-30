@@ -94,7 +94,7 @@ def test_branch_cli_renames_and_deletes(tmp_path: Path, monkeypatch) -> None:
 
     deleted = invoke(["branch", "--delete", "prototype"], project, monkeypatch)
     assert deleted.exit_code == 0
-    assert deleted.stdout == "Deleted branch prototype\n"
+    assert deleted.stdout == "Deleted branch prototype; recover it with 'sprout trash'\n"
     assert "prototype" not in invoke(["branch"], project, monkeypatch).stdout
 
     current = invoke(["branch", "--delete", "main"], project, monkeypatch)
@@ -204,7 +204,7 @@ def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch)
 
     deleted = invoke(["tag", "--delete", "first-draft"], project, monkeypatch)
     assert deleted.exit_code == 0
-    assert deleted.stdout == "Deleted tag first-draft\n"
+    assert deleted.stdout == "Deleted tag first-draft; recover it with 'sprout trash'\n"
     assert "first-draft" not in invoke(["tag"], project, monkeypatch).stdout
 
 
