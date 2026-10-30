@@ -31,8 +31,8 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
-# V1 is frozen. Any incompatible schema change must increment this number.
-SCHEMA_VERSION = "1"
+# V1 is frozen in tests/fixtures/schema_v1.sql. Incompatible changes increment this number.
+SCHEMA_VERSION = "4"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
@@ -127,7 +127,6 @@ CREATE TABLE objects (
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     stored_size INTEGER NOT NULL CHECK (typeof(stored_size) = 'integer' AND stored_size >= 0),
     encoding TEXT NOT NULL CHECK (encoding <> ''),
-    file_mtime_ns INTEGER CHECK (file_mtime_ns IS NULL OR typeof(file_mtime_ns) = 'integer'),
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
     UNIQUE (hash, size)
 );
@@ -159,6 +158,7 @@ CREATE TABLE commit_files (
     path TEXT NOT NULL,
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
+    mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
     PRIMARY KEY (commit_id, path),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
@@ -1056,19 +1056,27 @@ class Repository:
             return HeadPosition(row["id"], row["name"], current, current == row["commit_id"])
 
     @staticmethod
+    def _validate_file_time(value: Any, path: str) -> None:
+        # Signed nanoseconds: zero and pre-epoch timestamps are valid metadata.
+        # SQLite INTEGER enforces the signed 64-bit storage range.
+        if type(value) is not int:
+            raise SproutError(
+                f"invalid saved file time: {path}", code="invalid_file_time",
+                details={"path": path},
+            )
+
+    @staticmethod
     def _manifest_from_db(db: sqlite3.Connection, commit_id: str | None) -> dict[str, FileState]:
         if commit_id is None:
             return {}
         result: dict[str, FileState] = {}
         for row in db.execute(
-            "SELECT f.path, f.object_hash, f.size, o.file_mtime_ns FROM commit_files f "
-            "JOIN objects o ON o.hash=f.object_hash WHERE f.commit_id=? ORDER BY f.path",
+            "SELECT path, object_hash, size, mtime_ns FROM commit_files WHERE commit_id=? ORDER BY path",
             (commit_id,),
         ):
-            if row["file_mtime_ns"] is None:
-                raise SproutError(f"object has no file time: {row['object_hash']}")
+            Repository._validate_file_time(row["mtime_ns"], row["path"])
             result[row["path"]] = FileState(
-                row["path"], row["object_hash"], row["size"], row["file_mtime_ns"]
+                row["path"], row["object_hash"], row["size"], row["mtime_ns"]
             )
         return result
 
@@ -1187,8 +1195,8 @@ class Repository:
         for object_hash in objects:
             self._check_object_encoding(object_hash, db)
         db.executemany(
-            "INSERT INTO objects(hash, size, stored_size, encoding, file_mtime_ns, created_at) "
-            "VALUES(?, ?, ?, ?, NULL, ?) ON CONFLICT(hash) DO NOTHING",
+            "INSERT INTO objects(hash, size, stored_size, encoding, created_at) "
+            "VALUES(?, ?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING",
             (
                 (
                     object_hash,
@@ -1348,14 +1356,6 @@ class Repository:
             raise SproutError("commit message cannot be empty")
         files, missing = self._store_tracked_files("committing")
 
-        # Modification time is canonical per content object, not versioned metadata.
-        # objects.file_mtime_ns keeps the time chosen when the content was first
-        # committed. If it first appears at multiple paths together, use the oldest.
-        first_times: dict[str, int] = {}
-        for item in files:
-            first_times[item.object_hash] = min(
-                first_times.get(item.object_hash, item.mtime_ns), item.mtime_ns
-            )
         parent = self.current_commit()
         previous = self.manifest(parent)
         current = {item.path: item for item in files}
@@ -1379,10 +1379,6 @@ class Repository:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self._register_objects(db, stored, created_at)
-            db.executemany(
-                "UPDATE objects SET file_mtime_ns=? WHERE hash=? AND file_mtime_ns IS NULL",
-                ((mtime_ns, object_hash) for object_hash, mtime_ns in sorted(first_times.items())),
-            )
             tip = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (branch,)).fetchone()
             # Saving on top of a non-tip snapshot grows a new branch from it.
             created_branch = tip is None or tip[0] != parent
@@ -1399,8 +1395,8 @@ class Repository:
                 (commit_id, parent, self._branch_id_from_db(db, branch), branch, created_at, message.strip()),
             )
             db.executemany(
-                "INSERT INTO commit_files(commit_id, path, object_hash, size) VALUES(?,?,?,?)",
-                ((commit_id, item.path, item.object_hash, item.size) for item in files),
+                "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
+                ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
             )
             if prepared_thumbnail is not None:
                 original_name, media_type, object_hash, size = prepared_thumbnail
@@ -2174,10 +2170,10 @@ class Repository:
             ):
                 issues.append(DoctorIssue("missing_object", row[0]))
             for row in db.execute(
-                "SELECT DISTINCT f.object_hash FROM commit_files f "
-                "JOIN objects o ON o.hash=f.object_hash WHERE o.file_mtime_ns IS NULL ORDER BY 1"
+                "SELECT commit_id, path FROM commit_files "
+                "WHERE mtime_ns IS NULL OR typeof(mtime_ns) <> 'integer' ORDER BY commit_id, path"
             ):
-                issues.append(DoctorIssue("missing_object_file_time", row[0]))
+                issues.append(DoctorIssue("invalid_file_time", f"{row['commit_id']}:{row['path']}"))
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:
                 issues.append(
@@ -3520,11 +3516,12 @@ class Repository:
             commit_ids = [row["id"] for row in commit_rows]
             files: dict[str, list[FileState]] = {commit_id: [] for commit_id in commit_ids}
             for row in db.execute(
-                "SELECT f.commit_id, f.path, f.object_hash, f.size, o.file_mtime_ns "
-                "FROM commit_files f JOIN objects o ON o.hash=f.object_hash ORDER BY f.commit_id, f.path"
+                "SELECT commit_id, path, object_hash, size, mtime_ns "
+                "FROM commit_files ORDER BY commit_id, path"
             ):
+                self._validate_file_time(row["mtime_ns"], row["path"])
                 files[row["commit_id"]].append(
-                    FileState(row["path"], row["object_hash"], row["size"], row["file_mtime_ns"] or 0)
+                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"])
                 )
             attachments = self._attachments_many_from_db(db, commit_ids)
             annotations = self._annotations_many_from_db(db, commit_ids)
@@ -3767,7 +3764,7 @@ class Repository:
                             details=copy.details,
                         ) from exc
                     extracted[key] = destination
-                if copy.item.mtime_ns:
+                if "path" in copy.details:
                     os.utime(destination, ns=(copy.item.mtime_ns, copy.item.mtime_ns))
             for relative, data in plan.texts.items():
                 destination = staging / relative

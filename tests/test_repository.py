@@ -120,7 +120,7 @@ def test_objects_are_compressed_and_repository_records_format(
         )
 
 
-@pytest.mark.parametrize("version", ["2", "3", "4", "999", "unknown"])
+@pytest.mark.parametrize("version", ["1", "2", "3", "999", "unknown"])
 def test_discover_rejects_unsupported_schema_without_modifying_it(
     tmp_path: Path, version: str
 ) -> None:
@@ -135,7 +135,7 @@ def test_discover_rejects_unsupported_schema_without_modifying_it(
         db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
 
     assert_discover_rejected_without_changes(
-        repo, rf"unsupported repository schema version: {version} \(expected 1\); preserve the entire project"
+        repo, rf"unsupported repository schema version: {version} \(expected 4\); preserve the entire project"
     )
 
 
@@ -195,7 +195,7 @@ def test_discover_rejects_missing_metadata_without_modifying_it(tmp_path: Path, 
     assert_discover_rejected_without_changes(repo, match)
 
 
-def test_schema_version_1_initializes_metadata_tables_and_indexes(
+def test_schema_version_4_initializes_metadata_tables_and_indexes(
     tmp_path: Path,
 ) -> None:
     first = create_repo(tmp_path)
@@ -217,7 +217,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
             "SELECT value FROM meta WHERE key='repository_id'"
         ).fetchone()[0]
 
-    assert metadata["schema_version"] == "1"
+    assert metadata["schema_version"] == "4"
     assert tables == {
         "meta", "objects", "commits", "commit_files", "commit_attachments", "commit_notes",
         "commit_labels", "branches", "tags", "tracked_paths", "buds",
@@ -239,7 +239,7 @@ def test_schema_version_1_initializes_metadata_tables_and_indexes(
         assert dict(db.execute("SELECT key, value FROM meta")) == metadata
 
 
-def test_schema_version_1_attachment_note_and_label_constraints(tmp_path: Path) -> None:
+def test_schema_version_4_attachment_note_and_label_constraints(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
     commit_id = "a" * 64
     timestamp = "2026-08-09T00:00:00.000000+00:00"
@@ -1609,7 +1609,7 @@ def test_timestamp_only_change_is_not_committable_and_restores_first_time(
     assert asset.stat().st_mtime_ns == old_time
 
 
-def test_duplicate_content_uses_oldest_time_on_first_commit(
+def test_duplicate_content_preserves_each_path_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = create_repo(tmp_path)
@@ -1625,14 +1625,14 @@ def test_duplicate_content_uses_oldest_time_on_first_commit(
 
     manifest = repo.manifest(commit_id)
     assert manifest["z-older.png"].mtime_ns == old_time
-    assert manifest["a-newer.png"].mtime_ns == old_time
+    assert manifest["a-newer.png"].mtime_ns == new_time
     assert len(list(repo.objects.glob("*/*"))) == 1
 
     os.utime(older, ns=(new_time, new_time))
     os.utime(newer, ns=(new_time, new_time))
     repo.restore(commit_id, discard=True)
     assert older.stat().st_mtime_ns == old_time
-    assert newer.stat().st_mtime_ns == old_time
+    assert newer.stat().st_mtime_ns == new_time
 
 
 def repository_with_divergent_branch(

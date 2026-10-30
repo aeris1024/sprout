@@ -2,10 +2,12 @@ import hashlib
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 
 from sprout import cli
+from sprout.errors import SproutError
 from sprout.repository import Repository, SCHEMA, SCHEMA_VERSION
 
 
@@ -25,13 +27,36 @@ def saved(tmp_path):
 
 def test_v1_definition_is_frozen():
     # Never silently redefine V1: the next incompatible format must be V2+.
-    assert SCHEMA_VERSION == '1'
-    assert hashlib.sha256(SCHEMA.encode()).hexdigest() == (
+    frozen = (Path(__file__).parent / 'fixtures/schema_v1.sql').read_bytes()
+    assert hashlib.sha256(frozen).hexdigest() == (
         '4a18c36f50c03eb633803947724071074d635910eae4eed0b4aec852d1ac75ec'
     )
 
 
-def test_current_v1_reopens_and_accepts_writes(tmp_path):
+def test_frozen_v1_is_rejected_without_changes(tmp_path):
+    root = tmp_path / 'legacy'
+    control = root / '.sprout'
+    control.mkdir(parents=True)
+    (root / 'asset.bin').write_bytes(b'unsaved work')
+    with sqlite3.connect(control / 'repository.db') as db:
+        db.executescript((Path(__file__).parent / 'fixtures/schema_v1.sql').read_text())
+        db.execute("INSERT INTO meta VALUES('schema_version', '1')")
+    before = snapshot(root)
+    with pytest.raises(SproutError) as error:
+        Repository.discover(root)
+    assert error.value.code == 'unsupported_repository_format'
+    assert error.value.details['found_schema_version'] == '1'
+    assert snapshot(root) == before
+
+
+def test_current_format_definition_is_frozen():
+    assert SCHEMA_VERSION == '4'
+    assert hashlib.sha256(SCHEMA.encode()).hexdigest() == (
+        '817957f210c294ac81a52698a91133208ec7235110a171e669a629cc82fe9ff0'
+    )
+
+
+def test_current_format_reopens_and_accepts_writes(tmp_path):
     repo = saved(tmp_path)
     reopened = Repository.discover(repo.root)
     (repo.root / 'asset.bin').write_bytes(b'next version')
@@ -46,6 +71,7 @@ def test_current_v1_reopens_and_accepts_writes(tmp_path):
     ('DROP TABLE meta', 'unreadable_metadata'),
     ('DROP TABLE bud_files', 'missing_tables'),
     ('DROP INDEX idx_single_thumbnail', 'schema_structure'),
+    ('ALTER TABLE commit_files DROP COLUMN mtime_ns', 'schema_structure'),
     ('ALTER TABLE commit_files ADD COLUMN legacy TEXT', 'schema_structure'),
     ("DELETE FROM meta WHERE key='repository_id'", 'missing_metadata'),
     ("UPDATE meta SET value='future' WHERE key='object_compression'", 'object_compression'),
@@ -69,7 +95,7 @@ def test_incompatible_db_cli_is_nonmutating(tmp_path, monkeypatch, capsys, state
         error = json.loads(output.err)
         assert error['code'] == 'unsupported_repository_format'
         assert error['details']['reason'] == reason
-        assert error['details']['supported_schema_version'] == '1'
+        assert error['details']['supported_schema_version'] == SCHEMA_VERSION
         message = error['message']
     else:
         message = output.err

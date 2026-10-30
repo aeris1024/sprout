@@ -223,7 +223,7 @@ def test_saved_snapshot_lookup_uses_object_index(tmp_path):
     assert "SCAN commit_files" not in plan
 
 
-def test_objects_record_storage_and_canonical_file_time(tmp_path):
+def test_objects_record_storage_without_snapshot_file_times(tmp_path):
     repo, _, first = committed_repo(tmp_path)
     copy = repo.root / "copy.bin"
     copy.write_bytes(b"base")
@@ -238,15 +238,14 @@ def test_objects_record_storage_and_canonical_file_time(tmp_path):
         columns = {row[1] for row in db.execute("PRAGMA table_info(commit_files)")}
     original = repo.manifest(first)["asset.bin"]
     thumbnail = repo.thumbnail(second)
-    assert "mtime_ns" not in columns
+    assert "mtime_ns" in columns
     assert set(rows) == {original.object_hash, thumbnail.object_hash}
     for object_hash, row in rows.items():
         stored = repo.objects / object_hash[:2] / object_hash
         assert (row["encoding"], row["stored_size"]) == ("zstd", stored.stat().st_size)
-    # The first commit fixed the content time; a later, older copy does not change it.
-    assert rows[original.object_hash]["file_mtime_ns"] == original.mtime_ns
-    assert repo.manifest(second)["copy.bin"].mtime_ns == original.mtime_ns
-    assert rows[thumbnail.object_hash]["file_mtime_ns"] is None
+    assert "file_mtime_ns" not in rows[original.object_hash].keys()
+    assert repo.manifest(second)["copy.bin"].mtime_ns == copy.stat().st_mtime_ns
+    assert repo.manifest(first)["asset.bin"].mtime_ns == original.mtime_ns
     assert Repository.discover(repo.root).doctor().ok
 
 
@@ -263,10 +262,10 @@ def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path)
 
 
 @pytest.mark.parametrize("statement", [
-    "INSERT INTO commit_files(commit_id, path, object_hash, size) "
-    "SELECT commit_id, 'other.bin', object_hash, size + 1 FROM commit_files",
-    "INSERT INTO commit_files(commit_id, path, object_hash, size) "
-    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) "
+    "SELECT commit_id, 'other.bin', object_hash, size + 1, mtime_ns FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) "
+    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size, mtime_ns FROM commit_files",
     "DELETE FROM objects",
     "UPDATE objects SET hash='ABC'",
     "UPDATE objects SET stored_size=-1",
@@ -320,7 +319,6 @@ def test_gc_forgets_unreferenced_objects_and_stats_follow_the_registry(tmp_path)
     ("UPDATE objects SET stored_size=stored_size+1", "object_size_mismatch"),
     ("UPDATE objects SET encoding='future'", "unsupported_object_encoding"),
     ("DELETE FROM objects", "missing_object"),
-    ("UPDATE objects SET file_mtime_ns=NULL", "missing_object_file_time"),
 ])
 def test_doctor_reports_object_registry_problems(tmp_path, statement, kind):
     repo, _, _ = committed_repo(tmp_path)
