@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-30 17:53'
-updated_date: '2026-10-30 18:37'
+updated_date: '2026-10-30 21:16'
 labels:
   - gui
   - usability
@@ -49,4 +49,6 @@ Permission: core:default already includes core:event:default (allow-listen, allo
 Verified: 10 new App tests, pnpm test 136 passed, pnpm build OK. Browser harness with the real CLI and synthetic tauri://focus events: external edit changes the chip to unsaved 1; map scroll stays at 137,61; memo and message drafts stay; selected leaf stays; 8 rapid focus changes run 1 refetch and 1 trailing refetch; an external commit adds the leaf and keeps the draft.
 
 PENDING: AC 1 real-device check of the native window focus event in pnpm tauri dev. TASK-96 stays In Progress.
+
+Real Tauri window check: tauri://focus and tauri://blur listeners were accepted, so no capability change is needed. The native focus cycle could not be driven in this environment, so AC 1 stays unchecked. All code is on main; run the manual steps, then check AC 1 and finalize.
 <!-- SECTION:NOTES:END -->

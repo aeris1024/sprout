@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-30 17:53'
-updated_date: '2026-10-30 18:37'
+updated_date: '2026-10-30 21:16'
 labels:
   - gui
   - usability
@@ -48,4 +48,6 @@ Drops and image pastes now use the displayed panel (order of sidePanel()). Commi
 Verified: 16 new App tests, pnpm test 126 passed, pnpm build OK. Browser harness with the real CLI and synthetic Tauri drag events and ClipboardEvent: leaf hover names the leaf; leave clears it; trash drop and paste leave thumbnail hash and preview count unchanged; cancel keeps the hash; accept changes it; textarea paste keeps it; a drop on the leaf detail adds one preview; save form paste still works.
 
 PENDING: AC 5 real-device check of native drag and drop and clipboard paste in pnpm tauri dev. Native events were not exercised, so TASK-97 stays In Progress.
+
+Native drag and drop and OS clipboard paste could not be driven in this environment, so AC 5 stays unchecked. All code is on main; run the manual steps, then check AC 5 and finalize.
 <!-- SECTION:NOTES:END -->
