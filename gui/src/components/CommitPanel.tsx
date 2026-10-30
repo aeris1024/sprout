@@ -2,7 +2,7 @@ import { useEffect, useState, type ComponentProps } from "react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
-import { branchIdentity, branchIdentityLabel, type BranchInfo, type CommitAttachment, type CommitDetail, type GraphTag } from "../lib/sprout";
+import { branchIdentity, branchIdentityLabel, formatLocalTime, type BranchInfo, type CommitAttachment, type CommitDetail, type DeletedBranch, type GraphTag } from "../lib/sprout";
 
 const roleLabels: Record<string, string> = {
   thumbnail: "サムネイル",
@@ -24,6 +24,7 @@ interface CommitPanelProps {
   projectDir: string;
   program: string;
   branches: BranchInfo[];
+  deletedBranches?: DeletedBranch[];
   tags: GraphTag[];
   current: boolean;
   unsavedCount: number;
@@ -46,6 +47,7 @@ export default function CommitPanel({
   projectDir,
   program,
   branches,
+  deletedBranches = [],
   tags,
   current,
   unsavedCount,
@@ -68,6 +70,7 @@ export default function CommitPanel({
   const [branchName, setBranchName] = useState("");
   const tips = branches.filter((branch) => branch.commit_id === detail.id);
   const commitTags = tags.filter((tag) => tag.commit_id === detail.id);
+  const deletedBranch = deletedBranches.find((branch) => branch.id === detail.branch_id);
 
   useEffect(() => {
     setEditingMessage(false);
@@ -108,6 +111,7 @@ export default function CommitPanel({
       <dl className="detail-list">
         <div><dt>日時</dt><dd>{new Date(detail.created_at).toLocaleString("ja-JP")}</dd></div>
         <div><dt>ブランチ</dt><dd>{branchIdentityLabel(branchIdentity(detail.branch_id, detail.branch_name, branches))}</dd></div>
+        {deletedBranch && <div><dt>枝の削除</dt><dd>{formatLocalTime(deletedBranch.deleted_at)}</dd></div>}
         {tips.length > 0 && <div><dt>枝先</dt><dd>{tips.map((branch) => branch.name).join(", ")}</dd></div>}
         <div>
           <dt>添付</dt>

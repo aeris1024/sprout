@@ -456,6 +456,14 @@ function App() {
     });
   }
 
+  function renameBud(budId: string, name: string) {
+    return execute(async () => {
+      await runSprout(projectDir, ["bud", "--rename", budId, name], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "bud_renamed", message: name.trim() ? `つぼみの名前を「${name.trim()}」にしました` : "つぼみの名前を消しました", details: { bud_id: budId }, kind: "success" });
+    });
+  }
+
   function selectUnsaved() {
     setTrashOpen(false);
     setComparison(null);
@@ -938,7 +946,7 @@ function App() {
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
-      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
+      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
           await runSprout(projectDir, ["preview", "metadata", commitDetail.id, id,
             `--name=${data.display_name}`, `--description=${data.description}`, data.is_primary ? "--primary" : "--no-primary",
@@ -966,7 +974,7 @@ function App() {
     }
     if (selectedBud) {
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
-      return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onClose={closeSelection} />;
+      return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} deletedBranches={graph.deleted_branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onRename={renameBud} onClose={closeSelection} />;
     }
     return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} />;
   }

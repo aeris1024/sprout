@@ -191,7 +191,10 @@ CREATE TABLE branches (
     commit_id TEXT REFERENCES commits(id),
     comment TEXT NOT NULL DEFAULT '',
     deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
-    CHECK (deleted = 0 OR commit_id IS NULL)
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
+    deleted_at TEXT CHECK (deleted_at IS NULL OR deleted_at GLOB '{TIMESTAMP_GLOB}'),
+    CHECK (deleted = 0 OR commit_id IS NULL),
+    CHECK ((deleted = 0) = (deleted_at IS NULL))
 );
 CREATE UNIQUE INDEX idx_branches_live_name ON branches(name) WHERE deleted = 0;
 CREATE TABLE commits (
@@ -284,7 +287,8 @@ CREATE TABLE buds (
     base_commit_id TEXT REFERENCES commits(id),
     branch_id TEXT NOT NULL REFERENCES branches(id),
     branch_name TEXT NOT NULL,
-    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}')
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
+    name TEXT NOT NULL DEFAULT '' CHECK (length(name) <= 256 AND instr(name, char(10)) = 0 AND instr(name, char(13)) = 0)
 );
 CREATE TABLE bud_files (
     bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
@@ -419,6 +423,16 @@ class BranchReference:
     commit_id: str | None
     comment: str
     current: bool
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
+class DeletedBranch:
+    id: str
+    name: str
+    comment: str
+    created_at: str
+    deleted_at: str
 
 
 @dataclass(frozen=True)
@@ -444,6 +458,7 @@ class CommitGraph:
     tags: tuple[TagReference, ...]
     current_commit: str | None = None
     buds: tuple[Bud, ...] = ()
+    deleted_branches: tuple[DeletedBranch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -493,6 +508,7 @@ class Bud:
     created_at: str
     files: tuple[FileState, ...]
     changes: tuple[StatusEntry, ...]
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -628,7 +644,9 @@ class Repository:
                     "INSERT INTO id_sequences(name) VALUES(?)", ((name,) for name in SEQUENCE_TABLES)
                 )
                 branch_id = uuid.uuid4().hex
-                db.execute("INSERT INTO branches(id, name) VALUES(?, 'main')", (branch_id,))
+                db.execute(
+                    "INSERT INTO branches(id, name, created_at) VALUES(?, 'main', ?)", (branch_id, utc_timestamp())
+                )
                 db.execute(
                     "INSERT INTO repository_state(id, head_branch_id) VALUES(1, ?)", (branch_id,)
                 )
@@ -1636,8 +1654,8 @@ class Repository:
             if created_branch:
                 branch = self._auto_branch_name(db, now)
                 db.execute(
-                    "INSERT INTO branches(id, name, commit_id, comment) VALUES(?, ?, NULL, '')",
-                    (uuid.uuid4().hex, branch),
+                    "INSERT INTO branches(id, name, commit_id, comment, created_at) VALUES(?, ?, NULL, '', ?)",
+                    (uuid.uuid4().hex, branch, created_at),
                 )
                 db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, branch),))
             db.execute(
@@ -1821,9 +1839,10 @@ class Repository:
             buds = tuple(self._buds_from_db(db))
             branch_rows = list(
                 db.execute(
-                    "SELECT id, name, commit_id, comment FROM branches WHERE deleted=0 ORDER BY name"
+                    "SELECT id, name, commit_id, comment, created_at FROM branches WHERE deleted=0 ORDER BY name"
                 )
             )
+            deleted_branches = tuple(self._deleted_branches_from_db(db))
             tag_rows = list(
                 db.execute(
                     "SELECT name, commit_id, comment, created_at "
@@ -1853,6 +1872,7 @@ class Repository:
                 commit_id=row["commit_id"],
                 comment=row["comment"],
                 current=row["name"] == current_branch,
+                created_at=row["created_at"],
             )
             for row in branch_rows
         )
@@ -1871,6 +1891,7 @@ class Repository:
             tags=tags,
             current_commit=current_commit,
             buds=buds,
+            deleted_branches=deleted_branches,
         )
 
     @staticmethod
@@ -3054,14 +3075,28 @@ class Repository:
             return [
                 BranchReference(
                     id=row["id"], name=row["name"], commit_id=row["commit_id"],
-                    comment=row["comment"], current=bool(row["current"]),
+                    comment=row["comment"], current=bool(row["current"]), created_at=row["created_at"],
                 )
                 for row in db.execute(
-                    "SELECT b.id, b.name, b.commit_id, b.comment, "
+                    "SELECT b.id, b.name, b.commit_id, b.comment, b.created_at, "
                     "b.id=s.head_branch_id AS current FROM branches b "
                     "CROSS JOIN repository_state s WHERE s.id=1 AND b.deleted=0 ORDER BY b.name"
                 )
             ]
+
+    @staticmethod
+    def _deleted_branches_from_db(db: sqlite3.Connection) -> list[DeletedBranch]:
+        return [
+            DeletedBranch(row["id"], row["name"], row["comment"], row["created_at"], row["deleted_at"])
+            for row in db.execute(
+                "SELECT id, name, comment, created_at, deleted_at FROM branches "
+                "WHERE deleted=1 ORDER BY deleted_at DESC, id"
+            )
+        ]
+
+    def deleted_branches(self) -> list[DeletedBranch]:
+        with self.connect() as db:
+            return self._deleted_branches_from_db(db)
 
     def branches(self) -> list[tuple[str, str | None, str]]:
         return [(branch.name, branch.commit_id, branch.comment) for branch in self.branch_references()]
@@ -3166,8 +3201,8 @@ class Repository:
                 if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
                     raise SproutError(f"name already used by tag: {name}")
                 db.execute(
-                    "INSERT INTO branches(id, name, commit_id, comment) VALUES(?,?,?,?)",
-                    (uuid.uuid4().hex, name, commit_id, comment.strip()),
+                    "INSERT INTO branches(id, name, commit_id, comment, created_at) VALUES(?,?,?,?,?)",
+                    (uuid.uuid4().hex, name, commit_id, comment.strip(), utc_timestamp()),
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
@@ -3198,7 +3233,10 @@ class Repository:
             ).fetchone()[0]
             if name == current:
                 raise SproutError(f"cannot delete current branch: {name}")
-            db.execute("UPDATE branches SET deleted=1, commit_id=NULL WHERE id=?", (branch[0],))
+            db.execute(
+                "UPDATE branches SET deleted=1, commit_id=NULL, deleted_at=? WHERE id=?",
+                (utc_timestamp(), branch[0]),
+            )
         return branch[0]
 
     @locked
@@ -3974,7 +4012,10 @@ class Repository:
             attachments = self._attachments_many_from_db(db, commit_ids)
             annotations = self._annotations_many_from_db(db, commit_ids)
             branch_rows = list(
-                db.execute("SELECT id, name, commit_id, comment, deleted FROM branches ORDER BY deleted, name, id")
+                db.execute(
+                    "SELECT id, name, commit_id, comment, deleted, created_at, deleted_at "
+                    "FROM branches ORDER BY deleted, name, id"
+                )
             )
             tag_rows = list(db.execute("SELECT name, commit_id, comment, created_at FROM tags ORDER BY name"))
             state = db.execute(
@@ -4079,6 +4120,8 @@ class Repository:
                     "name": branch["name"],
                     "commit_id": branch["commit_id"],
                     "comment": branch["comment"],
+                    "created_at": branch["created_at"],
+                    "deleted_at": branch["deleted_at"],
                     "deleted": bool(branch["deleted"]),
                 }
                 for branch in branch_rows
@@ -4288,7 +4331,7 @@ class Repository:
         return row[0]
 
     def _buds_from_db(self, db: sqlite3.Connection, bud_ids: list[str] | None = None) -> list[Bud]:
-        query = "SELECT id, base_commit_id, branch_id, branch_name, created_at FROM buds"
+        query = "SELECT id, base_commit_id, branch_id, branch_name, created_at, name FROM buds"
         params: tuple[str, ...] = ()
         if bud_ids is not None:
             query += f" WHERE id IN ({','.join('?' for _ in bud_ids)})"
@@ -4315,6 +4358,7 @@ class Repository:
                     created_at=row["created_at"],
                     files=tuple(files[row["id"]]),
                     changes=tuple(StatusEntry(entry.state, entry.path, entry.previous_path) for entry in changes),
+                    name=row["name"],
                 )
             )
         return buds
@@ -4340,7 +4384,17 @@ class Repository:
             raise SproutError(f"ambiguous bud: {value}", code="ambiguous_bud")
         return matches[0]
 
-    def _save_bud(self) -> Bud:
+    @staticmethod
+    def _normalize_bud_name(name: str) -> str:
+        normalized = unicodedata.normalize("NFC", name).strip()
+        if len(normalized) > 256 or any(character in normalized for character in "\r\n\x00"):
+            raise SproutError(
+                "bud name must be one line of 256 characters or fewer", code="invalid_bud_name"
+            )
+        return normalized
+
+    def _save_bud(self, name: str = "") -> Bud:
+        name = self._normalize_bud_name(name)
         base = self.current_commit()
         files, _ = self._store_tracked_files("saving a bud")
         base_signature = {
@@ -4354,9 +4408,9 @@ class Repository:
         with self.connect() as db:
             self._register_objects(db, {item.object_hash: item.size for item in files}, created_at)
             db.execute(
-                "INSERT INTO buds(id, seq, base_commit_id, branch_id, branch_name, created_at) "
-                "VALUES(?, ?, ?, ?, ?, ?)",
-                (bud_id, recovery.next_seq(db, "buds"), base, branch_id, branch_name, created_at),
+                "INSERT INTO buds(id, seq, base_commit_id, branch_id, branch_name, created_at, name) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (bud_id, recovery.next_seq(db, "buds"), base, branch_id, branch_name, created_at, name),
             )
             db.executemany(
                 "INSERT INTO bud_files(bud_id, path, path_key, object_hash, size, mtime_ns, file_id) "
@@ -4369,9 +4423,18 @@ class Repository:
             return self._buds_from_db(db, [bud_id])[0]
 
     @locked
-    def save_bud(self) -> Bud:
+    def save_bud(self, name: str = "") -> Bud:
         """Keep the unsaved tracked changes as a bud on the current snapshot."""
-        return self._save_bud()
+        return self._save_bud(name)
+
+    @locked
+    def rename_bud(self, value: str, name: str) -> Bud:
+        """Set or, with an empty name, clear the name of a bud."""
+        bud_id = self.resolve_bud(value)
+        normalized = self._normalize_bud_name(name)
+        with self.connect() as db:
+            db.execute("UPDATE buds SET name=? WHERE id=?", (normalized, bud_id))
+            return self._buds_from_db(db, [bud_id])[0]
 
     @locked
     def restore_bud(self, value: str) -> tuple[Bud, Bud | None]:

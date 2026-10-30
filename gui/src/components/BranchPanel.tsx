@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { BranchInfo, GraphCommit } from "../lib/sprout";
+import { formatLocalTime, type BranchInfo, type GraphCommit } from "../lib/sprout";
 
 interface BranchPanelProps {
   branch: BranchInfo;
@@ -68,6 +68,7 @@ export default function BranchPanel({ branch, tip, busy, onRename, onSetComment,
             ) : "まだ保存がありません"}
           </dd>
         </div>
+        {branch.created_at && <div><dt>作成日時</dt><dd>{formatLocalTime(branch.created_at)}</dd></div>}
         <div><dt>ID</dt><dd className="mono">{branch.id.slice(0, 12)}</dd></div>
       </dl>
 

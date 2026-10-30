@@ -84,6 +84,15 @@ export interface BranchInfo {
   commit_id: string | null;
   comment: string;
   current: boolean;
+  created_at?: string;
+}
+
+export interface DeletedBranch {
+  id: string;
+  name: string;
+  comment: string;
+  created_at: string;
+  deleted_at: string;
 }
 
 export interface GraphCommit extends CommitLogEntry {
@@ -109,6 +118,8 @@ export interface BudFile {
 
 export interface Bud {
   id: string;
+  /** Optional name given by the user; empty for automatically kept buds. */
+  name?: string;
   base_commit_id: string | null;
   branch_id: string;
   branch_name: string;
@@ -123,6 +134,7 @@ export interface CommitGraph {
   commits: GraphCommit[];
   /** Live branches only; deleted branches remain identifiable through commit and bud branch IDs. */
   branches: BranchInfo[];
+  deleted_branches?: DeletedBranch[];
   tags: GraphTag[];
   buds: Bud[];
 }
@@ -221,6 +233,10 @@ export function branchIdentityLabel({ createdName, currentName }: BranchIdentity
   if (currentName === null) return `${createdName}（削除済み）`;
   if (currentName !== createdName) return `${currentName}（作成時: ${createdName}）`;
   return currentName;
+}
+
+export function formatLocalTime(value: string): string {
+  return new Date(value).toLocaleString("ja-JP");
 }
 
 export function canDiscardChanges(error: SproutCliError): boolean {

@@ -96,7 +96,15 @@ function LeafImage({ leaf, attachment, projectDir, sproutProgram }: LeafImagePro
   );
 }
 
+/** Short text on a bud; the full name stays available through its label. */
+function budCaption(bud: Bud): string {
+  if (!bud.name) return `つぼみ ${bud.changes.length}`;
+  const characters = [...bud.name];
+  return characters.length > 7 ? `${characters.slice(0, 6).join("")}…` : bud.name;
+}
+
 function budLabel(bud: Bud): string {
+  if (bud.name) return `つぼみ「${bud.name}」（${bud.changes.length}件の変更）`;
   return bud.base_commit_id
     ? `つぼみ（${bud.changes.length}件の変更）`
     : `最初の保存前のつぼみ（${bud.changes.length}件の変更）`;
@@ -188,7 +196,7 @@ export default function SproutMap({
                 aria-pressed={selection?.kind === "bud" && selection.id === bud.id}
                 onClick={() => onSelectBud(bud.id)}
               >
-                {`つぼみ ${bud.changes.length}`}
+                {budCaption(bud)}
               </button>
             ))}
           </div>
@@ -217,8 +225,9 @@ export default function SproutMap({
         onClick={() => onSelectBud(bud.id)}
         onKeyDown={(event) => onKey(event, () => onSelectBud(bud.id))}
       >
+        <title>{budLabel(bud)}</title>
         <rect x={x} y={y} width={MAP.budWidth} height={MAP.budHeight} />
-        <text x={x + MAP.budWidth / 2} y={y + 15} textAnchor="middle">{`つぼみ ${bud.changes.length}`}</text>
+        <text x={x + MAP.budWidth / 2} y={y + 15} textAnchor="middle">{budCaption(bud)}</text>
       </g>
     );
   }

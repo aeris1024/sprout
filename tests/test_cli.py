@@ -1260,6 +1260,11 @@ def test_note_and_label_cli_reject_conflicting_or_invalid_input(
     assert "label cannot be empty" in str(invalid.exception)
 
 
+def branches_without_times(branches: list[dict]) -> list[dict]:
+    assert all(branch.pop("created_at") for branch in branches)
+    return branches
+
+
 def test_tree_cli_shows_complete_graph_and_structured_json(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1331,7 +1336,7 @@ def test_tree_cli_shows_complete_graph_and_structured_json(
     assert attachment["size"] > 0
     assert attachment["created_at"]
     assert attachment["updated_at"]
-    assert payload["branches"] == [
+    assert branches_without_times(payload["branches"]) == [
         {"id": Repository.discover(project).branch_id("archive"), "name": "archive", "commit_id": first, "comment": "", "current": False},
         {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": main_tip, "comment": "", "current": True},
     ]
@@ -1348,6 +1353,7 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
 
     assert invoke(["tree"], project, monkeypatch).stdout == "No commits yet\n"
     payload = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    branches_without_times(payload["branches"])
     assert payload == {
         "current_commit": None,
         "at_branch_tip": True,
@@ -1355,6 +1361,7 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
         "branches": [
             {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": None, "comment": "", "current": True}
         ],
+        "deleted_branches": [],
         "tags": [],
         "buds": [],
     }
@@ -1447,7 +1454,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     assert invoke(["branch", "ideas", "-m", "案"], project, monkeypatch).exit_code == 0
     branch_result = invoke(["branch", "--json"], project, monkeypatch)
     assert branch_result.exit_code == 0
-    assert json.loads(branch_result.stdout) == [
+    assert branches_without_times(json.loads(branch_result.stdout)) == [
         {"id": Repository.discover(project).branch_id("ideas"), "name": "ideas", "commit_id": commit_id, "comment": "案", "current": False},
         {"id": Repository.discover(project).branch_id("main"), "name": "main", "commit_id": commit_id, "comment": "", "current": True},
     ]

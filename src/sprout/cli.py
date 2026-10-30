@@ -22,6 +22,7 @@ from .repository import (
     CommitAttachment,
     CommitDeletion,
     CommitGraph,
+    DeletedBranch,
     FileState,
     GraphCommit,
     PreviewPlan,
@@ -285,6 +286,7 @@ def _branches_json(repository: Repository) -> list[dict[str, Any]]:
             "commit_id": branch.commit_id,
             "comment": branch.comment,
             "current": branch.current,
+            "created_at": branch.created_at,
         }
         for branch in repository.branch_references()
     ]
@@ -310,9 +312,20 @@ def _change_text(entry: StatusEntry) -> str:
     return f"{entry.state:<8} {entry.path} (was {entry.previous_path})"
 
 
+def _deleted_branch_json(branch: DeletedBranch) -> dict[str, Any]:
+    return {
+        "id": branch.id,
+        "name": branch.name,
+        "comment": branch.comment,
+        "created_at": branch.created_at,
+        "deleted_at": branch.deleted_at,
+    }
+
+
 def _bud_json(bud: Bud) -> dict[str, Any]:
     return {
         "id": bud.id,
+        "name": bud.name,
         "base_commit_id": bud.base_commit_id,
         "branch_name": bud.branch_name,
         "branch_id": bud.branch_id,
@@ -333,7 +346,8 @@ def _bud_json(bud: Bud) -> dict[str, Any]:
 
 def _bud_summary(bud: Bud) -> str:
     base = bud.base_commit_id[:12] if bud.base_commit_id else "(no commit)"
-    return f"{bud.id[:12]} on {base} [{bud.branch_name}] {len(bud.changes)} changes"
+    name = f' "{bud.name}"' if bud.name else ""
+    return f"{bud.id[:12]}{name} on {base} [{bud.branch_name}] {len(bud.changes)} changes"
 
 
 def _graph_json(graph: CommitGraph) -> dict[str, Any]:
@@ -366,9 +380,11 @@ def _graph_json(graph: CommitGraph) -> dict[str, Any]:
                 "commit_id": branch.commit_id,
                 "comment": branch.comment,
                 "current": branch.current,
+                "created_at": branch.created_at,
             }
             for branch in graph.branches
         ],
+        "deleted_branches": [_deleted_branch_json(branch) for branch in graph.deleted_branches],
         "tags": [
             {
                 "name": tag.name,
@@ -1392,10 +1408,34 @@ def branch(
             help="Create the branch and switch to it, restoring the start point",
         ),
     ] = False,
+    deleted: Annotated[
+        bool, typer.Option("--deleted", help="List deleted branches and when they were deleted")
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """List, create, delete, rename, or edit a branch."""
     repository = repo()
+    if deleted:
+        if (
+            name is not None
+            or start_point is not None
+            or comment
+            or set_comment is not None
+            or delete is not None
+            or rename is not None
+            or switch
+        ):
+            raise SproutError("--deleted cannot be combined with other branch operations")
+        branches = repository.deleted_branches()
+        if json_output:
+            _echo_json([_deleted_branch_json(item) for item in branches])
+            return
+        if not branches:
+            typer.echo("No deleted branches")
+            return
+        for item in branches:
+            typer.echo(f"{item.name:<20} {item.id[:12]}  created {item.created_at}  deleted {item.deleted_at}")
+        return
     if delete is not None:
         if (
             name is not None
@@ -1543,6 +1583,13 @@ def bud(
     save: Annotated[
         bool, typer.Option("--save", help="Keep unsaved tracked changes as a new bud")
     ] = False,
+    name: Annotated[
+        str, typer.Option("--name", help="Name for the bud created with --save")
+    ] = "",
+    rename: Annotated[
+        tuple[str, str] | None,
+        typer.Option("--rename", help="Set a bud's name: --rename BUD NAME (empty NAME clears it)"),
+    ] = None,
     restore: Annotated[
         str | None,
         typer.Option("--restore", help="Bring a bud back into the working tree"),
@@ -1558,12 +1605,21 @@ def bud(
     ] = False,
 ) -> None:
     """List, save, restore, or drop buds of unsaved changes."""
-    if sum((save, restore is not None, drop is not None)) > 1:
-        raise SproutError("use only one of --save, --restore, or --drop")
+    if sum((save, restore is not None, drop is not None, rename is not None)) > 1:
+        raise SproutError("use only one of --save, --restore, --drop, or --rename")
+    if name and not save:
+        raise SproutError("--name is only used with --save")
     repository = repo()
+    if rename is not None:
+        renamed = repository.rename_bud(*rename)
+        if json_output:
+            _echo_json(_bud_json(renamed))
+            return
+        typer.echo(f"Renamed bud {_bud_summary(renamed)}")
+        return
     if save:
         with _show_progress(repository, enabled=not json_output):
-            saved = repository.save_bud()
+            saved = repository.save_bud(name)
         if json_output:
             _echo_json(_bud_json(saved))
             return
