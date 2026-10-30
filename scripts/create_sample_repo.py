@@ -269,6 +269,10 @@ class SampleBuilder:
         mistake = self.commit("誤って保存した版")
         sprout.run("delete-commit", mistake, "--yes")
         sprout.run("restore", "main", "--discard")
+        # 準備で破棄した変更は残さず、ゴミ箱には削除した葉だけを置く
+        for item in sprout.json("trash", "list"):
+            if item["kind"] == "discard":
+                sprout.run("trash", "purge", item["id"], "--yes")
 
         self.write("scratch-idea.txt", "まだ追跡していないアイデアのメモ\n")
         self.write("cache/render.tmp", "無視パターンの確認用\n")

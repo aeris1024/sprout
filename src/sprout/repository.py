@@ -171,7 +171,7 @@ CREATE TABLE objects (
 CREATE TABLE trash_entries (
     id TEXT PRIMARY KEY NOT NULL,
     seq INTEGER NOT NULL UNIQUE CHECK (typeof(seq) = 'integer' AND seq > 0),
-    kind TEXT NOT NULL CHECK (kind IN ('commit', 'preview_delete', 'preview_replace')),
+    kind TEXT NOT NULL CHECK (kind IN ('commit', 'preview_delete', 'preview_replace', 'bud_delete', 'discard')),
     target_id TEXT NOT NULL,
     title TEXT NOT NULL,
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
@@ -4295,22 +4295,24 @@ class Repository:
             target = {path: commit_manifest[path] for path in selected}
             self._validate_restore_inputs(target, partial=True)
             self._restore_plan(target, partial=True)
-            if self._has_unsaved_changes(selected) and not discard:
+            dirty = self._has_unsaved_changes(selected)
+            if dirty and not discard:
                 raise SproutError(
                     "working tree has uncommitted changes (use --discard to replace them)",
                     code="uncommitted_changes",
                     details={"can_discard": True},
                 )
-            self._materialize(target, partial=True)
+            self._materialize_keeping_discarded(target, dirty, partial=True)
         else:
             self._validate_restore_inputs(commit_manifest)
-            if self._has_unsaved_changes() and not discard:
+            dirty = self._has_unsaved_changes()
+            if dirty and not discard:
                 raise SproutError(
                     "working tree has uncommitted changes (use --discard to replace them)",
                     code="uncommitted_changes",
                     details={"can_discard": True},
                 )
-            self._materialize(commit_manifest, current_commit=commit_id)
+            self._materialize_keeping_discarded(commit_manifest, dirty, current_commit=commit_id)
         return commit_id
 
     @locked
@@ -4321,13 +4323,14 @@ class Repository:
             raise SproutError(f"unknown branch: {name}")
         target = self.manifest(row[0])
         self._validate_restore_inputs(target)
-        if self._has_unsaved_changes() and not discard:
+        dirty = self._has_unsaved_changes()
+        if dirty and not discard:
             raise SproutError(
                 "working tree has uncommitted changes (use --discard to replace them)",
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
-        self._materialize(target, head_branch=name, current_commit=row[0])
+        self._materialize_keeping_discarded(target, dirty, head_branch=name, current_commit=row[0])
         return row[0]
 
     def _buds_from_db(self, db: sqlite3.Connection, bud_ids: list[str] | None = None) -> list[Bud]:
@@ -4481,6 +4484,46 @@ class Repository:
             raise
         return stashed
 
+    def _materialize_keeping_discarded(
+        self, target: dict[str, FileState], dirty: bool, **options: Any
+    ) -> None:
+        """Restore over unsaved work, keeping that work in the trash as a bud."""
+        self._restore_plan(target, partial=options.get("partial", False))
+        for item in target.values():
+            self._check_object_encoding(item.object_hash)
+        item_id = self._trash_discarded_work() if dirty else None
+        receipt = _MaterializationReceipt()
+        try:
+            self._materialize(target, _receipt=receipt, **options)
+        except BaseException:
+            # Nothing was discarded unless the restore committed.
+            if item_id is not None and receipt.committed is False:
+                self._return_discarded_work(item_id)
+            raise
+
+    def _trash_discarded_work(self) -> str | None:
+        try:
+            bud = self._save_bud()
+        except SproutError as exc:
+            if exc.code == "nothing_to_save":
+                return None
+            raise
+        with self.connect() as db:
+            return self._trash_bud(db, bud, "discard")
+
+    def _return_discarded_work(self, item_id: str) -> None:
+        """Forget a recovery item whose restore never replaced the working files."""
+        with self.connect() as db:
+            db.execute("DELETE FROM trash_entries WHERE id=?", (item_id,))
+
+    @staticmethod
+    def _trash_bud(db: sqlite3.Connection, bud: Bud, kind: str) -> str:
+        before = recovery.capture_bud(db, bud.id)
+        db.execute("DELETE FROM buds WHERE id=?", (bud.id,))
+        paths = [entry.path for entry in bud.changes]
+        summary = f"{paths[0]} +{len(paths) - 1}" if len(paths) > 1 else (paths[0] if paths else bud.id[:12])
+        return recovery.record(db, before, kind, bud.name or summary, bud.id, utc_timestamp())
+
     @locked
     def go(self, value: str) -> GoResult:
         """Move to a snapshot, keeping unsaved changes as a bud on the current one."""
@@ -4521,9 +4564,9 @@ class Repository:
 
     @locked
     def drop_bud(self, value: str) -> Bud:
-        """Permanently delete a bud."""
+        """Move a bud to the trash."""
         bud_id = self.resolve_bud(value)
         with self.connect() as db:
             bud = self._buds_from_db(db, [bud_id])[0]
-            db.execute("DELETE FROM buds WHERE id=?", (bud_id,))
+            self._trash_bud(db, bud, "bud_delete")
         return bud

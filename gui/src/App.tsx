@@ -715,7 +715,7 @@ function App() {
       } catch (cause) {
         const error = normalizeCliError(cause);
         if (error.code !== "uncommitted_changes" || error.details.can_discard !== true) throw unchangedError(cause);
-        const discard = await confirmDialog(`対象に未保存の変更があります。\n${targets}\nこの対象の未保存変更を破棄して戻しますか？破棄した変更は元に戻せません。`, {
+        const discard = await confirmDialog(`対象に未保存の変更があります。\n${targets}\nこの対象の未保存変更を破棄して戻しますか？破棄した変更はゴミ箱からつぼみとして戻せます。`, {
           title: "未保存変更の破棄を確認", kind: "warning", okLabel: "変更を破棄して戻す", cancelLabel: "キャンセル",
         });
         if (!discard) return;
@@ -829,7 +829,7 @@ function App() {
 
   function dropBud(budId: string) {
     if (!projectDir || operationActive.current) return;
-    void confirmDialog("このつぼみを捨てます。元に戻せません。続行しますか？", {
+    void confirmDialog("このつぼみをゴミ箱へ移します。ゴミ箱から戻せます。続行しますか？", {
       title: "つぼみを捨てる",
       kind: "warning",
       okLabel: "捨てる",
@@ -840,7 +840,7 @@ function App() {
         await runSprout(projectDir, ["bud", "--drop", budId, "--yes"], sproutProgram);
         await fetchWorkspace(projectDir);
         setSelection(null);
-        setNotice({ code: "bud_dropped", message: "つぼみを捨てました", details: {}, kind: "success" });
+        setNotice({ code: "bud_dropped", message: "つぼみをゴミ箱へ移しました", details: {}, kind: "success" });
       });
     });
   }
@@ -904,7 +904,8 @@ function App() {
   function restoreTrash(item: TrashItem) {
     void execute(async () => {
       await runSprout(projectDir, ["trash", "restore", item.id, "--dry-run"], sproutProgram);
-      if (!await confirmDialog(`「${item.title}」を復旧します。削除時に変更した履歴の参照や添付情報を戻します。作業ファイルは変更しません。`, {
+      const restoresBud = item.kind === "bud_delete" || item.kind === "discard";
+      if (!await confirmDialog(restoresBud ? `「${item.title}」をつぼみとして戻します。作業ファイルは変更しません。` : `「${item.title}」を復旧します。削除時に変更した履歴の参照や添付情報を戻します。作業ファイルは変更しません。`, {
         title: "ゴミ箱から復旧", kind: "warning", okLabel: "復旧", cancelLabel: "キャンセル",
       })) return;
       await runSprout(projectDir, ["trash", "restore", item.id], sproutProgram);

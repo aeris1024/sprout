@@ -2950,6 +2950,9 @@ def test_gc_doctor_and_prune_respect_buds(
     path.write_bytes(original)
 
     repo.drop_bud(bud.id)
+    assert bud_object not in repo.gc().objects, "the trash protects a dropped bud"
+    for item in repo.trash_items():
+        repo.purge_trash(item["id"])
     assert bud_object in repo.gc().objects
 
 

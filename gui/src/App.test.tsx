@@ -450,7 +450,7 @@ describe("Sprout GUI operations", () => {
 
     mocks.confirm.mockResolvedValueOnce(false);
     await user.click(screen.getByRole("button", { name: "つぼみを捨てる" }));
-    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("元に戻せません"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("ゴミ箱から戻せます"), expect.objectContaining({ kind: "warning" }));
     expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "bud")).toBe(false);
 
     mocks.runSprout.mockResolvedValueOnce({ restored: bud, saved: null });

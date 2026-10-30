@@ -59,19 +59,15 @@ def test_bud_and_trash_numbers_are_not_reused(tmp_path):
     repo, file = project(tmp_path)
     file.write_bytes(b'one')
     first = repo.save_bud()
-    repo.restore('main', discard=True)
     repo.drop_bud(first.id)
     file.write_bytes(b'two')
     repo.save_bud()
     assert seqs(repo, 'buds') == [2]
 
+    repo.purge_trash(repo.trash_items()[0]['id'])
+    assert seqs(repo, 'trash_entries') == []
     second = repo.commit('second').commit_id
     repo.delete_commit(second)
-    first_item = repo.trash_items()[0]['id']
-    repo.purge_trash(first_item)
-    file.write_bytes(b'again')
-    third = repo.commit('third').commit_id
-    repo.delete_commit(third)
     assert seqs(repo, 'trash_entries') == [2]
 
 

@@ -2,11 +2,12 @@ import type { TrashItem } from "../lib/sprout";
 
 const kinds: Record<string, string> = {
   commit: "葉の削除", preview_delete: "プレビューの削除", preview_replace: "プレビューの置き換え前",
+  bud_delete: "捨てたつぼみ", discard: "破棄した未保存の変更",
 };
 const recordNames: Record<string, string> = {
   commits: "葉", commit_files: "保存ファイル", commit_attachments: "添付",
   commit_notes: "メモ", commit_labels: "ラベル", branches: "ブランチ",
-  repository_state: "現在位置", buds: "つぼみの起点",
+  repository_state: "現在位置", buds: "つぼみ", bud_files: "つぼみのファイル",
 };
 const fieldNames: Record<string, string> = {
   message: "メッセージ", path: "パス", original_name: "元のファイル名", media_type: "形式",
@@ -22,7 +23,7 @@ export default function TrashPanel({ items, busy, onInspect, onRestore, onPurge,
 }) {
   return <section className="panel-section" aria-label="ゴミ箱">
     <div className="panel-heading"><h3>ゴミ箱</h3><button onClick={onClose} aria-label="ゴミ箱を閉じる" disabled={busy}>×</button></div>
-    <p className="panel-copy">完全削除するまで保持します。復旧先の参照やプレビューが変更済みの場合は復旧できません。作業ファイルは変更しません。完全削除すると、他の過去版を順に戻す経路も失われる場合があります。</p>
+    <p className="panel-copy">完全削除するまで保持します。復旧先の参照やプレビューが変更済みの場合は復旧できません。作業ファイルは変更しません。捨てたつぼみと破棄した未保存の変更は、つぼみとして戻ります。完全削除すると、他の過去版を順に戻す経路も失われる場合があります。</p>
     {items.length === 0 && <p className="muted">ゴミ箱は空です。</p>}
     {items.map((item) => <article className="trash-item" key={item.id}>
       <h4>{item.title}</h4><p>{kinds[item.kind] ?? item.kind}</p>

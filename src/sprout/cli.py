@@ -1595,10 +1595,10 @@ def bud(
         typer.Option("--restore", help="Bring a bud back into the working tree"),
     ] = None,
     drop: Annotated[
-        str | None, typer.Option("--drop", help="Permanently delete a bud")
+        str | None, typer.Option("--drop", help="Move a bud to the trash")
     ] = None,
     yes: Annotated[
-        bool, typer.Option("--yes", help="Confirm deleting a bud with --drop")
+        bool, typer.Option("--yes", help="Confirm moving a bud to the trash with --drop")
     ] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
@@ -1642,12 +1642,12 @@ def bud(
         return
     if drop is not None:
         if not yes:
-            raise SproutError("dropping a bud is irreversible; rerun with --yes")
+            raise SproutError("dropping a bud moves it to the trash; rerun with --yes")
         dropped = repository.drop_bud(drop)
         if json_output:
             _echo_json(_bud_json(dropped))
             return
-        typer.echo(f"Dropped bud {_bud_summary(dropped)}")
+        typer.echo(f"Dropped bud {_bud_summary(dropped)}; recover it with 'sprout trash'")
         return
     if yes:
         raise SproutError("--yes is only used with --drop")
@@ -1706,7 +1706,7 @@ def switch_command(
         bool,
         typer.Option(
             "--discard",
-            help="Discard all tracked changes; leave untracked files untouched",
+            help="Discard all tracked changes, keeping them in the trash; leave untracked files untouched",
         ),
     ] = False,
     json_output: Annotated[
@@ -1746,7 +1746,7 @@ def restore(
         bool,
         typer.Option(
             "--discard",
-            help="Discard tracked changes on restored paths; leave other files untouched",
+            help="Discard tracked changes on restored paths, keeping them in the trash; leave other files untouched",
         ),
     ] = False,
     json_output: Annotated[

@@ -7,13 +7,14 @@ import uuid
 from .errors import SproutError
 
 TRASH_RECORD_VERSION = 1
+BUD_KINDS = {'bud_delete', 'discard'}
 
 # Ordered parents before dependents; identifiers below are never supplied by records.
 KEYS = {
     'commits': ('id',), 'commit_files': ('commit_id', 'path'),
     'commit_attachments': ('id',), 'preview_assets': ('attachment_id','file_id'), 'commit_notes': ('commit_id',),
     'commit_labels': ('commit_id', 'label'), 'branches': ('id',),
-    'repository_state': ('id',), 'buds': ('id',),
+    'repository_state': ('id',), 'buds': ('id',), 'bud_files': ('bud_id', 'path'),
 }
 
 
@@ -43,6 +44,11 @@ def capture_preview(db, commit_id):
             'preview_assets': rows(db,'preview_assets','commit_id=?',(commit_id,))}
 
 
+def capture_bud(db, bud_id):
+    return {'buds': rows(db, 'buds', 'id=?', (bud_id,)),
+            'bud_files': rows(db, 'bud_files', 'bud_id=?', (bud_id,))}
+
+
 def current_row(db, table, original):
     key = KEYS[table]
     row = db.execute(f"SELECT * FROM {table} WHERE " + ' AND '.join(f'{k}=?' for k in key),
@@ -68,7 +74,7 @@ def record(db, before, kind, title, target_id, created_at, *, preview_commit=Non
     db.execute('INSERT INTO trash_entries(id,seq,kind,target_id,title,created_at,payload) VALUES(?,?,?,?,?,?,?)',
                (item_id, next_seq(db, 'trash_entries'), kind, target_id, title, created_at, json.dumps(payload, sort_keys=True)))
     objects = {(p['before']['object_hash'], p['before']['size']) for p in patches
-               if p['table'] in {'commit_files', 'commit_attachments'}}
+               if p['table'] in {'commit_files', 'commit_attachments', 'bud_files'}}
     db.executemany('INSERT INTO trash_objects(trash_id,object_hash,size) VALUES(?,?,?)',
                    ((item_id, digest, size) for digest, size in sorted(objects)))
     return item_id
@@ -144,6 +150,10 @@ def restore(db, item):
         if sorted(assets, key=lambda r:(r['attachment_id'],r['file_id'])) != sorted(payload.get('assets_after',[]), key=lambda r:(r['attachment_id'],r['file_id'])):
             conflict(item['id'], 'preview material associations changed')
     for patch in payload['patches']:
+        if item['kind'] in BUD_KINDS and patch['table'] == 'buds':
+            base = patch['before']['base_commit_id']
+            if base is not None and not db.execute('SELECT 1 FROM commits WHERE id=?', (base,)).fetchone():
+                conflict(item['id'], 'the snapshot this bud was kept on no longer exists')
         if current_row(db, patch['table'], patch['before']) != patch['after']:
             conflict(item['id'], f"{patch['table']} changed since this operation")
     db.execute('PRAGMA defer_foreign_keys=ON')

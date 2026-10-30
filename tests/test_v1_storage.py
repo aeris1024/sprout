@@ -311,6 +311,8 @@ def test_gc_forgets_unreferenced_objects_and_stats_follow_the_registry(tmp_path)
     bud = repo.save_bud()
     draft = bud.files[0].object_hash
     repo.drop_bud(bud.id)
+    assert repo.gc().objects == ()
+    repo.purge_trash(repo.trash_items()[0]["id"])
     assert repo.gc().objects == (draft,)
     kept = repo.manifest(first)["asset.bin"].object_hash
     with repo.connect() as db:
