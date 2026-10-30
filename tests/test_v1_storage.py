@@ -141,6 +141,8 @@ def test_thumbnail_replacement_preserves_id_and_singleton(tmp_path):
 ])
 def test_database_rejects_invalid_identity_size_and_references(tmp_path, statement):
     repo, _, _ = committed_repo(tmp_path)
+    with repo.connect() as db:
+        db.execute("INSERT INTO file_identities(id) VALUES(?)", ('f' * 32,))
     with pytest.raises(sqlite3.IntegrityError), repo.connect() as db:
         db.execute(statement)
 
@@ -262,10 +264,10 @@ def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path)
 
 
 @pytest.mark.parametrize("statement", [
-    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) "
-    "SELECT commit_id, 'other.bin', object_hash, size + 1, mtime_ns FROM commit_files",
-    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) "
-    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size, mtime_ns FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) "
+    "SELECT commit_id, 'other.bin', object_hash, size + 1, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) "
+    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
     "DELETE FROM objects",
     "UPDATE objects SET hash='ABC'",
     "UPDATE objects SET stored_size=-1",
@@ -274,6 +276,8 @@ def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path)
 ])
 def test_database_rejects_invalid_objects_times_order_and_cache(tmp_path, statement):
     repo, _, _ = committed_repo(tmp_path)
+    with repo.connect() as db:
+        db.execute("INSERT INTO file_identities(id) VALUES(?)", ('f' * 32,))
     with pytest.raises(sqlite3.IntegrityError), repo.connect() as db:
         db.execute(statement)
 

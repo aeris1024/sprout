@@ -61,6 +61,7 @@ export interface CommitFile {
   object_hash: string;
   size: number;
   mtime_ns: number;
+  file_id?: string;
 }
 
 export interface CommitDetail extends CommitLogEntry {
@@ -97,6 +98,7 @@ export interface BudFile {
   object_hash: string;
   size: number;
   mtime_ns: number;
+  file_id?: string;
 }
 
 export interface Bud {

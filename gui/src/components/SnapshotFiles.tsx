@@ -30,7 +30,7 @@ export default function SnapshotFiles({ files, busy, onExport, onRestore }: Prop
         const children = files.filter((file) => file.path.startsWith(directory)).map((file) => file.path);
         return <label className="snapshot-file" key={directory}><input type="checkbox" checked={children.every((path) => selected.includes(path))} disabled={busy} onChange={(event) => toggle(children, event.target.checked)} />{directory} 配下を選択</label>;
       })}
-      <ul className="snapshot-file-list">{files.map((file) => <li key={file.path}><label className="snapshot-file"><input type="checkbox" checked={selected.includes(file.path)} disabled={busy} onChange={(event) => toggle([file.path], event.target.checked)} /><span>{file.path}<small>{file.size.toLocaleString()} B</small></span></label></li>)}</ul>
+      <ul className="snapshot-file-list">{files.map((file) => <li key={file.path}><label className="snapshot-file"><input type="checkbox" checked={selected.includes(file.path)} disabled={busy} onChange={(event) => toggle([file.path], event.target.checked)} /><span>{file.path}<small>{file.size.toLocaleString()} B</small>{file.file_id && <small>素材ID: {file.file_id}</small>}</span></label></li>)}</ul>
       <p className="panel-copy">{paths.length}件を選択中</p>
       <div className="panel-actions"><button className="button secondary" disabled={busy || paths.length === 0} onClick={() => onExport(paths)}>選択したファイルを取り出す</button><button className="button secondary" disabled={busy || paths.length === 0} onClick={() => onRestore(paths)}>選択したファイルだけ戻す</button></div>
     </>}

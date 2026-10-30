@@ -266,6 +266,7 @@ def _show_json(
                 "object_hash": item.object_hash,
                 "size": item.size,
                 "mtime_ns": item.mtime_ns,
+                "file_id": item.file_id,
             }
             for item in files
         ],
@@ -306,6 +307,7 @@ def _bud_json(bud: Bud) -> dict[str, Any]:
                 "object_hash": item.object_hash,
                 "size": item.size,
                 "mtime_ns": item.mtime_ns,
+                "file_id": item.file_id,
             }
             for item in bud.files
         ],
@@ -678,6 +680,20 @@ def commit_command(
     if result.created_branch:
         typer.echo(f"Created branch {result.branch} from a snapshot that is not a branch tip")
     typer.echo(f"[{result.branch} {result.commit_id[:12]}] {message.strip()}")
+
+
+@app.command(name="file-history")
+def file_history(
+    file_id: Annotated[str, typer.Argument(help="Immutable file ID from show --json")],
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List snapshots and paths of one material across renames and branches."""
+    rows = repo().file_history(file_id)
+    if json_output:
+        _echo_json(rows)
+    else:
+        for row in rows:
+            typer.echo(f"{row['commit_id']}  {row['path']}  {row['message']}")
 
 
 @app.command(name="log")

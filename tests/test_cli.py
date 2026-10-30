@@ -1436,6 +1436,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
             {
                 "path": "作品/絵.psd",
                 "object_hash": show_payload["files"][0]["object_hash"],
+                "file_id": show_payload["files"][0]["file_id"],
                 "size": 5,
                 "mtime_ns": stored_mtime_ns,
             }

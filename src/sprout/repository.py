@@ -33,7 +33,7 @@ CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
 # V1 is frozen in tests/fixtures/schema_v1.sql. Incompatible changes increment this number.
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
@@ -65,6 +65,7 @@ ProgressCallback = Callable[[str, int, int], None]
 UNCHANGED = object()
 
 REQUIRED_SCHEMA_TABLES = {
+    "file_identities",
     "meta",
     "trash_entries",
     "trash_objects",
@@ -173,13 +174,18 @@ CREATE TABLE repository_state (
     head_branch_id TEXT NOT NULL REFERENCES branches(id),
     current_commit_id TEXT REFERENCES commits(id)
 );
+CREATE TABLE file_identities (
+    id TEXT PRIMARY KEY NOT NULL CHECK (length(id)=32 AND id NOT GLOB '*[^0-9a-f]*')
+);
 CREATE TABLE commit_files (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
+    file_id TEXT NOT NULL REFERENCES file_identities(id),
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
     PRIMARY KEY (commit_id, path),
+    UNIQUE (commit_id, file_id),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
 CREATE TABLE commit_attachments (
@@ -215,7 +221,8 @@ CREATE TABLE tags (
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}')
 );
 CREATE TABLE tracked_paths (
-    path TEXT PRIMARY KEY NOT NULL
+    path TEXT PRIMARY KEY NOT NULL,
+    file_id TEXT NOT NULL UNIQUE REFERENCES file_identities(id)
 );
 CREATE TABLE buds (
     id TEXT PRIMARY KEY NOT NULL,
@@ -228,12 +235,16 @@ CREATE TABLE buds (
 CREATE TABLE bud_files (
     bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
+    file_id TEXT NOT NULL REFERENCES file_identities(id),
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
     PRIMARY KEY (bud_id, path),
+    UNIQUE (bud_id, file_id),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
+CREATE INDEX idx_commit_files_identity ON commit_files(file_id);
+CREATE INDEX idx_bud_files_identity ON bud_files(file_id);
 CREATE INDEX idx_commits_parent ON commits(parent_id);
 CREATE INDEX idx_commits_branch ON commits(branch_id);
 CREATE INDEX idx_branches_commit ON branches(commit_id);
@@ -263,6 +274,7 @@ class FileState:
     object_hash: str
     size: int
     mtime_ns: int
+    file_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -833,7 +845,11 @@ class Repository:
             else:
                 raise SproutError(f"file or directory does not exist: {value}")
         with self.connect() as db:
-            db.executemany("INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)", ((p,) for p in paths))
+            for path in sorted(paths):
+                if not db.execute("SELECT 1 FROM tracked_paths WHERE path=?", (path,)).fetchone():
+                    file_id = uuid.uuid4().hex
+                    db.execute("INSERT INTO file_identities(id) VALUES(?)", (file_id,))
+                    db.execute("INSERT INTO tracked_paths(path,file_id) VALUES(?,?)", (path, file_id))
         self.worktree_cache.invalidate(paths)
         return sorted(paths)
 
@@ -899,6 +915,10 @@ class Repository:
     def tracked(self) -> set[str]:
         with self.connect() as db:
             return {row[0] for row in db.execute("SELECT path FROM tracked_paths")}
+
+    def tracked_ids(self) -> dict[str, str]:
+        with self.connect() as db:
+            return dict(db.execute("SELECT path,file_id FROM tracked_paths"))
 
     def tracking_status(self, values: list[Path]) -> list[tuple[str, bool]]:
         """Return tracked state for files, or tracked descendants for directories."""
@@ -1091,12 +1111,12 @@ class Repository:
             return {}
         result: dict[str, FileState] = {}
         for row in db.execute(
-            "SELECT path, object_hash, size, mtime_ns FROM commit_files WHERE commit_id=? ORDER BY path",
+            "SELECT path, object_hash, size, mtime_ns, file_id FROM commit_files WHERE commit_id=? ORDER BY path",
             (commit_id,),
         ):
             Repository._validate_file_time(row["mtime_ns"], row["path"])
             result[row["path"]] = FileState(
-                row["path"], row["object_hash"], row["size"], row["mtime_ns"]
+                row["path"], row["object_hash"], row["size"], row["mtime_ns"], row["file_id"]
             )
         return result
 
@@ -1105,7 +1125,8 @@ class Repository:
             return self._manifest_from_db(db, commit_id)
 
     def status(self) -> list[StatusEntry]:
-        tracked = self.tracked()
+        bindings = self.tracked_ids()
+        tracked = set(bindings)
         head = self.manifest(self.current_commit())
         present = {relative for relative in tracked if (self.root / Path(relative)).is_file()}
         hashes = self._hash_worktree_files(present & set(head))
@@ -1119,7 +1140,8 @@ class Repository:
                 result.append(StatusEntry("added", relative))
                 continue
             digest, size = hashes[relative]
-            if digest != head[relative].object_hash or size != head[relative].size:
+            if (digest != head[relative].object_hash or size != head[relative].size
+                    or bindings.get(relative) != head[relative].file_id):
                 result.append(StatusEntry("modified", relative))
         return result
 
@@ -1138,14 +1160,15 @@ class Repository:
             else:
                 left = before[relative]
                 right = after[relative]
-                if left.object_hash != right.object_hash or left.size != right.size:
+                if left.object_hash != right.object_hash or left.size != right.size or left.file_id != right.file_id:
                     result.append(DiffEntry("modified", relative, left.size, right.size))
         return result
 
     def _working_tree_manifest(self) -> dict[str, FileState]:
+        bindings = self.tracked_ids()
         present = (relative for relative in self.tracked() if (self.root / Path(relative)).is_file())
         return {
-            relative: FileState(relative, digest, size, 0)
+            relative: FileState(relative, digest, size, 0, bindings[relative])
             for relative, (digest, size) in self._hash_worktree_files(present).items()
         }
 
@@ -1355,6 +1378,7 @@ class Repository:
 
     def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
         """Store every present tracked file and list tracked paths that are missing."""
+        identities = self.tracked_ids()
         files: list[FileState] = []
         missing: list[str] = []
         for relative in sorted(self.tracked()):
@@ -1367,7 +1391,7 @@ class Repository:
             after = path.stat()
             if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
                 raise SproutError(f"file changed while {action}: {relative}")
-            files.append(FileState(relative, object_hash, size, after.st_mtime_ns))
+            files.append(FileState(relative, object_hash, size, after.st_mtime_ns, identities[relative]))
         return files, missing
 
     @locked
@@ -1380,7 +1404,7 @@ class Repository:
         previous = self.manifest(parent)
         current = {item.path: item for item in files}
         content_signature = lambda manifest: {
-            path: (state.object_hash, state.size) for path, state in manifest.items()
+            path: (state.object_hash, state.size, state.file_id) for path, state in manifest.items()
         }
         if parent is not None and content_signature(current) == content_signature(previous):
             raise SproutError("nothing to commit")
@@ -1415,8 +1439,8 @@ class Repository:
                 (commit_id, parent, self._branch_id_from_db(db, branch), branch, created_at, message.strip()),
             )
             db.executemany(
-                "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
-                ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
+                "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
+                ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns, item.file_id) for item in files),
             )
             if prepared_thumbnail is not None:
                 original_name, media_type, object_hash, size = prepared_thumbnail
@@ -2125,6 +2149,15 @@ class Repository:
         ).fetchone()
         return row[0] if row else None
 
+    def file_history(self, file_id: str) -> list[dict[str, Any]]:
+        if not re.fullmatch(r"[0-9a-f]{32}", file_id):
+            raise SproutError("file ID must be a complete 32-character ID", code="invalid_file_id")
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT c.id AS commit_id,c.created_at,c.message,f.path,f.file_id,f.object_hash,f.size,f.mtime_ns "
+                "FROM commit_files f JOIN commits c ON c.id=f.commit_id WHERE f.file_id=? ORDER BY c.seq DESC",
+                (file_id,))]
+
     def log(
         self,
         path: Path | None = None,
@@ -2207,6 +2240,10 @@ class Repository:
                     recovery.validate(db, dict(item))
                 except SproutError:
                     issues.append(DoctorIssue("invalid_trash_record", item['id']))
+            for table in ('tracked_paths', 'commit_files', 'bud_files'):
+                for row in db.execute(f"SELECT DISTINCT f.file_id FROM {table} f "
+                                      "LEFT JOIN file_identities i ON i.id=f.file_id WHERE i.id IS NULL"):
+                    issues.append(DoctorIssue("missing_file_identity", row[0]))
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:
                 issues.append(
@@ -2350,8 +2387,8 @@ class Repository:
     @staticmethod
     def _commit_signatures_from_db(
         db: sqlite3.Connection, commit_ids: set[str]
-    ) -> dict[str, dict[str, tuple[str, int]]]:
-        signatures: dict[str, dict[str, tuple[str, int]]] = {
+    ) -> dict[str, dict[str, tuple[str, int, str]]]:
+        signatures: dict[str, dict[str, tuple[str, int, str]]] = {
             commit_id: {} for commit_id in commit_ids
         }
         ordered = sorted(commit_ids)
@@ -2359,13 +2396,13 @@ class Repository:
             chunk = ordered[offset : offset + 900]
             placeholders = ",".join("?" for _ in chunk)
             for row in db.execute(
-                "SELECT commit_id, path, object_hash, size FROM commit_files "
+                "SELECT commit_id, path, object_hash, size, file_id FROM commit_files "
                 f"WHERE commit_id IN ({placeholders})",
                 chunk,
             ):
                 signatures[row["commit_id"]][row["path"]] = (
                     row["object_hash"],
-                    row["size"],
+                    row["size"], row["file_id"],
                 )
         return signatures
 
@@ -2678,9 +2715,10 @@ class Repository:
                     tracked = {
                         row[0] for row in db.execute("SELECT path FROM tracked_paths")
                     }
-                    working_signature: dict[str, tuple[str, int]] | None = None
+                    working_signature: dict[str, tuple[str, int, str]] | None = None
                     if all((self.root / Path(relative)).is_file() for relative in tracked):
-                        working_signature = self._hash_worktree_files(tracked)
+                        bindings = self.tracked_ids()
+                        working_signature = {p: (*value, bindings[p]) for p, value in self._hash_worktree_files(tracked).items()}
                     if working_signature is not None:
                         current_tip = db.execute(
                             "SELECT b.commit_id FROM branches b "
@@ -2797,7 +2835,7 @@ class Repository:
                 count = db.execute(
                     "SELECT COUNT(*) FROM commit_files WHERE commit_id=?", (commit_id,)
                 ).fetchone()[0]
-                if count == len(signature):
+                if count == len(signature) and self._snapshot_ids_match(db, commit_id, signature):
                     return commit_id
         return None
 
@@ -3018,6 +3056,17 @@ class Repository:
         return files
 
     def _validate_restore_inputs(self, target: dict[str, FileState], *, partial: bool = False) -> None:
+        ids = [item.file_id for item in target.values()]
+        if len(set(ids)) != len(ids):
+            raise SproutError("duplicate file identity in snapshot", code="file_identity_conflict")
+        if partial:
+            bindings = self.tracked_ids()
+            for path, item in target.items():
+                if (path in bindings and bindings[path] != item.file_id) or any(
+                    p not in target and identity == item.file_id for p, identity in bindings.items()
+                ):
+                    raise SproutError(f"partial restore file identity collision: {path}",
+                                      code="file_identity_conflict", details={"path": path, "file_id": item.file_id})
         paths = set(target) if partial else set(target) | self.tracked() | set(self.manifest(self.current_commit()))
         for relative in paths:
             self._safe_restore_path(relative)
@@ -3295,13 +3344,13 @@ class Repository:
         with self.connect() as db:
             if partial:
                 db.executemany(
-                    "INSERT OR IGNORE INTO tracked_paths(path) VALUES(?)",
-                    ((path,) for path in target),
+                    "INSERT INTO tracked_paths(path,file_id) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET file_id=excluded.file_id",
+                    ((path, item.file_id) for path, item in target.items()),
                 )
             else:
                 db.execute("DELETE FROM tracked_paths")
                 db.executemany(
-                    "INSERT INTO tracked_paths(path) VALUES(?)", ((path,) for path in target)
+                    "INSERT INTO tracked_paths(path,file_id) VALUES(?,?)", ((path, item.file_id) for path, item in target.items())
                 )
             if head_branch is not None:
                 db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, head_branch),))
@@ -3409,6 +3458,12 @@ class Repository:
                 self._restore_tree_files(operation_dir)
                 shutil.rmtree(operation_dir, ignore_errors=True)
 
+    def _snapshot_ids_match(self, db: sqlite3.Connection, commit_id: str,
+                            signature: dict[str, tuple[str, int]]) -> bool:
+        bindings = self.tracked_ids()
+        return all(db.execute("SELECT file_id FROM commit_files WHERE commit_id=? AND path=?",
+                              (commit_id, path)).fetchone()[0] == bindings.get(path) for path in signature)
+
     def _is_saved_snapshot(
         self, signature: dict[str, tuple[str, int]], *, exact: bool = True
     ) -> bool:
@@ -3416,7 +3471,8 @@ class Repository:
             if not signature:
                 return True
             with self.connect() as db:
-                return bool(self._commits_containing_from_db(db, signature))
+                return any(self._snapshot_ids_match(db, candidate, signature)
+                           for candidate in self._commits_containing_from_db(db, signature))
 
         return self._matching_saved_snapshot_commit(signature) is not None
 
@@ -3436,6 +3492,9 @@ class Repository:
         if all((self.root / Path(relative)).is_file() for relative in hash_paths):
             signature = self._hash_worktree_files(hash_paths)
 
+        bindings = self.tracked_ids()
+        if any(p in head and bindings.get(p) != head[p].file_id for p in hash_paths):
+            return True
         has_changes = False
         for relative in sorted(status_paths):
             path = self.root / Path(relative)
@@ -3450,7 +3509,8 @@ class Repository:
                 has_changes = True
                 continue
             digest, size = signature[relative]
-            if digest != head[relative].object_hash or size != head[relative].size:
+            if (digest != head[relative].object_hash or size != head[relative].size
+                    or bindings.get(relative) != head[relative].file_id):
                 has_changes = True
 
         if not has_changes:
@@ -3613,12 +3673,12 @@ class Repository:
             commit_ids = [row["id"] for row in commit_rows]
             files: dict[str, list[FileState]] = {commit_id: [] for commit_id in commit_ids}
             for row in db.execute(
-                "SELECT commit_id, path, object_hash, size, mtime_ns "
+                "SELECT commit_id, path, object_hash, size, mtime_ns, file_id "
                 "FROM commit_files ORDER BY commit_id, path"
             ):
                 self._validate_file_time(row["mtime_ns"], row["path"])
                 files[row["commit_id"]].append(
-                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"])
+                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"], row["file_id"])
                 )
             attachments = self._attachments_many_from_db(db, commit_ids)
             annotations = self._annotations_many_from_db(db, commit_ids)
@@ -3655,7 +3715,7 @@ class Repository:
                     raise SproutError(f"commit {commit_id[:12]} has an unsafe path: {item.path}")
                 archive_path = f"{directory}/files/{item.path}"
                 file_entries.append(
-                    {"path": item.path, "size": item.size, "sha256": item.object_hash, "archive_path": archive_path}
+                    {"path": item.path, "file_id": item.file_id, "size": item.size, "sha256": item.object_hash, "archive_path": archive_path}
                 )
                 copies.append(
                     _ArchiveCopy(
@@ -3945,11 +4005,11 @@ class Repository:
         rows = list(db.execute(query + " ORDER BY seq DESC", params))
         files: dict[str, list[FileState]] = {row["id"]: [] for row in rows}
         for row in db.execute(
-            "SELECT bud_id, path, object_hash, size, mtime_ns FROM bud_files ORDER BY path"
+            "SELECT bud_id, path, object_hash, size, mtime_ns, file_id FROM bud_files ORDER BY path"
         ):
             if row["bud_id"] in files:
                 files[row["bud_id"]].append(
-                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"])
+                    FileState(row["path"], row["object_hash"], row["size"], row["mtime_ns"], row["file_id"])
                 )
         buds: list[Bud] = []
         for row in rows:
@@ -3993,9 +4053,9 @@ class Repository:
         base = self.current_commit()
         files, _ = self._store_tracked_files("saving a bud")
         base_signature = {
-            path: (state.object_hash, state.size) for path, state in self.manifest(base).items()
+            path: (state.object_hash, state.size, state.file_id) for path, state in self.manifest(base).items()
         }
-        if {item.path: (item.object_hash, item.size) for item in files} == base_signature:
+        if {item.path: (item.object_hash, item.size, item.file_id) for item in files} == base_signature:
             raise SproutError("no unsaved changes to keep in a bud", code="nothing_to_save")
         bud_id = uuid.uuid4().hex
         created_at = utc_timestamp()
@@ -4008,8 +4068,8 @@ class Repository:
                 (bud_id, base, branch_id, branch_name, created_at),
             )
             db.executemany(
-                "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns) VALUES(?,?,?,?,?)",
-                ((bud_id, item.path, item.object_hash, item.size, item.mtime_ns) for item in files),
+                "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
+                ((bud_id, item.path, item.object_hash, item.size, item.mtime_ns, item.file_id) for item in files),
             )
             return self._buds_from_db(db, [bud_id])[0]
 
