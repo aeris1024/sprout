@@ -33,7 +33,7 @@ def test_v1_definition_is_frozen():
     )
 
 
-@pytest.mark.parametrize("version", [1, 4, 5])
+@pytest.mark.parametrize("version", [1, 4, 5, 6])
 def test_frozen_legacy_is_rejected_without_changes(tmp_path, version):
     root = tmp_path / 'legacy'
     control = root / '.sprout'
@@ -60,9 +60,14 @@ def test_v5_definition_is_frozen():
     assert hashlib.sha256((Path(__file__).parent / 'fixtures/schema_v5.sql').read_bytes()).hexdigest() == '2c42b4b943712732e60ae636379979fa2e0426b6fff9036226475ebda4479a87'
 
 
+
+def test_v6_definition_is_frozen():
+    assert hashlib.sha256((Path(__file__).parent / 'fixtures/schema_v6.sql').read_bytes()).hexdigest() == 'ef303e1b9addaefeb1aeb3e365e55ad90e92d60d3fd7519d88785528bd474faa'
+
+
 def test_current_format_definition_is_frozen():
-    assert SCHEMA_VERSION == '6'
-    assert hashlib.sha256(SCHEMA.encode()).hexdigest() == 'ef303e1b9addaefeb1aeb3e365e55ad90e92d60d3fd7519d88785528bd474faa'
+    assert SCHEMA_VERSION == '7'
+    assert hashlib.sha256(SCHEMA.encode()).hexdigest() == 'dc5f4a5cb745d09388a1c4564725ba3bed877ace1d1e9099a9ffc68585344c90'
 
 
 def test_current_format_reopens_and_accepts_writes(tmp_path):

@@ -6,12 +6,12 @@ import uuid
 
 from .errors import SproutError
 
-TRASH_RECORD_VERSION = 1
+TRASH_RECORD_VERSION = 2
 
 # Ordered parents before dependents; identifiers below are never supplied by records.
 KEYS = {
     'commits': ('id',), 'commit_files': ('commit_id', 'path'),
-    'commit_attachments': ('id',), 'commit_notes': ('commit_id',),
+    'commit_attachments': ('id',), 'preview_assets': ('attachment_id','file_id'), 'commit_notes': ('commit_id',),
     'commit_labels': ('commit_id', 'label'), 'branches': ('id',),
     'repository_state': ('id',), 'buds': ('id',),
 }
@@ -23,7 +23,7 @@ def rows(db, table, where, args):
 
 def capture_commit(db, commit_id):
     result = {'commits': rows(db, 'commits', 'id=? OR parent_id=?', (commit_id, commit_id))}
-    for table in ('commit_files', 'commit_attachments', 'commit_notes', 'commit_labels'):
+    for table in ('commit_files', 'commit_attachments', 'preview_assets', 'commit_notes', 'commit_labels'):
         result[table] = rows(db, table, 'commit_id=?', (commit_id,))
     result['branches'] = rows(db, 'branches', 'commit_id=?', (commit_id,))
     result['buds'] = rows(db, 'buds', 'base_commit_id=?', (commit_id,))
@@ -33,7 +33,8 @@ def capture_commit(db, commit_id):
 
 def capture_preview(db, commit_id):
     return {'commit_attachments': rows(db, 'commit_attachments',
-                                     "commit_id=? AND role='preview'", (commit_id,))}
+                                     "commit_id=? AND role='preview'", (commit_id,)),
+            'preview_assets': rows(db,'preview_assets','commit_id=?',(commit_id,))}
 
 
 def current_row(db, table, original):
@@ -48,14 +49,15 @@ def record(db, before, kind, title, target_id, created_at, *, preview_commit=Non
     for table, originals in before.items():
         for original in originals:
             after = current_row(db, table, original)
-            if original != after:
+            if original != after or table == 'preview_assets':
                 patches.append({'table': table, 'before': original, 'after': after})
     if not patches:
         return None
     payload = {'version': TRASH_RECORD_VERSION, 'patches': patches}
     if preview_commit:
         payload.update(preview_commit=preview_commit,
-                       preview_after=capture_preview(db, preview_commit)['commit_attachments'])
+                       preview_after=capture_preview(db, preview_commit)['commit_attachments'],
+                       assets_after=capture_preview(db, preview_commit)['preview_assets'])
     item_id = uuid.uuid4().hex
     db.execute('INSERT INTO trash_entries(id,seq,kind,target_id,title,created_at,payload) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM trash_entries),?,?,?,?,?)',
                (item_id, kind, target_id, title, created_at, json.dumps(payload, sort_keys=True)))
@@ -93,12 +95,23 @@ def validate(db, item):
             if key in seen:
                 raise ValueError('duplicate row')
             seen.add(key)
+        if item['kind'].startswith('preview') and 'preview_commit' not in payload:
+            raise ValueError('missing preview context')
         if 'preview_commit' in payload:
             if not isinstance(payload['preview_commit'], str) or not isinstance(payload.get('preview_after'), list):
                 raise ValueError('invalid preview context')
             if any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
                    for row in payload['preview_after']):
                 raise ValueError('invalid preview rows')
+        if 'preview_commit' in payload:
+            assets = payload.get('assets_after')
+            columns = {r['name'] for r in db.execute('PRAGMA table_info(preview_assets)')}
+            if not isinstance(assets, list) or any(
+                not isinstance(row, dict) or set(row) != columns
+                or not isinstance(row.get('attachment_id'), str) or not isinstance(row.get('file_id'), str)
+                for row in assets
+            ):
+                raise ValueError('invalid preview material context')
         return payload
     except (ValueError, KeyError, TypeError) as exc:
         raise SproutError('invalid trash recovery record; retained without changes',
@@ -120,6 +133,10 @@ def restore(db, item):
         ordered = lambda values: sorted(values, key=lambda r: r['id'])
         if ordered(actual) != ordered(payload.get('preview_after', [])):
             conflict(item['id'], 'the preview list changed; undo newer preview operations first')
+    if 'preview_commit' in payload:
+        assets = capture_preview(db, payload['preview_commit'])['preview_assets']
+        if sorted(assets, key=lambda r:(r['attachment_id'],r['file_id'])) != sorted(payload.get('assets_after',[]), key=lambda r:(r['attachment_id'],r['file_id'])):
+            conflict(item['id'], 'preview material associations changed')
     for patch in payload['patches']:
         if current_row(db, patch['table'], patch['before']) != patch['after']:
             conflict(item['id'], f"{patch['table']} changed since this operation")
@@ -127,6 +144,8 @@ def restore(db, item):
     # Attachment positions are unique at every statement, so remove all affected
     # rows first, then insert their original versions in the same transaction.
     for patch in payload['patches']:
+        if patch['table'] == 'preview_assets' and patch['after'] is not None:
+            db.execute('DELETE FROM preview_assets WHERE attachment_id=? AND file_id=?', (patch['after']['attachment_id'],patch['after']['file_id']))
         if patch['table'] == 'commit_attachments' and patch['after'] is not None:
             db.execute('DELETE FROM commit_attachments WHERE id=?', (patch['after']['id'],))
     for table in KEYS:
@@ -134,7 +153,7 @@ def restore(db, item):
             if patch['table'] != table:
                 continue
             before = patch['before']
-            if patch['after'] is None or table == 'commit_attachments':
+            if patch['after'] is None or table in {'commit_attachments','preview_assets'}:
                 columns = list(before)
                 db.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
                            tuple(before[c] for c in columns))

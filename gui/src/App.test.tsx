@@ -1352,6 +1352,35 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce(previewDetail);
   }
 
+  it("edits preview metadata and materials, retains refused input and shows the representative", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    const detail = { ...previewDetail, files: [{ path: "scene.blend", file_id: "asset-1", size: 4, mtime_ns: 0, object_hash: "hash" }] };
+    mocks.runSprout.mockResolvedValueOnce(detail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await screen.findByRole("region", { name: "プレビュー管理" });
+    await user.click(screen.getAllByText("表示名・説明・対象素材を編集")[0]);
+    const form = screen.getByRole("form", { name: "voice.wavのメタ情報" });
+    await user.type(within(form).getByLabelText("表示名"), "Review");
+    await user.type(within(form).getByLabelText("説明"), "Notes");
+    await user.click(within(form).getByRole("checkbox", { name: "このコミットの代表プレビュー" }));
+    await user.click(within(form).getByRole("checkbox", { name: "scene.blend" }));
+    mocks.runSprout.mockRejectedValueOnce({ code: "invalid_preview_material", message: "material changed", details: {} });
+    await user.click(within(form).getByRole("button", { name: "メタ情報を保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("material changed");
+    expect((within(form).getByLabelText("表示名") as HTMLInputElement).value).toBe("Review");
+    const metadata = { display_name: "Review", description: "Notes", is_primary: true, file_ids: ["asset-1"] };
+    mocks.runSprout.mockResolvedValueOnce(metadata);
+    mockWorkspace();
+    mocks.runSprout.mockResolvedValueOnce({ ...detail, attachments: [{ ...detail.attachments[0], ...metadata, updated_at: "changed" }, detail.attachments[1]] });
+    await user.click(within(form).getByRole("button", { name: "メタ情報を保存" }));
+    expect(await screen.findByText("代表")).toBeTruthy();
+    expect(screen.getByText("対象素材: scene.blend")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "metadata", commitEntry.id, "p1", "--name=Review", "--description=Notes", "--primary", "--file-id", "asset-1"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "preview" && call[1][1] === "image")).toBe(false);
+  });
+
   it.each([false, true])("confirms a large preview before registration: %s", async (accepted) => {
     const user = userEvent.setup();
     await openPreviewWorkspace(user);

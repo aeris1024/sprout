@@ -162,7 +162,7 @@ def render_index(model: dict[str, Any]) -> str:
 def _attachment_html(from_dir: str, attachment: dict[str, Any], css_class: str) -> str:
     href = _href(from_dir, attachment["archive_path"])
     media_type = attachment["media_type"]
-    name = _e(attachment["original_name"])
+    name = _e(attachment.get("display_name") or attachment["original_name"])
     if media_type.startswith("image/"):
         player = f'<img src="{href}" alt="{name}">'
     elif media_type.startswith("audio/"):
@@ -174,11 +174,16 @@ def _attachment_html(from_dir: str, attachment: dict[str, Any], css_class: str) 
     position = (
         f"表示順 {attachment['position'] + 1} / " if attachment["role"] == "preview" else ""
     )
+    metadata = ('<strong>代表preview</strong>' if attachment.get('is_primary') else '')
+    if attachment.get('description'):
+        metadata += '<p>' + _e(attachment['description']).replace('\n', '<br>') + '</p>'
+    if attachment.get('file_ids'):
+        metadata += '<p>対象素材: ' + ', '.join(_e(value) for value in attachment['file_ids']) + '</p>'
     return (
         f'<div class="{css_class}" id="a-{_e(attachment["id"])}">'
         f"<div>{position}<a href=\"{href}\">{name}</a> "
         f"<small>({_e(media_type)}, {attachment['size']} bytes, ID <code>{_e(attachment['id'])}</code>)</small></div>"
-        f"{player}</div>"
+        f"{metadata}{player}</div>"
     )
 
 

@@ -33,7 +33,7 @@ CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
 # V1 is frozen in tests/fixtures/schema_v1.sql. Incompatible changes increment this number.
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
@@ -65,6 +65,7 @@ ProgressCallback = Callable[[str, int, int], None]
 UNCHANGED = object()
 
 REQUIRED_SCHEMA_TABLES = {
+    "preview_assets",
     "file_identities",
     "meta",
     "trash_entries",
@@ -194,16 +195,33 @@ CREATE TABLE commit_attachments (
     role TEXT NOT NULL,
     position INTEGER NOT NULL DEFAULT 0 CHECK (typeof(position) = 'integer' AND position >= 0),
     original_name TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name)<=256 AND instr(display_name,char(10))=0 AND instr(display_name,char(13))=0),
+    description TEXT NOT NULL DEFAULT '' CHECK (length(description)<=20000),
+    is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0,1)),
     media_type TEXT NOT NULL,
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
     updated_at TEXT NOT NULL CHECK (updated_at GLOB '{TIMESTAMP_GLOB}'),
+    CHECK (role='preview' OR (display_name='' AND description='' AND is_primary=0)),
+    UNIQUE (id, commit_id, role),
     UNIQUE (commit_id, role, position),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
 CREATE UNIQUE INDEX idx_single_thumbnail ON commit_attachments(commit_id)
     WHERE role = 'thumbnail';
+CREATE UNIQUE INDEX idx_primary_preview ON commit_attachments(commit_id) WHERE role='preview' AND is_primary=1;
+CREATE TABLE preview_assets (
+    attachment_id TEXT NOT NULL,
+    commit_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'preview' CHECK (role='preview'),
+    PRIMARY KEY (attachment_id,file_id),
+    FOREIGN KEY (attachment_id,commit_id,role) REFERENCES commit_attachments(id,commit_id,role) ON DELETE CASCADE,
+    FOREIGN KEY (commit_id,file_id) REFERENCES commit_files(commit_id,file_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_preview_assets_attachment ON preview_assets(attachment_id,commit_id,role);
+CREATE INDEX idx_preview_assets_file ON preview_assets(commit_id,file_id);
 CREATE TABLE commit_notes (
     commit_id TEXT PRIMARY KEY NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
@@ -312,6 +330,10 @@ class CommitAttachment:
     size: int
     created_at: str
     updated_at: str
+    display_name: str = ""
+    description: str = ""
+    is_primary: bool = False
+    file_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1362,7 +1384,7 @@ class Repository:
         return original_name, media_type, object_hash, size
 
     @staticmethod
-    def _attachment_from_row(row: sqlite3.Row) -> CommitAttachment:
+    def _attachment_from_row(row: sqlite3.Row, file_ids: tuple[str, ...] = ()) -> CommitAttachment:
         return CommitAttachment(
             id=row["id"],
             position=row["position"],
@@ -1374,6 +1396,8 @@ class Repository:
             size=row["size"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            display_name=row["display_name"], description=row["description"],
+            is_primary=bool(row["is_primary"]), file_ids=file_ids,
         )
 
     def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
@@ -1576,7 +1600,7 @@ class Repository:
                 f"WHERE commit_id IN ({placeholders}) ORDER BY role, position, id",
                 chunk,
             ):
-                grouped[row["commit_id"]].append(cls._attachment_from_row(row))
+                grouped[row["commit_id"]].append(cls._attachment_from_row(row, tuple(r[0] for r in db.execute("SELECT file_id FROM preview_assets WHERE attachment_id=? ORDER BY file_id", (row["id"],)))))
         return {
             commit_id: tuple(attachments)
             for commit_id, attachments in grouped.items()
@@ -1952,7 +1976,7 @@ class Repository:
         cls, db: sqlite3.Connection, commit_id: str
     ) -> list[CommitAttachment]:
         return [
-            cls._attachment_from_row(row)
+            cls._attachment_from_row(row, tuple(r[0] for r in db.execute("SELECT file_id FROM preview_assets WHERE attachment_id=? ORDER BY file_id", (row["id"],))))
             for row in db.execute(
                 "SELECT * FROM commit_attachments WHERE commit_id=? AND role=? "
                 "ORDER BY position, id",
@@ -2013,6 +2037,41 @@ class Repository:
             "UPDATE commit_attachments SET position=? WHERE id=?",
             ((index, item) for index, item in enumerate(ordered_ids)),
         )
+
+    @locked
+    def set_preview_metadata(self, value: str, attachment_id: str, *,
+                             display_name: str | object = UNCHANGED,
+                             description: str | object = UNCHANGED,
+                             primary: bool | object = UNCHANGED,
+                             file_ids: list[str] | object = UNCHANGED) -> CommitAttachment:
+        commit_id = self.resolve_commit(value)
+        target = self.preview(commit_id, attachment_id)
+        if display_name is not UNCHANGED:
+            display_name = unicodedata.normalize('NFC', display_name).strip()
+            if len(display_name)>256 or any(c in display_name for c in ('\n','\r','\x00')):
+                raise SproutError('display name must be at most 256 characters without line breaks', code='invalid_preview_metadata')
+        if description is not UNCHANGED:
+            description = unicodedata.normalize('NFC', description)
+            if len(description)>20000 or '\x00' in description:
+                raise SproutError('description must be at most 20000 characters', code='invalid_preview_metadata')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if file_ids is not UNCHANGED:
+                for file_id in set(file_ids):
+                    if not db.execute('SELECT 1 FROM commit_files WHERE commit_id=? AND file_id=?', (commit_id,file_id)).fetchone():
+                        raise SproutError('preview material must belong to the same commit', code='invalid_preview_material', details={'file_id':file_id})
+                db.execute('DELETE FROM preview_assets WHERE attachment_id=?', (target.id,))
+                db.executemany('INSERT INTO preview_assets(attachment_id,commit_id,file_id) VALUES(?,?,?)',
+                               ((target.id,commit_id,f) for f in sorted(set(file_ids))))
+            if primary is True:
+                db.execute("UPDATE commit_attachments SET is_primary=0 WHERE commit_id=? AND role='preview'", (commit_id,))
+            updates = {'updated_at':utc_timestamp()}
+            for key, value in (('display_name',display_name),('description',description),('is_primary',primary)):
+                if value is not UNCHANGED:
+                    updates[key] = value
+            db.execute('UPDATE commit_attachments SET '+','.join(f'{k}=?' for k in updates)+' WHERE id=?',
+                       (*updates.values(),target.id))
+        return self.preview(commit_id,target.id)
 
     @locked
     def add_previews(
@@ -3656,6 +3715,8 @@ class Repository:
             "role": attachment.role,
             "position": attachment.position,
             "original_name": attachment.original_name,
+            "display_name": attachment.display_name, "description": attachment.description,
+            "is_primary": attachment.is_primary, "file_ids": list(attachment.file_ids),
             "media_type": attachment.media_type,
             "size": attachment.size,
             "sha256": attachment.object_hash,

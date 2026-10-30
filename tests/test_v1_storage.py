@@ -125,7 +125,7 @@ def test_thumbnail_replacement_preserves_id_and_singleton(tmp_path):
     assert second.object_hash != first.object_hash
     with repo.connect() as db, pytest.raises(sqlite3.IntegrityError):
         db.execute(
-            "INSERT INTO commit_attachments SELECT 'duplicate', commit_id, role, position+1, original_name,media_type,object_hash,size,created_at,updated_at "
+            "INSERT INTO commit_attachments(id,commit_id,role,position,original_name,media_type,object_hash,size,created_at,updated_at) SELECT 'duplicate', commit_id, role, position+1, original_name,media_type,object_hash,size,created_at,updated_at "
             "FROM commit_attachments WHERE id=?", (first.id,),
         )
 

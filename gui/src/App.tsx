@@ -817,6 +817,12 @@ function App() {
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
       return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
+        metadata: (id, data) => previewOperation(commitDetail.id, async () => {
+          await runSprout(projectDir, ["preview", "metadata", commitDetail.id, id,
+            `--name=${data.display_name}`, `--description=${data.description}`, data.is_primary ? "--primary" : "--no-primary",
+            ...(data.file_ids.length ? data.file_ids.flatMap((fileId) => ["--file-id", fileId]) : ["--clear-materials"])], sproutProgram);
+          return true;
+        }),
         add: () => choosePreviews(commitDetail.id),
         paste: (files) => pastePreviews(commitDetail.id, files),
         pastePaths: () => pasteNativePreviews(commitDetail.id),

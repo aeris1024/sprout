@@ -27,6 +27,7 @@ from .repository import (
     PreviewPlan,
     PruneResult,
     Repository,
+    UNCHANGED,
 )
 
 _POWERSHELL_COMPLETION_SCRIPT = """
@@ -235,6 +236,8 @@ def _attachment_json(attachment: CommitAttachment) -> dict[str, Any]:
         "commit_id": attachment.commit_id,
         "role": attachment.role,
         "original_name": attachment.original_name,
+        "display_name": attachment.display_name, "description": attachment.description,
+        "is_primary": attachment.is_primary, "file_ids": list(attachment.file_ids),
         "media_type": attachment.media_type,
         "object_hash": attachment.object_hash,
         "size": attachment.size,
@@ -1123,6 +1126,31 @@ def preview_add(
         return
     for item in added:
         typer.echo(f"Added preview {_preview_text(item.position + 1, item)}")
+
+
+@preview_app.command(name="metadata")
+def preview_metadata(
+    commit: PreviewCommitArgument,
+    attachment_id: PreviewIdArgument,
+    name: Annotated[str | None, typer.Option("--name")] = None,
+    description: Annotated[str | None, typer.Option("--description")] = None,
+    primary: Annotated[bool | None, typer.Option("--primary/--no-primary")] = None,
+    material: Annotated[list[str] | None, typer.Option("--file-id")] = None,
+    clear_materials: Annotated[bool, typer.Option("--clear-materials")] = False,
+    json_output: PreviewJsonOption = False,
+) -> None:
+    """Edit preview presentation and same-snapshot material associations."""
+    if material and clear_materials:
+        raise SproutError('--file-id cannot be combined with --clear-materials')
+    attachment = repo().set_preview_metadata(commit,attachment_id,
+        display_name=name if name is not None else UNCHANGED,
+        description=description if description is not None else UNCHANGED,
+        primary=primary if primary is not None else UNCHANGED,
+        file_ids=[] if clear_materials else material if material is not None else UNCHANGED)
+    if json_output:
+        _echo_json(_attachment_json(attachment))
+    else:
+        typer.echo(f'Updated preview metadata {attachment.id}')
 
 
 @preview_app.command(name="replace")

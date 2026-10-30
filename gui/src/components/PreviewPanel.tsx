@@ -1,8 +1,10 @@
 import { useState, type ClipboardEvent } from "react";
 import PreviewImage from "./PreviewImage";
-import type { CommitAttachment } from "../lib/sprout";
+import type { CommitAttachment, CommitFile } from "../lib/sprout";
 
+export interface PreviewMetadata { display_name: string; description: string; is_primary: boolean; file_ids: string[]; }
 export interface PreviewActions {
+  metadata?: (id: string, data: PreviewMetadata) => void;
   add: () => void;
   paste: (files: File[]) => void;
   pastePaths: () => void;
@@ -11,7 +13,7 @@ export interface PreviewActions {
   export: (id: string, name: string) => void;
   order: (ids: string[]) => void;
 }
-export default function PreviewPanel({ attachments, busy, actions, projectDir, program, commitId }: { attachments: CommitAttachment[]; busy: boolean; actions: PreviewActions; projectDir: string; program: string; commitId: string }) {
+export default function PreviewPanel({ attachments, busy, actions, projectDir, program, commitId, files = [] }: { files?: CommitFile[]; attachments: CommitAttachment[]; busy: boolean; actions: PreviewActions; projectDir: string; program: string; commitId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const previews = attachments.filter((item) => item.role === "preview").sort((a, b) => a.position - b.position);
   const context = `${projectDir}\0${commitId}\0${program}`;
@@ -38,7 +40,9 @@ export default function PreviewPanel({ attachments, busy, actions, projectDir, p
     {!previews.length && <p className="muted">プレビューはありません。</p>}
     {image && <PreviewImage key={imageKey(image)} projectDir={projectDir} program={program} attachment={image} onClose={() => setSelected(null)} />}
     <ol className="preview-list">{previews.map((item, index) => <li key={item.id}>
-      <p className="preview-name">{item.original_name}</p><p className="panel-copy">{item.media_type} · {item.size.toLocaleString()} B</p>
+      <p className="preview-name">{item.display_name || item.original_name} {item.is_primary && <strong>代表</strong>}</p>{item.description && <p className="panel-copy" style={{ whiteSpace: "pre-wrap" }}>{item.description}</p>}<p className="panel-copy">{item.media_type} · {item.size.toLocaleString()} B</p>
+      {Boolean(item.file_ids?.length) && <p className="panel-copy">対象素材: {item.file_ids!.map((id) => files.find((file) => file.file_id === id)?.path ?? id).join(", ")}</p>}
+      {actions.metadata && <MetadataEditor key={`${item.id}:${item.updated_at}:${item.is_primary}`} item={item} files={files} busy={busy} onSave={actions.metadata} />}
       <div className="action-row">
         {(item.media_type.startsWith("image/") || /\.(png|jpe?g|webp|bmp)$/i.test(item.original_name)) && <button disabled={busy} aria-pressed={imageKey(item) === selected} onClick={() => setSelected(imageKey(item))} aria-label={`${item.original_name}を表示`}>画像を表示</button>}
         <button disabled={busy} onClick={() => actions.replace(item.id)} aria-label={`${item.original_name}を置き換え`}>置き換え</button>
@@ -49,4 +53,29 @@ export default function PreviewPanel({ attachments, busy, actions, projectDir, p
       </div>
     </li>)}</ol>
   </section>;
+}
+
+
+function MetadataEditor({ item, files, busy, onSave }: { item: CommitAttachment; files: CommitFile[]; busy: boolean; onSave: (id: string, data: PreviewMetadata) => void }) {
+  const [name, setName] = useState(item.display_name ?? "");
+  const [description, setDescription] = useState(item.description ?? "");
+  const [primary, setPrimary] = useState(item.is_primary ?? false);
+  const [ids, setIds] = useState(item.file_ids ?? []);
+  return <details><summary>表示名・説明・対象素材を編集</summary>
+    <form aria-label={`${item.original_name}のメタ情報`} onSubmit={(event) => {
+      event.preventDefault(); onSave(item.id, { display_name: name, description, is_primary: primary, file_ids: ids });
+    }}>
+      <p className="panel-copy">添付ID: {item.id} ／ 元のファイル名: {item.original_name}</p>
+      <label className="field">表示名<input value={name} disabled={busy} onChange={(event) => setName(event.currentTarget.value)} /></label>
+      <label className="field">説明<textarea value={description} disabled={busy} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
+      <label><input type="checkbox" checked={primary} disabled={busy} onChange={(event) => setPrimary(event.currentTarget.checked)} />このコミットの代表プレビュー</label>
+      <fieldset disabled={busy}><legend>対象素材（複数選択可）</legend>
+        {files.filter((file) => file.file_id).map((file) => <label className="snapshot-file" key={file.file_id}>
+          <input type="checkbox" checked={ids.includes(file.file_id!)} onChange={(event) => { const checked = event.currentTarget.checked; setIds((current) => checked ? [...current, file.file_id!] : current.filter((id) => id !== file.file_id)); }} />{file.path}
+        </label>)}
+        {!files.some((file) => file.file_id) && <p className="muted">関連付けできる素材はありません。</p>}
+      </fieldset>
+      <button disabled={busy} type="submit">メタ情報を保存</button>
+    </form>
+  </details>;
 }
