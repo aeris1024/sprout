@@ -7,6 +7,13 @@ const stateLabels: Record<string, string> = {
   renamed: "改名",
 };
 
+/** Renamed files have no one-step revert: undoing a rename touches two paths. */
+const revertLabels: Record<string, string> = {
+  modified: "元に戻す",
+  deleted: "元に戻す",
+  added: "追跡から外す",
+};
+
 interface SavePanelProps {
   changes: StatusChange[];
   growsBranch: boolean;
@@ -18,6 +25,8 @@ interface SavePanelProps {
   onChooseThumbnail: () => void;
   onClearThumbnail: () => void;
   onSave: () => void;
+  onKeepAsBud: () => void;
+  onRevert: (change: StatusChange) => void;
 }
 
 export default function SavePanel({
@@ -31,6 +40,8 @@ export default function SavePanel({
   onChooseThumbnail,
   onClearThumbnail,
   onSave,
+  onKeepAsBud,
+  onRevert,
 }: SavePanelProps) {
   return (
     <section className="panel-section" aria-label="未保存の変更">
@@ -44,6 +55,11 @@ export default function SavePanel({
             <div className="change-row" key={`${change.state}:${change.path}`}>
               <span className={`state-badge ${change.state}`}>{stateLabels[change.state] ?? change.state}</span>
               <span>{change.previous_path ? `${change.previous_path} → ${change.path}` : change.path}</span>
+              {revertLabels[change.state] && (
+                <button className="text-button" onClick={() => onRevert(change)} disabled={busy} aria-label={`${change.path}を${revertLabels[change.state]}`}>
+                  {revertLabels[change.state]}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -81,6 +97,10 @@ export default function SavePanel({
       <button className="button primary wide" onClick={onSave} disabled={busy || !message.trim()}>
         保存して葉にする
       </button>
+      <button className="button secondary wide" onClick={onKeepAsBud} disabled={busy || changes.length === 0}>
+        つぼみとして残す
+      </button>
+      <p className="panel-copy">保存せずに今の変更を取っておきます。作業ファイルは変わりません。</p>
     </section>
   );
 }

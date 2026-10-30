@@ -18,6 +18,7 @@ import {
   normalizeCliError,
   runSprout,
   type Bud,
+  type StatusChange,
   type TrashItem,
   type DoctorReport,
   type GcResult,
@@ -868,6 +869,50 @@ function App() {
     });
   }
 
+  function keepAsBud() {
+    if (!projectDir || operationActive.current) return;
+    void execute(async () => {
+      try {
+        await runSprout<Bud>(projectDir, ["bud", "--save"], sproutProgram);
+      } catch (error) {
+        // Nothing to keep means the view was stale; refresh so the panel matches the working folder.
+        if (normalizeCliError(error).code === "nothing_to_save") await fetchWorkspace(projectDir).catch(() => {});
+        throw unchangedError(error);
+      }
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "bud_saved", message: "未保存の変更をつぼみとして残しました。作業ファイルは変わっていません", details: {}, kind: "success" });
+    });
+  }
+
+  function revertUnsaved(change: StatusChange) {
+    const commitId = status?.current_commit;
+    if (!projectDir || operationActive.current) return;
+    const untrack = change.state === "added";
+    if (!untrack && !commitId) return;
+    void execute(async () => {
+      const accepted = await confirmDialog(untrack
+        ? `${change.path} を追跡対象から外します。
+ファイル自体は削除せず、未保存の変更からも外れます。続行しますか？`
+        : `${change.path} を${commitId ? shortId(commitId) : ""}の内容に戻します。
+${change.state === "deleted" ? "削除したファイルを復元します。" : "作業ファイルの変更内容は失われます。"}破棄した変更はゴミ箱からつぼみとして戻せます。続行しますか？`, {
+        title: untrack ? "追跡から外す" : "未保存の変更を元に戻す", kind: "warning", okLabel: untrack ? "外す" : "元に戻す", cancelLabel: "キャンセル",
+      });
+      if (!accepted) return;
+      try {
+        await runSprout(projectDir, untrack ? ["untrack", ...fileArguments([change.path])] : ["restore", commitId!, ...fileArguments([change.path]), "--discard"], sproutProgram);
+      } catch (error) {
+        throw unchangedError(error);
+      }
+      await fetchWorkspace(projectDir);
+      setNotice({
+        code: untrack ? "paths_untracked" : "unsaved_reverted",
+        message: untrack ? `${change.path} を追跡対象から外しました。ファイルは残っています` : `${change.path} を元に戻しました`,
+        details: { path: change.path },
+        kind: "success",
+      });
+    });
+  }
+
   function openSaveForm() {
     setTrashOpen(false);
     setMaintenanceOpen(false);
@@ -1040,7 +1085,7 @@ function App() {
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
       return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} deletedBranches={graph.deleted_branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onRename={renameBud} onClose={closeSelection} />;
     }
-    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} />;
+    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} onKeepAsBud={keepAsBud} onRevert={revertUnsaved} />;
   }
 
   return (

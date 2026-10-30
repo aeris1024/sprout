@@ -461,6 +461,99 @@ describe("Sprout GUI operations", () => {
     expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
   });
 
+  describe("unsaved changes actions", () => {
+    const dirty = (changes: SproutStatus["changes"]): SproutStatus => ({ ...cleanStatus, changes });
+    async function openDirty(user: ReturnType<typeof userEvent.setup>, changes: SproutStatus["changes"]) {
+      render(<App />);
+      mocks.open.mockResolvedValueOnce(project);
+      mockWorkspace(dirty(changes));
+      await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+      await screen.findByRole("heading", { name: "sprout-project" });
+    }
+    const writes = () => mocks.runSprout.mock.calls.map((call) => call[1]).filter((args) => !["status", "tree"].includes(args[0]));
+
+    it("keeps unsaved changes as a bud without moving, and refreshes the map and top bar", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state: "modified", path: "design/main.psd" }]);
+      const bud = { id: "e".repeat(32), base_commit_id: commitEntry.id, branch_id: "main", branch_name: "main", created_at: "2026-10-31T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+      mocks.runSprout.mockResolvedValueOnce(bud);
+      mockWorkspace(dirty([{ state: "modified", path: "design/main.psd" }]), [commitEntry], mainBranch, {
+        current_commit: commitEntry.id, at_branch_tip: true, commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [] }],
+        branches: mainBranch, tags: [], buds: [bud],
+      });
+      await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
+      expect(await screen.findByText(/つぼみとして残しました/)).toBeTruthy();
+      expect(writes()).toEqual([["bud", "--save"]]);
+      expect(screen.getByRole("button", { name: "つぼみ（1件の変更）" })).toBeTruthy();
+      expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
+    });
+
+    it("disables keeping a bud when there are no unsaved changes", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, []);
+      expect((screen.getByRole("button", { name: "つぼみとして残す" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(writes()).toEqual([]);
+    });
+
+    it("reports a failed bud save and refreshes when nothing was left to keep", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state: "modified", path: "design/main.psd" }]);
+      mocks.runSprout.mockRejectedValueOnce({ code: "nothing_to_save", message: "no unsaved changes to keep in a bud", details: {} });
+      mockWorkspace();
+      await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("no unsaved changes to keep in a bud（作業フォルダは変更していません。）");
+      expect(writes()).toEqual([["bud", "--save"]]);
+      expect(screen.getByLabelText("保存状態").textContent).not.toContain("未保存の変更 1");
+    });
+
+    it.each([
+      ["modified", "作業ファイルの変更内容は失われます"],
+      ["deleted", "削除したファイルを復元します"],
+    ])("reverts a %s file to the current snapshot only after confirmation", async (state, warning) => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state, path: "design/main.psd" } as SproutStatus["changes"][number], { state: "modified", path: "other.txt" }]);
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+      expect(mocks.confirm.mock.calls[0][0]).toContain("design/main.psd");
+      expect(mocks.confirm.mock.calls[0][0]).toContain(warning);
+      expect(writes()).toEqual([]);
+
+      mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, paths: ["design/main.psd"] });
+      mockWorkspace(dirty([{ state: "modified", path: "other.txt" }]));
+      await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
+      expect(await screen.findByText("design/main.psd を元に戻しました")).toBeTruthy();
+      expect(writes()).toEqual([["restore", commitEntry.id, "design/main.psd", "--discard"]]);
+      expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
+    });
+
+    it("untracks an added file without deleting it", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state: "added", path: "new.txt" }]);
+      mocks.runSprout.mockResolvedValueOnce({ paths: ["new.txt"] });
+      mockWorkspace();
+      await user.click(screen.getByRole("button", { name: "new.txtを追跡から外す" }));
+      expect(await screen.findByText("new.txt を追跡対象から外しました。ファイルは残っています")).toBeTruthy();
+      expect(mocks.confirm.mock.calls[0][0]).toContain("ファイル自体は削除せず");
+      expect(writes()).toEqual([["untrack", "new.txt"]]);
+    });
+
+    it("shows the reason and leaves the file alone when a revert fails", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state: "modified", path: "design/main.psd" }]);
+      mocks.runSprout.mockRejectedValueOnce({ code: "untracked_conflict", message: "Cannot restore", details: { path: "design/main.psd" } });
+      await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("Cannot restore（作業フォルダは変更していません。）");
+      expect(writes()).toEqual([["restore", commitEntry.id, "design/main.psd", "--discard"]]);
+    });
+
+    it("offers no one-step revert for renamed files", async () => {
+      const user = userEvent.setup();
+      await openDirty(user, [{ state: "renamed", path: "b.txt", previous_path: "a.txt" }]);
+      expect(screen.queryByRole("button", { name: /b.txtを/ })).toBeNull();
+    });
+  });
+
   it("opens the save form from the unsaved bud, top bar, and Ctrl+S and warns about new branches", async () => {
     const user = userEvent.setup();
     const rootId = "d".repeat(64);
@@ -492,7 +585,6 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "ファイル" }));
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "未保存の芽" }));
     expect(screen.getByRole("button", { name: "未保存の芽" }).getAttribute("aria-pressed")).toBe("true");
   });
 
