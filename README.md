@@ -527,7 +527,7 @@ sprout preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
 
 previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
 
-GUI向けの `sprout preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
+GUI向けの `sprout preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、原本形式（format）、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
 
 ## コミットメッセージを変更する
 
@@ -675,7 +675,7 @@ V1〜V6の開発用リポジトリは今回のV7では読み込めません。�
 | `diff [COMMIT_A] [COMMIT_B] [--json]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
 | `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
-| `preview list\|image\|add\|replace\|delete\|export\|order COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
+| `preview list\|image\|add\|replace\|delete\|export\|order\|metadata COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
 | `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
 | `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
 | `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
@@ -1029,3 +1029,20 @@ sprout preview metadata <commit> <preview-id> --name= --description= --no-primar
 内容の置き換えと並べ替えではメタ情報・代表指定・関連を保持します。previewを削除すると関連と代表指定を解除し、削除や置き換えの取り消しでは保存した情報を復旧します。その後にメタ情報や関連が編集されていれば、上書きを避けて復旧を拒否します。葉の削除・復旧も関連情報を含めて行います。必要なファイル一覧や添付が削除された場合は外部キーで関連を除去し、無効な参照を残しません。
 
 CLI・JSON・GUI・archiveに`display_name`、`description`、`is_primary`、`file_ids`を含めます。GUIでは各previewの「表示名・説明・対象素材を編集」で設定・解除でき、代表と関連する保存パスを表示します。新しい必須構造は保存形式V7、ゴミ箱の復旧記録はVersion 2です。旧DBを自動変換せず、前述の退避・再初期化で切り替えてください。
+
+
+### 静止画像previewの表示キャッシュ
+
+選択した静止画像の表示用PNGと、原本の形式・寸法・表示寸法を`.sprout/preview-cache/`へ保存し、再表示に使います。キャッシュの識別には原本SHA-256、生成処理の版、Pillowの版、表示サイズ・検証上限、プロジェクトの場所と原本オブジェクトのファイル情報を含めます。内容や表示条件が変われば作り直し、別プロジェクトの結果を混同しません。キャッシュヒット時は原本の取得・展開・デコードを省きます。原本のencodingは別途確認し、原本が欠落した場合も通常の検証で拒否します。
+
+完成したキャッシュ項目の合計上限は256 MiBで、最終利用日時の古い項目から破棄します。1項目は32 MiBまでとし、保存できない大きさや、容量確保・読み書きに失敗した場合は通常の生成結果をそのまま返します。容量に数えるのはJSON内の表示用画像と情報で、ロックファイルや生成中の一時ファイルは含みません。原本・履歴・ゴミ箱の保存容量とは別です。
+
+キャッシュはチェックサム・形式・寸法を検査し、欠落や破損があれば再生成します。生成結果は一時ファイルへ書いてからまとめて公開し、同時生成と清掃にはプロジェクトごとの書き込みロックを使います。生成途中で中断したファイルは完成品として読まず、次の保守時に回収します。同時要求で保存できない場合も、生成した正しい画像を返します。GUIへは画像データ自体を渡すため、清掃中も表示済みの画像を維持できます。
+
+原本は「画像を表示」で対象を選ぶまで取得・デコードしません。代表previewを指定しただけでは読み込みません。既存の作業ツリーハッシュキャッシュ（worktree-cache.db）と、GUIのサムネイル用メモリキャッシュとは別の補助情報です。履歴DBの形式はV7のままで、このキャッシュがなくても閲覧を再開できます。履歴復元・archive・バックアップの必須データには含めません。
+
+消去する場合はGUIと、そのプロジェクトを使用中のCLIを終了し、プロジェクト直下で次を実行してください。次に画像を選んだときに再生成します。
+
+```powershell
+Remove-Item -LiteralPath '.sprout\preview-cache' -Recurse -Force
+```

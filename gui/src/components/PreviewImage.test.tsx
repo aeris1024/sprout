@@ -31,6 +31,13 @@ it("ignores old replies when selecting another attachment", async () => {
   finish({ ...reply, data_url: "stale" });
   await waitFor(() => expect(screen.getByRole("img").getAttribute("src")).toBe(reply.data_url));
 });
+it("shows reused image format metadata only after selection", async () => {
+  vi.mocked(runSprout).mockResolvedValue({ ...reply, format: "PNG" });
+  render(<PreviewPanel {...props} />);
+  expect(runSprout).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "one.pngを表示" }));
+  expect(await screen.findByText("PNG · 3000 × 1500 px（表示用に縮小）")).toBeTruthy();
+});
 it.each(["hash", "delete", "project", "commit"])("clears displayed content after %s changes", async (change) => {
   vi.mocked(runSprout).mockResolvedValue(reply);
   const view = render(<PreviewPanel {...props} />);
