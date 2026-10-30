@@ -706,7 +706,7 @@ describe("Sprout GUI operations", () => {
   });
 
   it.each([
-    ["unsupported_repository_format", "unsupported repository schema version: 99; preserve the entire project including .sprout"],
+    ["unsupported_repository_format", "unsupported repository schema version: 99 (expected 1)"],
     ["unsupported_restore_plan_version", "invalid restore recovery plan: unsupported version; backups retained"],
     ["unsupported_object_encoding", "unsupported object encoding 'future': abc123"],
   ])("shows compatibility reasons for %s without offering initialization", async (code, message) => {

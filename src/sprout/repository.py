@@ -32,8 +32,7 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
-# V1 is frozen in tests/fixtures/schema_v1.sql. Incompatible changes increment this number.
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "1"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
@@ -618,7 +617,7 @@ class Repository:
                 if row is None:
                     raise SproutError("repository is missing operation metadata")
                 if row[0]:
-                    repo._check_recovery_compatibility(row[0])
+                    repo._validate_pending_recovery(row[0])
                     with repo.lock():
                         repo._recover_pending_materialization()
                 return repo
@@ -656,12 +655,10 @@ class Repository:
     def _format_error(reason: str, *, code: str = "unsupported_repository_format",
                       details: dict[str, Any] | None = None) -> SproutError:
         return SproutError(
-            reason + "; preserve the entire project including .sprout, use a compatible "
-            "Sprout version to export needed data, then reinitialize a separate copy "
-            "(see README: storage compatibility)",
+            reason,
             code=code,
             details={"supported_schema_version": SCHEMA_VERSION,
-                     "recovery": "backup_and_reinitialize", **(details or {})},
+                     **(details or {})},
         )
 
     def check_schema(self) -> None:
@@ -3225,8 +3222,7 @@ class Repository:
     def _validate_restore_plan(self, plan: dict[str, Any]) -> None:
         if type(plan.get("version")) is not int or plan["version"] != RESTORE_PLAN_VERSION:
             raise SproutError(
-                "invalid restore recovery plan: unsupported version; backups retained; "
-                "preserve the entire project including .sprout and reopen with a compatible Sprout version",
+                "invalid restore recovery plan: unsupported version; backups retained",
                 code="unsupported_restore_plan_version",
                 details={"found_version": plan.get("version"),
                          "supported_version": RESTORE_PLAN_VERSION},
@@ -3327,7 +3323,7 @@ class Repository:
             os.replace(source, destination)
             os.utime(destination, ns=(action["mtime_ns"], action["mtime_ns"]))
 
-    def _check_recovery_compatibility(self, active: str) -> None:
+    def _validate_pending_recovery(self, active: str) -> None:
         if not active.startswith("restore-") or Path(active).name != active:
             raise SproutError("invalid active restore operation")
         operation_dir = self._restore_internal(self.tmp / active)

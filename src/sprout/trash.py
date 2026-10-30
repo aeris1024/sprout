@@ -6,7 +6,7 @@ import uuid
 
 from .errors import SproutError
 
-TRASH_RECORD_VERSION = 2
+TRASH_RECORD_VERSION = 1
 
 # Ordered parents before dependents; identifiers below are never supplied by records.
 KEYS = {

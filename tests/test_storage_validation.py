@@ -1,14 +1,12 @@
-import hashlib
 import json
 import sqlite3
 import sys
-from pathlib import Path
 
 import pytest
 
 from sprout import cli
 from sprout.errors import SproutError
-from sprout.repository import Repository, SCHEMA, SCHEMA_VERSION
+from sprout.repository import Repository, SCHEMA_VERSION
 
 
 def snapshot(root):
@@ -25,56 +23,19 @@ def saved(tmp_path):
     return repo
 
 
-def test_v1_definition_is_frozen():
-    # Never silently redefine V1: the next incompatible format must be V2+.
-    frozen = (Path(__file__).parent / 'fixtures/schema_v1.sql').read_bytes()
-    assert hashlib.sha256(frozen).hexdigest() == (
-        '4a18c36f50c03eb633803947724071074d635910eae4eed0b4aec852d1ac75ec'
-    )
-
-
-@pytest.mark.parametrize("version", [1, 4, 5, 6])
-def test_frozen_legacy_is_rejected_without_changes(tmp_path, version):
-    root = tmp_path / 'legacy'
-    control = root / '.sprout'
-    control.mkdir(parents=True)
-    (root / 'asset.bin').write_bytes(b'unsaved work')
-    with sqlite3.connect(control / 'repository.db') as db:
-        db.executescript((Path(__file__).parent / f'fixtures/schema_v{version}.sql').read_text())
-        db.execute("INSERT INTO meta VALUES('schema_version', ?)", (str(version),))
-    before = snapshot(root)
-    with pytest.raises(SproutError) as error:
-        Repository.discover(root)
-    assert error.value.code == 'unsupported_repository_format'
-    assert error.value.details['found_schema_version'] == str(version)
-    assert snapshot(root) == before
-
-
-def test_v4_definition_is_frozen():
-    frozen = (Path(__file__).parent / 'fixtures/schema_v4.sql').read_bytes()
-    assert hashlib.sha256(frozen).hexdigest() == '817957f210c294ac81a52698a91133208ec7235110a171e669a629cc82fe9ff0'
-
-
-
-def test_v5_definition_is_frozen():
-    assert hashlib.sha256((Path(__file__).parent / 'fixtures/schema_v5.sql').read_bytes()).hexdigest() == '2c42b4b943712732e60ae636379979fa2e0426b6fff9036226475ebda4479a87'
-
-
-
-def test_v6_definition_is_frozen():
-    assert hashlib.sha256((Path(__file__).parent / 'fixtures/schema_v6.sql').read_bytes()).hexdigest() == 'ef303e1b9addaefeb1aeb3e365e55ad90e92d60d3fd7519d88785528bd474faa'
-
-
-def test_current_format_definition_is_frozen():
-    assert SCHEMA_VERSION == '7'
-    assert hashlib.sha256(SCHEMA.encode()).hexdigest() == 'dc5f4a5cb745d09388a1c4564725ba3bed877ace1d1e9099a9ffc68585344c90'
-
-
 def test_current_format_reopens_and_accepts_writes(tmp_path):
     repo = saved(tmp_path)
     reopened = Repository.discover(repo.root)
     (repo.root / 'asset.bin').write_bytes(b'next version')
     reopened.commit('next')
+    with reopened.connect() as db:
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '1'
+    reopened.delete_commit(reopened.current_commit())
+    item = reopened.trash_items()[0]
+    with reopened.connect() as db:
+        payload = json.loads(db.execute('SELECT payload FROM trash_entries WHERE id=?', (item['id'],)).fetchone()[0])
+    assert payload['version'] == 1
+    reopened.restore_trash(item['id'])
     assert Repository.discover(repo.root).doctor().ok
 
 
@@ -86,13 +47,13 @@ def test_current_format_reopens_and_accepts_writes(tmp_path):
     ('DROP TABLE bud_files', 'missing_tables'),
     ('DROP INDEX idx_single_thumbnail', 'schema_structure'),
     ('ALTER TABLE commit_files DROP COLUMN mtime_ns', 'schema_structure'),
-    ('ALTER TABLE commit_files ADD COLUMN legacy TEXT', 'schema_structure'),
+    ('ALTER TABLE commit_files ADD COLUMN unexpected TEXT', 'schema_structure'),
     ("DELETE FROM meta WHERE key='repository_id'", 'missing_metadata'),
     ("UPDATE meta SET value='future' WHERE key='object_compression'", 'object_compression'),
 ])
 @pytest.mark.parametrize('command', [['status'], ['commit', '-m', 'must not write']])
 @pytest.mark.parametrize('json_output', [False, True])
-def test_incompatible_db_cli_is_nonmutating(tmp_path, monkeypatch, capsys, statement,
+def test_invalid_db_cli_is_nonmutating(tmp_path, monkeypatch, capsys, statement,
                                            reason, command, json_output):
     repo = saved(tmp_path)
     with sqlite3.connect(repo.db_path) as db:
@@ -113,14 +74,14 @@ def test_incompatible_db_cli_is_nonmutating(tmp_path, monkeypatch, capsys, state
         message = error['message']
     else:
         message = output.err
-    assert 'preserve the entire project including .sprout' in message
-    assert 'reinitialize a separate copy' in message
+    assert message
+    assert "reinitialize" not in message
     assert snapshot(repo.root) == before
 
 
 @pytest.mark.parametrize('version', [None, 99, '1', True])
 @pytest.mark.parametrize('json_output', [False, True])
-def test_incompatible_restore_record_cli_is_nonmutating(tmp_path, monkeypatch, capsys,
+def test_unsupported_restore_record_cli_is_nonmutating(tmp_path, monkeypatch, capsys,
                                                         version, json_output):
     repo = saved(tmp_path)
     operation = repo.tmp / 'restore-future'

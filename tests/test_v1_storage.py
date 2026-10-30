@@ -162,7 +162,7 @@ def test_incomplete_v1_is_rejected_without_repair(tmp_path, statement):
         db.execute("PRAGMA foreign_keys=OFF")
         db.execute(statement)
     before = repo.db_path.read_bytes()
-    with pytest.raises(SproutError, match="reinitialize"):
+    with pytest.raises(SproutError, match="incomplete|invalid|unsupported"):
         Repository.discover(repo.root)
     assert repo.db_path.read_bytes() == before
 

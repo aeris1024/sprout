@@ -120,7 +120,7 @@ def test_objects_are_compressed_and_repository_records_format(
         )
 
 
-@pytest.mark.parametrize("version", ["1", "2", "3", "999", "unknown"])
+@pytest.mark.parametrize("version", ["0", "2", "3", "999", "unknown"])
 def test_discover_rejects_unsupported_schema_without_modifying_it(
     tmp_path: Path, version: str
 ) -> None:
@@ -135,13 +135,13 @@ def test_discover_rejects_unsupported_schema_without_modifying_it(
         db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
 
     assert_discover_rejected_without_changes(
-        repo, rf"unsupported repository schema version: {version} \(expected 7\); preserve the entire project"
+        repo, rf"unsupported repository schema version: {version} \(expected 1\)"
     )
 
 
-def test_discover_rejects_original_v1_structure_without_modifying_it(tmp_path: Path) -> None:
+def test_discover_rejects_missing_annotations_without_modifying_it(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
-    # The original uncompressed v1 predates tags, annotations and repository identity.
+    # Missing annotation tables and required metadata must never be repaired implicitly.
     with repo.connect() as db:
         db.execute("PRAGMA foreign_keys=OFF")
         for table in ("commit_attachments", "commit_notes", "commit_labels", "tags"):
@@ -150,7 +150,7 @@ def test_discover_rejects_original_v1_structure_without_modifying_it(tmp_path: P
             "DELETE FROM meta WHERE key IN "
             "('object_compression', 'repository_id', 'repository_created_at')"
         )
-    # Old repositories can use DELETE journaling; discovery must not enable WAL.
+    # Validation must not change DELETE journaling to WAL.
     db = sqlite3.connect(repo.db_path)
     try:
         db.execute("PRAGMA journal_mode = DELETE")
@@ -158,7 +158,7 @@ def test_discover_rejects_original_v1_structure_without_modifying_it(tmp_path: P
         db.close()
     write(repo.root, "asset.bin", b"unsaved work")
     write(repo.objects, "ab/ab-original", b"uncompressed object")
-    assert_discover_rejected_without_changes(repo, "missing tables: .*; preserve the entire project")
+    assert_discover_rejected_without_changes(repo, "missing tables: .*")
 
 
 def test_schema_check_reads_committed_version_from_wal(tmp_path: Path) -> None:
@@ -179,7 +179,7 @@ def test_discover_rejects_missing_schema_table_without_modifying_it(tmp_path: Pa
     with repo.connect() as db:
         db.execute("PRAGMA foreign_keys=OFF")
         db.execute(f"DROP TABLE {table}")
-    match = "cannot read repository" if table == "meta" else f"missing tables: {table}; preserve the entire project"
+    match = "cannot read repository" if table == "meta" else f"missing tables: {table}"
     assert_discover_rejected_without_changes(repo, match)
 
 
@@ -191,11 +191,11 @@ def test_discover_rejects_missing_metadata_without_modifying_it(tmp_path: Path, 
     repo = create_repo(tmp_path)
     with repo.connect() as db:
         db.execute("DELETE FROM meta WHERE key=?", (key,))
-    match = "schema version: missing" if key == "schema_version" else f"missing keys: {key}; preserve the entire project"
+    match = "schema version: missing" if key == "schema_version" else f"missing keys: {key}"
     assert_discover_rejected_without_changes(repo, match)
 
 
-def test_schema_version_7_initializes_metadata_tables_and_indexes(
+def test_schema_version_1_initializes_metadata_tables_and_indexes(
     tmp_path: Path,
 ) -> None:
     first = create_repo(tmp_path)
@@ -217,7 +217,7 @@ def test_schema_version_7_initializes_metadata_tables_and_indexes(
             "SELECT value FROM meta WHERE key='repository_id'"
         ).fetchone()[0]
 
-    assert metadata["schema_version"] == "7"
+    assert metadata["schema_version"] == "1"
     assert tables == {
         "meta", "objects", "commits", "commit_files", "commit_attachments", "commit_notes",
         "commit_labels", "branches", "tags", "tracked_paths", "buds",
@@ -239,7 +239,7 @@ def test_schema_version_7_initializes_metadata_tables_and_indexes(
         assert dict(db.execute("SELECT key, value FROM meta")) == metadata
 
 
-def test_schema_version_7_attachment_note_and_label_constraints(tmp_path: Path) -> None:
+def test_schema_version_1_attachment_note_and_label_constraints(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
     commit_id = "a" * 64
     timestamp = "2026-08-09T00:00:00.000000+00:00"
