@@ -1484,4 +1484,179 @@ describe("Sprout GUI operations", () => {
     await screen.findByText("プレビューの操作が完了しました");
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\source.pdf"], "");
   });
+
+  describe("drops and pastes follow the displayed panel", () => {
+    const pngImage = () => new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+    const thumbnail = {
+      id: "t1", position: 0, commit_id: commitEntry.id, role: "thumbnail" as const, original_name: "old.png", media_type: "image/png",
+      object_hash: "f".repeat(64), size: 3, created_at: commitEntry.created_at, updated_at: commitEntry.created_at,
+    };
+    const leafChanges = () => mocks.runSprout.mock.calls.filter((call) => ["preview", "thumbnail", "track"].includes(call[1][0]));
+    const drag = (payload: { type: string; paths: string[] }) => act(() => mocks.dragHandler?.({ payload }));
+
+    /** Open a leaf detail, then show the named panel over it while the leaf stays selected. */
+    async function showOverLeaf(user: ReturnType<typeof userEvent.setup>, panel: string) {
+      await openPreviewWorkspace(user);
+      if (panel === "trash") {
+        mocks.runSprout.mockResolvedValueOnce([]);
+        await user.click(screen.getByRole("button", { name: "ゴミ箱" }));
+        await screen.findByRole("region", { name: "ゴミ箱" });
+      }
+      if (panel === "compare") {
+        await user.click(screen.getByRole("button", { name: "比較元にする" }));
+        await screen.findByRole("region", { name: "スナップショットの比較" });
+      }
+      if (panel === "files") await user.click(screen.getByRole("button", { name: "ファイル" }));
+      if (panel === "settings") await user.click(screen.getByRole("button", { name: "設定" }));
+      mocks.runSprout.mockClear();
+    }
+
+    it.each([
+      ["trash", "ゴミ箱を閉じるとドロップできます"],
+      ["compare", "比較を閉じるとドロップできます"],
+      ["settings", "CLI設定を閉じるとドロップできます"],
+    ])("adds nothing when files are dropped while %s is displayed", async (panel, message) => {
+      const user = userEvent.setup();
+      await showOverLeaf(user, panel);
+
+      drag({ type: "enter", paths: ["C:\\one.wav"] });
+      expect(screen.getByRole("status").textContent).toBe(message);
+      drag({ type: "drop", paths: ["C:\\one.wav"] });
+
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(await screen.findByText(new RegExp(`ドロップしたファイルは追加していません。${message}`))).toBeTruthy();
+      expect(leafChanges()).toEqual([]);
+    });
+
+    it("tracks a drop instead of changing the leaf hidden behind the file panel", async () => {
+      const user = userEvent.setup();
+      await showOverLeaf(user, "files");
+      mocks.runSprout.mockResolvedValueOnce({ paths: ["one.wav"] });
+      mockWorkspace();
+
+      drag({ type: "enter", paths: ["C:\\one.wav"] });
+      expect(screen.getByRole("status").textContent).toBe("作業フォルダの追跡対象に追加します");
+      drag({ type: "drop", paths: ["C:\\one.wav"] });
+
+      expect(await screen.findByText("1件を追跡対象に追加しました")).toBeTruthy();
+      expect(leafChanges().map((call) => call[1])).toEqual([["track", "C:\\one.wav"]]);
+    });
+
+    it("shows the destination leaf while hovering and clears it when the drag leaves", async () => {
+      const user = userEvent.setup();
+      await openPreviewWorkspace(user);
+
+      drag({ type: "enter", paths: ["C:\\one.wav"] });
+      expect(screen.getByRole("status").textContent).toBe(`葉「${commitEntry.message}」（${commitEntry.id.slice(0, 12)}）のプレビューに追加します`);
+      drag({ type: "over", paths: [] });
+      expect(screen.getByRole("status")).toBeTruthy();
+      drag({ type: "leave", paths: [] });
+
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(leafChanges()).toEqual([]);
+    });
+
+    it("shows the tracking destination while hovering over the save form", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openWorkspace(user);
+      await waitFor(() => expect(mocks.dragHandler).toBeTypeOf("function"));
+
+      drag({ type: "enter", paths: ["C:\\one.wav"] });
+
+      expect(screen.getByRole("status").textContent).toBe("作業フォルダの追跡対象に追加します");
+    });
+
+    it.each(["trash", "compare", "files", "settings"])("keeps the leaf thumbnail when an image is pasted while %s is displayed", async (panel) => {
+      const user = userEvent.setup();
+      mockPasteCommands("C:\\temp\\clipboard.png");
+      await showOverLeaf(user, panel);
+
+      fireEvent.paste(document.body, { clipboardData: clipboardData(pngImage()) });
+
+      await act(async () => undefined);
+      expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(leafChanges()).toEqual([]);
+    });
+
+    it.each(["メッセージ", "メモ"])("never changes a thumbnail when an image is pasted into the %s field", async (field) => {
+      const user = userEvent.setup();
+      mockPasteCommands("C:\\temp\\clipboard.png");
+      let target: HTMLElement;
+      if (field === "メッセージ") {
+        render(<App />);
+        await openWorkspace(user);
+        target = screen.getByLabelText("メッセージ");
+      } else {
+        await openPreviewWorkspace(user);
+        await user.click(screen.getByRole("button", { name: "メモを書く" }));
+        target = screen.getByRole("textbox", { name: "メモを編集" });
+      }
+
+      const notPrevented = fireEvent.paste(target, { clipboardData: clipboardData(pngImage()) });
+
+      expect(notPrevented).toBe(true);
+      expect(await screen.findByText(/入力欄には画像を貼り付けられません/)).toBeTruthy();
+      expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
+      expect(screen.queryByText("貼り付けた画像を保存時のサムネイルにします")).toBeNull();
+      expect(leafChanges()).toEqual([]);
+    });
+
+    it("stays quiet when text with an image is pasted into a text field", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openWorkspace(user);
+
+      const data = { ...clipboardData(pngImage(), "cell text"), getData: () => "cell text" };
+      fireEvent.paste(screen.getByLabelText("メッセージ"), { clipboardData: data });
+
+      await act(async () => undefined);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
+    });
+
+    it.each([false, true])("confirms replacing an existing thumbnail by paste, accepted=%s", async (accepted) => {
+      const user = userEvent.setup();
+      mockPasteCommands("C:\\temp\\clipboard.png");
+      mocks.confirm.mockResolvedValue(accepted);
+      render(<App />);
+      await openWorkspace(user);
+      const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail, attachments: [thumbnail], files: [] };
+      mocks.runSprout.mockResolvedValueOnce(detail);
+      await user.click(screen.getByRole("button", { name: /Initial design/ }));
+      await screen.findByRole("button", { name: "サムネイルを変更" });
+      if (accepted) {
+        mocks.runSprout.mockResolvedValueOnce({});
+        mockWorkspace();
+        mocks.runSprout.mockResolvedValueOnce(detail);
+      }
+
+      fireEvent.paste(document.body, { clipboardData: clipboardData(pngImage()) });
+
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+      expect(mocks.confirm.mock.calls[0][0]).toContain("置き換えます");
+      if (accepted) {
+        expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
+        expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", commitEntry.id, "C:\\temp\\clipboard.png"], "");
+      } else {
+        await act(async () => undefined);
+        expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
+        expect(leafChanges()).toEqual([]);
+      }
+    });
+
+    it("registers a first thumbnail by paste without asking", async () => {
+      const user = userEvent.setup();
+      mockPasteCommands("C:\\temp\\clipboard.png");
+      await openPreviewWorkspace(user);
+      mocks.runSprout.mockResolvedValueOnce({});
+      previewRefresh();
+
+      fireEvent.paste(document.body, { clipboardData: clipboardData(pngImage()) });
+
+      expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
+      expect(mocks.confirm).not.toHaveBeenCalled();
+    });
+  });
 });

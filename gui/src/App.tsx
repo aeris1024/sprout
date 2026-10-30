@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { confirm as confirmDialog, open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
 import BranchPanel from "./components/BranchPanel";
 import BudPanel from "./components/BudPanel";
 import ComparePanel from "./components/ComparePanel";
@@ -34,8 +35,20 @@ type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 const emptyGraph: CommitGraph = { current_commit: null, at_branch_tip: true, commits: [], branches: [], tags: [], buds: [] };
 const UNCHANGED_NOTE = "作業フォルダは変更していません。";
 
+/** Where a file dropped right now would go; "blocked" means the displayed panel takes no drops. */
+type DropDestination =
+  | { kind: "preview"; commitId: string; message: string }
+  | { kind: "track"; message: string }
+  | { kind: "blocked"; message: string };
+
 function shortId(value: string | null): string {
   return value ? value.slice(0, 12) : "-";
+}
+
+/** True for fields that take typed text; a focused checkbox or button does not capture a paste. */
+function isTextField(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return target.closest('textarea, [contenteditable]:not([contenteditable="false"]), input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="file"])') !== null;
 }
 
 /** Describe a delete-commit dry run so the confirmation lists every reference it moves. */
@@ -85,6 +98,8 @@ function App() {
   const [thumbnailPath, setThumbnailPath] = useState("");
   const pastedThumbnail = useRef("");
   const pasteHandler = useRef<(event: ClipboardEvent) => void>(() => {});
+  const dragDropHandler = useRef<(payload: DragDropEvent) => void>(() => {});
+  const [dragging, setDragging] = useState(false);
   const operationActive = useRef(false);
 
   useEffect(() => {
@@ -194,12 +209,7 @@ function App() {
       return undefined;
     }
     void appWindow
-      .onDragDropEvent((event) => {
-        if (event.payload.type === "drop" && projectDir && !operationActive.current) {
-          if (selection?.kind === "commit" && !filesOpen && !comparison) addPreviews(selection.id, event.payload.paths);
-          else trackPaths(event.payload.paths);
-        }
-      })
+      .onDragDropEvent((event) => dragDropHandler.current(event.payload))
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
@@ -209,7 +219,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [projectDir, sproutProgram, selection, filesOpen, comparison]);
+  }, []);
 
   function initializeProject() {
     if (!initCandidate) return;
@@ -456,21 +466,30 @@ function App() {
     setNotice({ code: "thumbnail_saved", message: `${shortId(commitId)} のサムネイルを保存しました`, details: { commit_id: commitId }, kind: "success" });
   }
 
-  /** Ctrl+V with an image sets the thumbnail of the open save form or commit; text pastes pass through. */
+  /** Ctrl+V with an image sets the thumbnail of the displayed save form or commit; text fields and text pastes pass through. */
   function pasteThumbnail(event: ClipboardEvent) {
-    if (event.defaultPrevented || comparison || !projectDir || !status || filesOpen || operationActive.current) return;
-    const commitId = selection?.kind === "commit" && commitDetail?.id === selection.id ? commitDetail.id : null;
-    const saveForm = selection === null || selection.kind === "unsaved";
-    if (!commitId && !saveForm) return;
+    if (event.defaultPrevented || !workspaceOpen || settingsOpen || operationActive.current) return;
+    const commitId = displayedPanel === "commit" ? commitDetail?.id ?? null : null;
+    if (!commitId && displayedPanel !== "save") return;
     const image = clipboardImage(event.clipboardData);
     if (!image) return;
+    if (isTextField(event.target)) {
+      if (!event.clipboardData?.getData("text/plain")) {
+        setNotice({ code: "image_paste_in_text_field", message: "入力欄には画像を貼り付けられません。サムネイルに使う場合は入力欄の外を選んでからCtrl+Vを押してください", details: {}, kind: "warning" });
+      }
+      return;
+    }
     event.preventDefault();
     const problem = thumbnailImageProblem(image);
     if (problem) {
       setNotice({ code: "unsupported_clipboard_image", message: problem, details: { media_type: image.type, size: image.size }, kind: "warning" });
       return;
     }
+    const replacing = commitId !== null && (Boolean(commitDetail?.thumbnail) || Boolean(graph.commits.find((commit) => commit.id === commitId)?.attachments.some((item) => item.role === "thumbnail")));
     void execute(async () => {
+      if (replacing && !await confirmDialog(`葉「${commitDetail?.message}」（${shortId(commitId)}）の今のサムネイルを、貼り付けた画像に置き換えます。続行しますか？`, {
+        title: "サムネイルを置き換え", kind: "warning", okLabel: "置き換え", cancelLabel: "キャンセル",
+      })) return;
       const path = await savePastedThumbnail(image);
       if (!commitId) {
         replaceThumbnailPath(path, true);
@@ -485,6 +504,32 @@ function App() {
     });
   }
   pasteHandler.current = pasteThumbnail;
+
+  /** Decide a drop's destination from the panel on screen, never from a selection hidden behind it. */
+  function dropDestination(): DropDestination | null {
+    if (!workspaceOpen) return null;
+    if (operationActive.current) return { kind: "blocked", message: "操作の実行中はドロップできません" };
+    if (settingsOpen) return { kind: "blocked", message: "CLI設定を閉じるとドロップできます" };
+    if (displayedPanel === "trash") return { kind: "blocked", message: "ゴミ箱を閉じるとドロップできます" };
+    if (displayedPanel === "compare") return { kind: "blocked", message: "比較を閉じるとドロップできます" };
+    if (displayedPanel === "loading") return { kind: "blocked", message: "葉の詳細を表示してからドロップしてください" };
+    if (displayedPanel === "commit" && commitDetail) return { kind: "preview", commitId: commitDetail.id, message: `葉「${commitDetail.message}」（${shortId(commitDetail.id)}）のプレビューに追加します` };
+    return { kind: "track", message: "作業フォルダの追跡対象に追加します" };
+  }
+
+  function handleDragDrop(payload: DragDropEvent) {
+    if (payload.type === "enter" || payload.type === "over") {
+      setDragging(true);
+      return;
+    }
+    setDragging(false);
+    if (payload.type !== "drop") return;
+    const destination = dropDestination();
+    if (destination?.kind === "preview") addPreviews(destination.commitId, payload.paths);
+    else if (destination?.kind === "track") trackPaths(payload.paths);
+    else if (destination && !operationActive.current) setNotice({ code: "drop_ignored", message: `ドロップしたファイルは追加していません。${destination.message}`, details: {}, kind: "warning" });
+  }
+  dragDropHandler.current = handleDragDrop;
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => pasteHandler.current(event);
@@ -807,6 +852,12 @@ function App() {
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
+  const workspaceOpen = Boolean(projectDir && status && !initCandidate);
+  // Follows the order of sidePanel() so drops and pastes act on what is actually displayed.
+  const displayedPanel = trashOpen ? "trash" : comparison ? "compare" : filesOpen ? "files"
+    : selection?.kind === "commit" ? (commitDetail?.id === selection.id ? "commit" : "loading")
+    : selectedBranch ? "branch" : selectedBud ? "bud" : "save";
+  const hoverDestination = dragging ? dropDestination() : null;
 
   function sidePanel() {
     if (trashOpen) return <TrashPanel items={trashItems} busy={busy} onInspect={inspectTrash} onRestore={restoreTrash} onPurge={purgeTrash} onClose={() => setTrashOpen(false)} />;
@@ -887,6 +938,7 @@ function App() {
       </header>
 
       {busy && <div className="loading-bar" aria-label="操作中" />}
+      {hoverDestination && <div className={`drop-indicator ${hoverDestination.kind}`} role="status">{hoverDestination.message}</div>}
       {notice && <div className={`notice ${notice.kind}`} role="alert"><div><strong>{notice.kind === "error" ? "操作を完了できませんでした" : notice.kind === "warning" ? "確認してください" : "完了"}</strong><p>{notice.message}</p>{noticePath && <p className="notice-path">{`対象: ${noticePath}`}</p>}</div><div className="notice-actions">{notice.code === "repository_locked" && projectDir && <button onClick={refreshProject}>再試行</button>}<button aria-label="通知を閉じる" onClick={() => setNotice(null)}>×</button></div></div>}
 
       {settingsOpen && <section className="settings-panel" aria-label="CLI設定"><div><h2>Sprout CLI</h2><p>空欄の場合はPATH上のsproutを使用します。</p></div><input value={sproutProgram} onChange={(event) => setSproutProgram(event.currentTarget.value)} placeholder="例: C:\\Tools\\sprout.exe" aria-label="Sprout CLIのパス" disabled={busy} /><button className="button secondary" onClick={saveCliSetting} disabled={busy}>保存</button></section>}
