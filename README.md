@@ -150,6 +150,16 @@ sprout show <commit-id> --timezone local
 sprout show <commit-id> --timezone Asia/Tokyo
 ```
 
+### サンプルリポジトリで試す
+
+ブランチ、タグ、サムネイル、preview、つぼみ、ゴミ箱などが入ったサンプルを生成できます。Sproutのリポジトリで、存在しないフォルダか空のフォルダを指定して実行します。
+
+```powershell
+uv run python scripts/create_sample_repo.py ../sprout-sample
+```
+
+生成先の`GUIDE.md`に、CLIとGUIで試す手順があります。
+
 ## ブランチを使う
 
 現在の状態から別の作業を試したいときは、ブランチを作成します。
