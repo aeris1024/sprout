@@ -33,26 +33,32 @@ def test_v1_definition_is_frozen():
     )
 
 
-def test_frozen_v1_is_rejected_without_changes(tmp_path):
+@pytest.mark.parametrize("version", [1, 4])
+def test_frozen_legacy_is_rejected_without_changes(tmp_path, version):
     root = tmp_path / 'legacy'
     control = root / '.sprout'
     control.mkdir(parents=True)
     (root / 'asset.bin').write_bytes(b'unsaved work')
     with sqlite3.connect(control / 'repository.db') as db:
-        db.executescript((Path(__file__).parent / 'fixtures/schema_v1.sql').read_text())
-        db.execute("INSERT INTO meta VALUES('schema_version', '1')")
+        db.executescript((Path(__file__).parent / f'fixtures/schema_v{version}.sql').read_text())
+        db.execute("INSERT INTO meta VALUES('schema_version', ?)", (str(version),))
     before = snapshot(root)
     with pytest.raises(SproutError) as error:
         Repository.discover(root)
     assert error.value.code == 'unsupported_repository_format'
-    assert error.value.details['found_schema_version'] == '1'
+    assert error.value.details['found_schema_version'] == str(version)
     assert snapshot(root) == before
 
 
+def test_v4_definition_is_frozen():
+    frozen = (Path(__file__).parent / 'fixtures/schema_v4.sql').read_bytes()
+    assert hashlib.sha256(frozen).hexdigest() == '817957f210c294ac81a52698a91133208ec7235110a171e669a629cc82fe9ff0'
+
+
 def test_current_format_definition_is_frozen():
-    assert SCHEMA_VERSION == '4'
+    assert SCHEMA_VERSION == '5'
     assert hashlib.sha256(SCHEMA.encode()).hexdigest() == (
-        '817957f210c294ac81a52698a91133208ec7235110a171e669a629cc82fe9ff0'
+        '2c42b4b943712732e60ae636379979fa2e0426b6fff9036226475ebda4479a87'
     )
 
 

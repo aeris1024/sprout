@@ -151,6 +151,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export interface TrashItem {
+  id: string;
+  kind: "commit" | "preview_delete" | "preview_replace";
+  target_id: string;
+  title: string;
+  created_at: string;
+  protected_bytes: number;
+  reclaimable_bytes: number;
+  objects: string[];
+  changes?: { table: string; before: Record<string, unknown>; after: Record<string, unknown> | null }[];
+}
+
 export function normalizeCliError(error: unknown): SproutCliError {
   let candidate = error;
   if (typeof candidate === "string") {

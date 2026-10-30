@@ -317,3 +317,8 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .preview-image { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .preview-image h4 { margin: 4px 0; overflow-wrap: anywhere; }
 .preview-image img { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; object-fit: contain; background: repeating-conic-gradient(#eee 0% 25%, white 0% 50%) 0 / 16px 16px; }
+
+.trash-item { border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
+.trash-item h4 { margin: 4px 0; }
+.trash-item dd { margin-left: 12px; }
+.trash-item dd p { white-space: pre-wrap; }

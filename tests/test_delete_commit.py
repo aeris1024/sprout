@@ -262,7 +262,7 @@ def test_delete_rolls_back_database_failure(
     assert repo.delete_commit(third).parent_id == second
 
 
-def test_gc_reclaims_objects_of_deleted_commit(
+def test_gc_keeps_deleted_commit_objects_until_purge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = Repository.init(tmp_path / "project")
@@ -285,6 +285,10 @@ def test_gc_reclaims_objects_of_deleted_commit(
     assert set(result.reclaimable_objects) == removed_hashes
     assert repo.doctor().ok
 
+    assert repo.gc().objects == ()
+    item = repo.trash_items()[0]
+    assert set(item['objects']) == removed_hashes
+    repo.purge_trash(item['id'])
     gc_result = repo.gc()
     assert set(gc_result.objects) == removed_hashes
     assert all(not (repo.objects / item[:2] / item).exists() for item in removed_hashes)
@@ -310,7 +314,7 @@ def test_delete_commit_cli_requires_yes_and_supports_json(
 
     unconfirmed = invoke(["delete-commit", third], project, monkeypatch)
     assert unconfirmed.exit_code != 0
-    assert "irreversible" in str(unconfirmed.exception)
+    assert "trash" in str(unconfirmed.exception)
     assert Repository.discover(project).resolve_commit(third) == third
 
     dry = invoke(["delete-commit", third, "--dry-run", "--json"], project, monkeypatch)

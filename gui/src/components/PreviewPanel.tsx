@@ -32,6 +32,7 @@ export default function PreviewPanel({ attachments, busy, actions, projectDir, p
   return <section className="preview-panel" aria-label="プレビュー管理">
     <h4>プレビュー（{previews.length}件）</h4>
     <p className="panel-copy">形式を問わず添付できます。葉の詳細を開いた状態でファイルをドロップすると、プレビューに追加します。</p>
+    <p className="panel-copy">削除したプレビューや置き換え前の版はゴミ箱に残ります。添付一覧が変更される前なら復旧できます。</p>
     <button className="button secondary" disabled={busy} onClick={actions.add}>プレビューを追加</button>
     <div className="preview-paste" role="group" aria-label="プレビュー貼り付け領域" tabIndex={0} onPaste={paste}>ここを選んで Ctrl+V：画像・ファイルをプレビューに追加（この領域の外では画像をサムネイルに使用）</div>
     {!previews.length && <p className="muted">プレビューはありません。</p>}

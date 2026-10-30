@@ -135,7 +135,7 @@ def test_discover_rejects_unsupported_schema_without_modifying_it(
         db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
 
     assert_discover_rejected_without_changes(
-        repo, rf"unsupported repository schema version: {version} \(expected 4\); preserve the entire project"
+        repo, rf"unsupported repository schema version: {version} \(expected 5\); preserve the entire project"
     )
 
 
@@ -172,7 +172,7 @@ def test_schema_check_reads_committed_version_from_wal(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("table", [
     "meta", "commits", "commit_files", "commit_attachments", "commit_notes",
-    "commit_labels", "branches", "tags", "tracked_paths", "repository_state", "buds", "bud_files",
+    "commit_labels", "branches", "tags", "tracked_paths", "repository_state", "buds", "bud_files", "trash_entries", "trash_objects",
 ])
 def test_discover_rejects_missing_schema_table_without_modifying_it(tmp_path: Path, table: str) -> None:
     repo = create_repo(tmp_path)
@@ -195,7 +195,7 @@ def test_discover_rejects_missing_metadata_without_modifying_it(tmp_path: Path, 
     assert_discover_rejected_without_changes(repo, match)
 
 
-def test_schema_version_4_initializes_metadata_tables_and_indexes(
+def test_schema_version_5_initializes_metadata_tables_and_indexes(
     tmp_path: Path,
 ) -> None:
     first = create_repo(tmp_path)
@@ -217,11 +217,11 @@ def test_schema_version_4_initializes_metadata_tables_and_indexes(
             "SELECT value FROM meta WHERE key='repository_id'"
         ).fetchone()[0]
 
-    assert metadata["schema_version"] == "4"
+    assert metadata["schema_version"] == "5"
     assert tables == {
         "meta", "objects", "commits", "commit_files", "commit_attachments", "commit_notes",
         "commit_labels", "branches", "tags", "tracked_paths", "buds",
-        "bud_files", "repository_state",
+        "bud_files", "repository_state", "trash_entries", "trash_objects",
     }
     assert metadata["object_compression"] == "zstd"
     assert str(uuid.UUID(metadata["repository_id"])) == metadata["repository_id"]
@@ -239,7 +239,7 @@ def test_schema_version_4_initializes_metadata_tables_and_indexes(
         assert dict(db.execute("SELECT key, value FROM meta")) == metadata
 
 
-def test_schema_version_4_attachment_note_and_label_constraints(tmp_path: Path) -> None:
+def test_schema_version_5_attachment_note_and_label_constraints(tmp_path: Path) -> None:
     repo = create_repo(tmp_path)
     commit_id = "a" * 64
     timestamp = "2026-08-09T00:00:00.000000+00:00"

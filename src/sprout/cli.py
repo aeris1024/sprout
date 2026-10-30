@@ -1132,7 +1132,7 @@ def preview_replace(
     if json_output:
         _echo_json(_attachment_json(attachment))
         return
-    typer.echo(f"Replaced preview {_preview_text(attachment.position + 1, attachment)}")
+    typer.echo(f"Replaced preview {_preview_text(attachment.position + 1, attachment)}; previous version retained in 'sprout trash'")
 
 
 @preview_app.command(name="delete")
@@ -1148,7 +1148,7 @@ def preview_delete(
         return
     typer.echo(
         f"Deleted preview {attachment.id} ({attachment.original_name}) "
-        f"from {attachment.commit_id[:12]}"
+        f"from {attachment.commit_id[:12]}; recover with 'sprout trash' before changing previews"
     )
 
 
@@ -1839,6 +1839,47 @@ def prune(
         typer.echo("Run 'sprout gc' to reclaim object storage")
 
 
+@app.command(name="trash")
+def trash(
+    action: Annotated[str, typer.Argument(help="list, show, restore, or purge")] = "list",
+    item_id: Annotated[str | None, typer.Argument(help="Exact trash item ID")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Inspect without applying changes")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm permanent deletion of the recovery record")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Inspect recovery items, restore metadata, or permanently discard recovery data."""
+    if action not in {"list", "show", "restore", "purge"}:
+        raise SproutError("trash action must be list, show, restore, or purge")
+    if (action == "list" and item_id is not None) or (action != "list" and item_id is None):
+        raise SproutError("list takes no ID; show, restore and purge require an exact trash ID")
+    repository = repo()
+    if action == "list":
+        result = repository.trash_items()
+    elif action == "show":
+        result = repository.trash_detail(item_id)
+    elif action == "restore":
+        result = repository.restore_trash(item_id, dry_run=dry_run)
+    else:
+        if not dry_run and not yes:
+            raise SproutError("permanent deletion is irreversible; review trash purge ID --dry-run, then use --yes",
+                              code="trash_confirmation_required", details={"trash_id": item_id})
+        result = repository.purge_trash(item_id, dry_run=dry_run)
+    if json_output:
+        _echo_json(result)
+        return
+    entries = result if isinstance(result, list) else [result]
+    for entry in entries:
+        typer.echo(f"{entry['id']}  {entry['kind']}  {entry['title']}  {entry['created_at']}")
+        typer.echo(f"  protected {entry['protected_bytes']} bytes; reclaimable after purge {entry['reclaimable_bytes']} bytes")
+    if not entries:
+        typer.echo("Trash is empty")
+    if action == "restore":
+        typer.echo("Restore checked; no changes applied" if dry_run else "Restored; working files unchanged")
+    if action == "purge":
+        typer.echo("Would permanently discard recovery; run gc afterwards to reclaim objects" if dry_run else
+                   "Permanently discarded recovery; run gc to reclaim unreferenced objects")
+
+
 @app.command(name="delete-commit")
 def delete_commit(
     commit: Annotated[
@@ -1854,7 +1895,7 @@ def delete_commit(
     ] = False,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Confirm the irreversible deletion"),
+        typer.Option("--yes", help="Confirm moving this commit to trash"),
     ] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
@@ -1863,7 +1904,7 @@ def delete_commit(
     """Delete one untagged commit and move its references to its parent."""
     if not dry_run and not yes:
         raise SproutError(
-            "delete-commit is irreversible; review --dry-run, then rerun with --yes"
+            "delete-commit moves references and saves recovery data in trash; review --dry-run, then rerun with --yes"
         )
     result = repo().delete_commit(commit, dry_run=dry_run)
     if json_output:
@@ -1885,10 +1926,10 @@ def delete_commit(
     typer.echo(
         f"{action} commit {result.commit.id[:12]}; "
         f"{len(result.reclaimable_objects)} objects "
-        f"({result.reclaimable_bytes} bytes) become reclaimable"
+        f"({result.reclaimable_bytes} bytes) are retained in trash until permanently discarded"
     )
     if not dry_run and result.reclaimable_objects:
-        typer.echo("Run 'sprout gc' to reclaim object storage")
+        typer.echo("Use 'sprout trash' to inspect recovery data; gc keeps it until permanent deletion")
 
 
 @app.command()

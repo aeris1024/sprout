@@ -7,6 +7,7 @@ import ComparePanel from "./components/ComparePanel";
 import CommitPanel from "./components/CommitPanel";
 import FilePanel from "./components/FilePanel";
 import ProjectMenu, { RecentProjectList, projectName } from "./components/ProjectMenu";
+import TrashPanel from "./components/TrashPanel";
 import SavePanel from "./components/SavePanel";
 import SproutMap, { type MapSelection } from "./components/SproutMap";
 import "./App.css";
@@ -15,6 +16,7 @@ import {
   normalizeCliError,
   runSprout,
   type Bud,
+  type TrashItem,
   type CommitDeletion,
   type CommitDetail,
   type CommitGraph,
@@ -39,7 +41,7 @@ function shortId(value: string | null): string {
 /** Describe a delete-commit dry run so the confirmation lists every reference it moves. */
 function deletionSummary(preview: CommitDeletion): string {
   const parent = preview.parent_id ? `親の芽（${shortId(preview.parent_id)}）` : "コミットなし";
-  const lines = [`スナップショット「${preview.commit.message}」（${shortId(preview.commit.id)}）を削除します。元に戻せません。`];
+  const lines = [`スナップショット「${preview.commit.message}」（${shortId(preview.commit.id)}）をゴミ箱へ移します。参照が変更される前ならゴミ箱から復旧できます。`];
   if (preview.moved_branches.length > 0) {
     lines.push(`ブランチ ${preview.moved_branches.map((branch) => branch.name).join(", ")} は${parent}へ移ります。`);
   }
@@ -49,7 +51,7 @@ function deletionSummary(preview: CommitDeletion): string {
   }
   if (preview.rebased_buds.length > 0) lines.push(`つぼみ ${preview.rebased_buds.length}件の起点は${parent}へ付け替わります。`);
   if (preview.reclaimable_objects.length > 0) {
-    lines.push(`${preview.reclaimable_objects.length}個のオブジェクト（${preview.reclaimable_bytes} bytes）が sprout gc で回収できるようになります。`);
+    lines.push(`${preview.reclaimable_objects.length}個のオブジェクト（${preview.reclaimable_bytes} bytes）はゴミ箱に保持され、sprout gc から保護されます。`);
   }
   lines.push("続行しますか？");
   return lines.join("\n");
@@ -70,6 +72,9 @@ function App() {
   const [comparison, setComparison] = useState<{ source: string; target: string } | null>(null);
   useEffect(() => { setComparison(null); }, [projectDir]);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  useEffect(() => { setTrashOpen(false); setTrashItems([]); }, [projectDir]);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -313,6 +318,7 @@ function App() {
   }
 
   function selectCommit(commitId: string) {
+    setTrashOpen(false);
     if (!projectDir) return;
     if (operationActive.current) return;
     if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
@@ -324,12 +330,14 @@ function App() {
   }
 
   function selectBud(budId: string) {
+    setTrashOpen(false);
     setComparison(null);
     setSelection({ kind: "bud", id: budId });
     setFilesOpen(false);
   }
 
   function selectBranch(branchId: string) {
+    setTrashOpen(false);
     setComparison(null);
     setSelection({ kind: "branch", id: branchId });
     setFilesOpen(false);
@@ -368,6 +376,7 @@ function App() {
   }
 
   function selectUnsaved() {
+    setTrashOpen(false);
     setComparison(null);
     setSelection({ kind: "unsaved" });
     setFilesOpen(false);
@@ -652,7 +661,7 @@ function App() {
 
   function deletePreview(commitId: string, id: string) {
     previewOperation(commitId, async () => {
-      if (!await confirmDialog("このプレビューを削除します。続行しますか？", { title: "プレビューを削除", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" })) return false;
+      if (!await confirmDialog("このプレビューをゴミ箱へ移します。添付一覧が変更される前ならゴミ箱から復旧できます。続行しますか？", { title: "プレビューを削除", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" })) return false;
       await runSprout(projectDir, ["preview", "delete", commitId, id], sproutProgram);
       return true;
     });
@@ -713,6 +722,7 @@ function App() {
   }
 
   function openSaveForm() {
+    setTrashOpen(false);
     setComparison(null);
     setFilesOpen(false);
     setSelection({ kind: "unsaved" });
@@ -752,11 +762,54 @@ function App() {
     });
   }
 
+  function openTrash() {
+    void execute(async () => {
+      const items = await runSprout<TrashItem[]>(projectDir, ["trash", "list"], sproutProgram);
+      setTrashItems(items);
+      setTrashOpen(true);
+    });
+  }
+
+  function inspectTrash(item: TrashItem) {
+    void execute(async () => {
+      const detail = await runSprout<TrashItem>(projectDir, ["trash", "show", item.id], sproutProgram);
+      setTrashItems((items) => items.map((entry) => entry.id === item.id ? detail : entry));
+    });
+  }
+
+  function restoreTrash(item: TrashItem) {
+    void execute(async () => {
+      await runSprout(projectDir, ["trash", "restore", item.id, "--dry-run"], sproutProgram);
+      if (!await confirmDialog(`「${item.title}」を復旧します。削除時に変更した履歴の参照や添付情報を戻します。作業ファイルは変更しません。`, {
+        title: "ゴミ箱から復旧", kind: "warning", okLabel: "復旧", cancelLabel: "キャンセル",
+      })) return;
+      await runSprout(projectDir, ["trash", "restore", item.id], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setCommitDetail(null);
+      setSelection(null);
+      setTrashItems(await runSprout<TrashItem[]>(projectDir, ["trash", "list"], sproutProgram));
+      setNotice({ code: "trash_restored", message: "復旧しました。作業ファイルは変更していません。", details: {}, kind: "success" });
+    });
+  }
+
+  function purgeTrash(item: TrashItem) {
+    void execute(async () => {
+      const preview = await runSprout<TrashItem>(projectDir, ["trash", "purge", item.id, "--dry-run"], sproutProgram);
+      if (!await confirmDialog(`「${preview.title}」（${preview.id}）の復旧データを完全削除します。元に戻せません。保持容量 ${preview.protected_bytes} B、回収可能容量 ${preview.reclaimable_bytes} B。実体の回収は次回のgcで行います。`, {
+        title: "復旧データを完全削除", kind: "warning", okLabel: "完全削除", cancelLabel: "キャンセル",
+      })) return;
+      await runSprout(projectDir, ["trash", "purge", item.id, "--yes"], sproutProgram);
+      setTrashItems(await runSprout<TrashItem[]>(projectDir, ["trash", "list"], sproutProgram));
+      setNotice({ code: "trash_purged", message: "復旧データを完全削除しました。", details: {}, kind: "success" });
+    });
+  }
+
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
 
   function sidePanel() {
+    if (trashOpen) return <TrashPanel items={trashItems} busy={busy} onInspect={inspectTrash} onRestore={restoreTrash} onPurge={purgeTrash} onClose={() => setTrashOpen(false)} />;
     if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
       return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} onClose={() => setFilesOpen(false)} />;
@@ -819,7 +872,8 @@ function App() {
         {status && (
           <>
             <button className="button ghost" onClick={refreshProject} disabled={busy}>更新</button>
-            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => { setComparison(null); setFilesOpen(!filesOpen); }} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
+            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => { setTrashOpen(false); setComparison(null); setFilesOpen(!filesOpen); }} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
+            <button className="button ghost" onClick={openTrash} disabled={busy}>ゴミ箱</button>
             <button className="button primary" onClick={openSaveForm} disabled={busy}>保存</button>
           </>
         )}

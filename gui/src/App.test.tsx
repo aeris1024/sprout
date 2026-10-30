@@ -721,6 +721,58 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["restore", "purge"])("inspects trash and confirms %s with capacity and cancellation", async (action) => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    const item = { id: "trash-1", kind: "commit", title: "Removed leaf", target_id: commitEntry.id,
+      created_at: commitEntry.created_at, protected_bytes: 120, reclaimable_bytes: 40, objects: [] };
+    mocks.runSprout.mockResolvedValueOnce([item]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱" }));
+    const region = await screen.findByRole("region", { name: "ゴミ箱" });
+    expect(region.textContent).toContain("120 B");
+    mocks.runSprout.mockResolvedValueOnce({ ...item, changes: [{ table: "commit_files", before: { path: "saved.bin", size: 7 }, after: null }] });
+    await user.click(within(region).getByRole("button", { name: "Removed leafの復旧内容を確認" }));
+    expect(await screen.findByText("パス: saved.bin")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["trash", "show", item.id], "");
+    const buttonName = action === "restore" ? "Removed leafを復旧" : "Removed leafを完全削除";
+    mocks.runSprout.mockResolvedValueOnce(item);
+    mocks.confirm.mockResolvedValueOnce(false);
+    await user.click(within(region).getByRole("button", { name: buttonName }));
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["trash", action, item.id, "--dry-run"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === `trash ${action} ${item.id}`)).toBe(false);
+    if (action === "purge") {
+      expect(mocks.confirm.mock.calls[0][0]).toContain("回収可能容量 40 B");
+      expect(mocks.confirm.mock.calls[0][0]).toContain("元に戻せません");
+    } else expect(mocks.confirm.mock.calls[0][0]).toContain("作業ファイルは変更しません");
+    mocks.runSprout.mockResolvedValueOnce(item).mockResolvedValueOnce(item);
+    if (action === "restore") mockWorkspace();
+    mocks.runSprout.mockResolvedValueOnce([]);
+    mocks.confirm.mockResolvedValueOnce(true);
+    await user.click(within(region).getByRole("button", { name: buttonName }));
+    expect(await screen.findByText("ゴミ箱は空です。")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["trash", action, item.id, ...(action === "purge" ? ["--yes"] : [])], "");
+    await user.click(screen.getByRole("button", { name: "ゴミ箱を閉じる" }));
+    expect(screen.queryByRole("region", { name: "ゴミ箱" })).toBeNull();
+  });
+
+  it("shows trash restore conflicts without applying or losing the item", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    const item = { id: "trash-1", kind: "preview_delete", title: "clip.wav", target_id: "preview-1",
+      created_at: commitEntry.created_at, protected_bytes: 120, reclaimable_bytes: 40, objects: [] };
+    mocks.runSprout.mockResolvedValueOnce([item]);
+    await user.click(screen.getByRole("button", { name: "ゴミ箱" }));
+    mocks.runSprout.mockRejectedValueOnce({ code: "trash_restore_conflict", message: "preview list changed", details: { trash_id: item.id } });
+    await user.click(await screen.findByRole("button", { name: "clip.wavを復旧" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("preview list changed");
+    expect(screen.getByRole("button", { name: "clip.wavを復旧" })).toBeTruthy();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === `trash restore ${item.id}`)).toBe(false);
+  });
+
   it("shows a retry action for repository locks", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue(project);

@@ -24,6 +24,7 @@ import zstandard
 from PIL import Image, UnidentifiedImageError
 
 from . import __version__
+from . import trash as recovery
 from . import archive as static_archive
 from .cache import WorktreeCache
 from .errors import SproutError
@@ -32,7 +33,7 @@ CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
 # V1 is frozen in tests/fixtures/schema_v1.sql. Incompatible changes increment this number.
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
 OBJECT_COMPRESSION_LEVEL = 3
@@ -65,6 +66,8 @@ UNCHANGED = object()
 
 REQUIRED_SCHEMA_TABLES = {
     "meta",
+    "trash_entries",
+    "trash_objects",
     "objects",
     "commits",
     "commit_files",
@@ -130,6 +133,23 @@ CREATE TABLE objects (
     created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
     UNIQUE (hash, size)
 );
+CREATE TABLE trash_entries (
+    id TEXT PRIMARY KEY NOT NULL,
+    seq INTEGER NOT NULL UNIQUE CHECK (typeof(seq) = 'integer' AND seq > 0),
+    kind TEXT NOT NULL CHECK (kind IN ('commit', 'preview_delete', 'preview_replace')),
+    target_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL CHECK (created_at GLOB '{TIMESTAMP_GLOB}'),
+    payload TEXT NOT NULL
+);
+CREATE TABLE trash_objects (
+    trash_id TEXT NOT NULL REFERENCES trash_entries(id) ON DELETE CASCADE,
+    object_hash TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
+    PRIMARY KEY (trash_id, object_hash),
+    FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
+);
+CREATE INDEX idx_trash_objects_object ON trash_objects(object_hash, size);
 CREATE TABLE branches (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -2035,6 +2055,7 @@ class Repository:
         now = utc_timestamp()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            before = recovery.capture_preview(db, commit_id)
             self._register_objects(db, {object_hash: size}, now)
             updated = db.execute(
                 "UPDATE commit_attachments SET original_name=?, media_type=?, "
@@ -2044,6 +2065,8 @@ class Repository:
             ).rowcount
             if updated != 1:
                 raise SproutError(f"commit has no preview {target.id}: {commit_id}")
+            recovery.record(db, before, 'preview_replace', target.original_name, target.id, now,
+                            preview_commit=commit_id)
         return self.preview(commit_id, target.id)
 
     @locked
@@ -2051,12 +2074,15 @@ class Repository:
         commit_id = self.resolve_commit(value)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            before = recovery.capture_preview(db, commit_id)
             previews = self._previews_from_db(db, commit_id)
             target = self._match_preview(previews, commit_id, attachment_id)
             db.execute("DELETE FROM commit_attachments WHERE id=?", (target.id,))
             self._renumber_previews(
                 db, commit_id, [item.id for item in previews if item.id != target.id]
             )
+            recovery.record(db, before, 'preview_delete', target.original_name, target.id, utc_timestamp(),
+                            preview_commit=commit_id)
         return target
 
     @locked
@@ -2151,7 +2177,8 @@ class Repository:
                 for row in db.execute(
                     "SELECT object_hash FROM commit_files "
                     "UNION SELECT object_hash FROM commit_attachments "
-                    "UNION SELECT object_hash FROM bud_files"
+                    "UNION SELECT object_hash FROM bud_files "
+                    "UNION SELECT object_hash FROM trash_objects"
                 )
             }
 
@@ -2166,6 +2193,7 @@ class Repository:
                 "SELECT object_hash FROM commit_files "
                 "UNION SELECT object_hash FROM commit_attachments "
                 "UNION SELECT object_hash FROM bud_files "
+                "UNION SELECT object_hash FROM trash_objects "
                 "EXCEPT SELECT hash FROM objects ORDER BY 1"
             ):
                 issues.append(DoctorIssue("missing_object", row[0]))
@@ -2174,6 +2202,11 @@ class Repository:
                 "WHERE mtime_ns IS NULL OR typeof(mtime_ns) <> 'integer' ORDER BY commit_id, path"
             ):
                 issues.append(DoctorIssue("invalid_file_time", f"{row['commit_id']}:{row['path']}"))
+            for item in db.execute("SELECT * FROM trash_entries"):
+                try:
+                    recovery.validate(db, dict(item))
+                except SproutError:
+                    issues.append(DoctorIssue("invalid_trash_record", item['id']))
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:
                 issues.append(
@@ -2267,6 +2300,7 @@ class Repository:
                     "NOT EXISTS (SELECT 1 FROM commit_files f WHERE f.object_hash=o.hash AND f.size=o.size) "
                     "AND NOT EXISTS (SELECT 1 FROM commit_attachments a WHERE a.object_hash=o.hash AND a.size=o.size) "
                     "AND NOT EXISTS (SELECT 1 FROM bud_files b WHERE b.object_hash=o.hash AND b.size=o.size) "
+                    "AND NOT EXISTS (SELECT 1 FROM trash_objects t WHERE t.object_hash=o.hash AND t.size=o.size) "
                     "ORDER BY hash"
                 )
             ]
@@ -2388,6 +2422,8 @@ class Repository:
                 else retained_references
             )
             target.add(row["object_hash"])
+        retained_references.update(row[0] for row in db.execute(
+            "SELECT object_hash FROM bud_files UNION SELECT object_hash FROM trash_objects"))
         stored_sizes = {
             row["hash"]: row["stored_size"]
             for row in db.execute("SELECT hash, stored_size FROM objects")
@@ -2466,6 +2502,7 @@ class Repository:
                 reclaimable, reclaimable_bytes = self._reclaimable_objects(db, {commit_id})
 
                 if not dry_run:
+                    before = recovery.capture_commit(db, commit_id)
                     # Deleted branches keep their identity rows; they follow too.
                     db.execute(
                         "UPDATE branches SET commit_id=? WHERE commit_id=?", (parent_id, commit_id)
@@ -2480,6 +2517,7 @@ class Repository:
                         "UPDATE commits SET parent_id=? WHERE parent_id=?", (parent_id, commit_id)
                     )
                     db.execute("DELETE FROM commits WHERE id=?", (commit_id,))
+                    recovery.record(db, before, 'commit', row['message'], commit_id, utc_timestamp())
 
             return CommitDeletion(
                 commit=PruneCommit(row["id"], row["created_at"], row["message"]),
@@ -2497,6 +2535,65 @@ class Repository:
                 f"delete-commit failed; repository unchanged: {exc}",
                 code="delete_commit_failed",
             ) from exc
+
+    def trash_items(self, item_id: str | None = None) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            entries = ([recovery.load(db, item_id)] if item_id is not None else
+                       [dict(row) for row in db.execute("SELECT * FROM trash_entries ORDER BY seq DESC")])
+            result = []
+            for entry in entries:
+                protected = list(db.execute(
+                    "SELECT o.hash,o.stored_size FROM objects o JOIN trash_objects t "
+                    "ON t.object_hash=o.hash WHERE t.trash_id=?", (entry['id'],)))
+                reclaimable = []
+                for obj in protected:
+                    digest = obj['hash']
+                    if not db.execute(
+                        "SELECT 1 FROM commit_files WHERE object_hash=? UNION ALL "
+                        "SELECT 1 FROM commit_attachments WHERE object_hash=? UNION ALL "
+                        "SELECT 1 FROM bud_files WHERE object_hash=? UNION ALL "
+                        "SELECT 1 FROM trash_objects WHERE object_hash=? AND trash_id<>? LIMIT 1",
+                        (digest, digest, digest, digest, entry['id'])).fetchone():
+                        reclaimable.append(obj)
+                result.append({k: entry[k] for k in ('id','kind','target_id','title','created_at')} | {
+                    'protected_bytes': sum(o['stored_size'] for o in protected),
+                    'reclaimable_bytes': sum(o['stored_size'] for o in reclaimable),
+                    'objects': [o['hash'] for o in protected],
+                })
+            return result
+
+    def trash_detail(self, item_id: str) -> dict[str, Any]:
+        result = self.trash_items(item_id)[0]
+        with self.connect() as db:
+            payload = recovery.validate(db, recovery.load(db, item_id))
+        return result | {'changes': payload['patches']}
+
+    @locked
+    def restore_trash(self, item_id: str, *, dry_run: bool = False) -> dict[str, Any]:
+        result = self.trash_detail(item_id)
+        try:
+            with self.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                item = recovery.load(db, item_id)
+                # Verify original content before committing metadata that refers to it.
+                for obj in db.execute("SELECT object_hash,size FROM trash_objects WHERE trash_id=?", (item_id,)):
+                    self._copy_verified_object(FileState('', obj['object_hash'], obj['size'], 0))
+                recovery.restore(db, item)
+                if db.execute("PRAGMA foreign_key_check").fetchone():
+                    recovery.conflict(item_id, 'a required reference is missing')
+                if dry_run:
+                    db.rollback()
+            return result | {'restored': not dry_run, 'dry_run': dry_run}
+        except sqlite3.Error as exc:
+            recovery.conflict(item_id, f'identity, position or reference conflict: {exc}')
+
+    @locked
+    def purge_trash(self, item_id: str, *, dry_run: bool = False) -> dict[str, Any]:
+        result = self.trash_items(item_id)[0]
+        if not dry_run:
+            with self.connect() as db:
+                db.execute("DELETE FROM trash_entries WHERE id=?", (item_id,))
+        return result | {'purged': not dry_run, 'dry_run': dry_run}
 
     @locked
     def prune(
