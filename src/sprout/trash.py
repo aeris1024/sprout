@@ -17,6 +17,12 @@ KEYS = {
 }
 
 
+def next_seq(db, name):
+    """Allocate the next creation-order number; numbers are never reused."""
+    db.execute('UPDATE id_sequences SET last_value=last_value+1 WHERE name=?', (name,))
+    return db.execute('SELECT last_value FROM id_sequences WHERE name=?', (name,)).fetchone()[0]
+
+
 def rows(db, table, where, args):
     return [dict(row) for row in db.execute(f'SELECT * FROM {table} WHERE {where}', args)]
 
@@ -59,8 +65,8 @@ def record(db, before, kind, title, target_id, created_at, *, preview_commit=Non
                        preview_after=capture_preview(db, preview_commit)['commit_attachments'],
                        assets_after=capture_preview(db, preview_commit)['preview_assets'])
     item_id = uuid.uuid4().hex
-    db.execute('INSERT INTO trash_entries(id,seq,kind,target_id,title,created_at,payload) VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM trash_entries),?,?,?,?,?)',
-               (item_id, kind, target_id, title, created_at, json.dumps(payload, sort_keys=True)))
+    db.execute('INSERT INTO trash_entries(id,seq,kind,target_id,title,created_at,payload) VALUES(?,?,?,?,?,?,?)',
+               (item_id, next_seq(db, 'trash_entries'), kind, target_id, title, created_at, json.dumps(payload, sort_keys=True)))
     objects = {(p['before']['object_hash'], p['before']['size']) for p in patches
                if p['table'] in {'commit_files', 'commit_attachments'}}
     db.executemany('INSERT INTO trash_objects(trash_id,object_hash,size) VALUES(?,?,?)',

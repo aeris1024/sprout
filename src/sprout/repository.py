@@ -63,7 +63,9 @@ T = TypeVar("T")
 ProgressCallback = Callable[[str, int, int], None]
 UNCHANGED = object()
 
+SEQUENCE_TABLES = ("commits", "buds", "trash_entries")
 REQUIRED_SCHEMA_TABLES = {
+    "id_sequences",
     "preview_assets",
     "file_identities",
     "meta",
@@ -125,6 +127,10 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
+);
+CREATE TABLE id_sequences (
+    name TEXT PRIMARY KEY NOT NULL CHECK (name IN ('commits', 'buds', 'trash_entries')),
+    last_value INTEGER NOT NULL DEFAULT 0 CHECK (typeof(last_value) = 'integer' AND last_value >= 0)
 );
 CREATE TABLE objects (
     hash TEXT PRIMARY KEY NOT NULL CHECK ({OBJECT_HASH_CHECK.format("hash")}),
@@ -583,6 +589,9 @@ class Repository:
                     "INSERT INTO meta(key, value) VALUES('repository_created_at', ?)",
                     (utc_timestamp(),),
                 )
+                db.executemany(
+                    "INSERT INTO id_sequences(name) VALUES(?)", ((name,) for name in SEQUENCE_TABLES)
+                )
                 branch_id = uuid.uuid4().hex
                 db.execute("INSERT INTO branches(id, name) VALUES(?, 'main')", (branch_id,))
                 db.execute(
@@ -706,6 +715,10 @@ class Repository:
             if state is None or invalid_reference:
                 raise self._format_error("invalid repository state or references",
                                          details={"reason": "invalid_references"})
+            counters = {row[0] for row in db.execute("SELECT name FROM id_sequences")}
+            if counters != set(SEQUENCE_TABLES):
+                raise self._format_error("repository sequence counters are incomplete",
+                                         details={"reason": "invalid_sequences"})
         found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
             raise self._format_error(
@@ -1456,8 +1469,11 @@ class Repository:
                 db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, branch),))
             db.execute(
                 "INSERT INTO commits(id, seq, parent_id, branch_id, branch_name, created_at, message) "
-                "VALUES(?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM commits), ?, ?, ?, ?, ?)",
-                (commit_id, parent, self._branch_id_from_db(db, branch), branch, created_at, message.strip()),
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    commit_id, recovery.next_seq(db, "commits"), parent,
+                    self._branch_id_from_db(db, branch), branch, created_at, message.strip(),
+                ),
             )
             db.executemany(
                 "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
@@ -2300,6 +2316,11 @@ class Repository:
                 for row in db.execute(f"SELECT DISTINCT f.file_id FROM {table} f "
                                       "LEFT JOIN file_identities i ON i.id=f.file_id WHERE i.id IS NULL"):
                     issues.append(DoctorIssue("missing_file_identity", row[0]))
+            for name in SEQUENCE_TABLES:
+                counter = db.execute("SELECT last_value FROM id_sequences WHERE name=?", (name,)).fetchone()
+                highest = db.execute(f"SELECT COALESCE(MAX(seq), 0) FROM {name}").fetchone()[0]
+                if counter is None or counter[0] < highest:
+                    issues.append(DoctorIssue("invalid_sequence", name))
             active = db.execute("SELECT value FROM meta WHERE key='active_operation'").fetchone()
             if active is not None and active[0]:
                 issues.append(
@@ -2678,7 +2699,7 @@ class Repository:
                     db.rollback()
             return result | {'restored': not dry_run, 'dry_run': dry_run}
         except sqlite3.Error as exc:
-            recovery.conflict(item_id, f'identity, position or reference conflict: {exc}')
+            recovery.conflict(item_id, 'a restored record conflicts with an existing name, position or reference')
 
     @locked
     def purge_trash(self, item_id: str, *, dry_run: bool = False) -> dict[str, Any]:
@@ -4121,8 +4142,8 @@ class Repository:
             self._register_objects(db, {item.object_hash: item.size for item in files}, created_at)
             db.execute(
                 "INSERT INTO buds(id, seq, base_commit_id, branch_id, branch_name, created_at) "
-                "VALUES(?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM buds), ?, ?, ?, ?)",
-                (bud_id, base, branch_id, branch_name, created_at),
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                (bud_id, recovery.next_seq(db, "buds"), base, branch_id, branch_name, created_at),
             )
             db.executemany(
                 "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
