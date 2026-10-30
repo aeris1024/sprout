@@ -888,6 +888,60 @@ describe("Sprout GUI operations", () => {
     expect(screen.queryByRole("region", { name: "ゴミ箱" })).toBeNull();
   });
 
+  describe("leaf detail load failure", () => {
+    const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
+
+    async function failLoad(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      await openWorkspace(user);
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "cannot read commit", details: {} });
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      return screen.findByRole("region", { name: "葉の読み込みエラー" });
+    }
+
+    it("shows the reason instead of loading forever, even after the notice closes", async () => {
+      const user = userEvent.setup();
+      const panel = await failLoad(user);
+      expect(panel.textContent).toContain("cannot read commit");
+      expect(screen.queryByText("読み込み中…")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "通知を閉じる" }));
+      expect(within(screen.getByRole("region", { name: "葉の読み込みエラー" })).getByRole("alert").textContent).toContain("cannot read commit");
+    });
+
+    it("retries and shows the detail", async () => {
+      const user = userEvent.setup();
+      const panel = await failLoad(user);
+      mocks.runSprout.mockResolvedValueOnce(detail);
+      await user.click(within(panel).getByRole("button", { name: "再試行" }));
+      expect(await screen.findByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "葉の読み込みエラー" })).toBeNull();
+    });
+
+    it("stays failed when a retry fails again", async () => {
+      const user = userEvent.setup();
+      const panel = await failLoad(user);
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "still broken", details: {} });
+      await user.click(within(panel).getByRole("button", { name: "再試行" }));
+      expect(await within(screen.getByRole("region", { name: "葉の読み込みエラー" })).findByText("still broken")).toBeTruthy();
+    });
+
+    it("clears the failure when the panel closes", async () => {
+      const user = userEvent.setup();
+      const panel = await failLoad(user);
+      await user.click(within(panel).getByRole("button", { name: "詳細を閉じる" }));
+      expect(screen.queryByRole("region", { name: "葉の読み込みエラー" })).toBeNull();
+      expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+    });
+
+    it("leaves other panels usable after a failure", async () => {
+      const user = userEvent.setup();
+      await failLoad(user);
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      expect(screen.getByRole("region", { name: "追跡ファイル" })).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "葉の読み込みエラー" })).toBeNull();
+    });
+  });
+
   describe("cover file", () => {
     it("warns but keeps the save when the cover cannot make a thumbnail", async () => {
       const user = userEvent.setup();

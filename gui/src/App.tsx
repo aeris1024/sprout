@@ -92,6 +92,7 @@ function App() {
   const [status, setStatus] = useState<SproutStatus | null>(null);
   const [graph, setGraph] = useState<CommitGraph>(emptyGraph);
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
+  const [commitLoadError, setCommitLoadError] = useState<{ id: string; error: SproutCliError } | null>(null);
   const [selection, setSelection] = useState<MapSelection>(null);
   const [comparison, setComparison] = useState<{ source: string; target: string } | null>(null);
   useEffect(() => { setComparison(null); }, [projectDir]);
@@ -455,8 +456,16 @@ function App() {
     if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
     setSelection({ kind: "commit", id: commitId });
     setFilesOpen(false);
+    setCommitLoadError(null);
     void execute(async () => {
-      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      try {
+        setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      } catch (error) {
+        // Stays in the panel: the notice alone would vanish and leave it looking as if it were loading.
+        const cliError = normalizeCliError(error);
+        setCommitLoadError({ id: commitId, error: cliError });
+        throw cliError;
+      }
     });
   }
 
@@ -527,6 +536,7 @@ function App() {
   function closeSelection() {
     setSelection(null);
     setCommitDetail(null);
+    setCommitLoadError(null);
   }
 
   /** Run an edit of one snapshot's annotations, then refresh the map and its detail. */
@@ -1092,7 +1102,19 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} cover={status?.cover} onSetCover={setCover} onClearCover={clearCover} onApplyCover={applyCover} onClose={() => setFilesOpen(false)} />;
     }
     if (selection?.kind === "commit") {
-      if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
+      if (!commitDetail || commitDetail.id !== selection.id) {
+        if (commitLoadError?.id !== selection.id) return <p className="muted">読み込み中…</p>;
+        return (
+          <section className="panel-section" aria-label="葉の読み込みエラー">
+            <div className="panel-heading">
+              <h3>葉の詳細を読み込めませんでした</h3>
+              <button className="icon-button" onClick={closeSelection} aria-label="詳細を閉じる">×</button>
+            </div>
+            <p role="alert" className="panel-copy">{commitLoadError.error.message}</p>
+            <button className="button primary" onClick={() => selectCommit(selection.id)} disabled={busy}>再試行</button>
+          </section>
+        );
+      }
       return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
           await runSprout(projectDir, ["preview", "metadata", commitDetail.id, id,
