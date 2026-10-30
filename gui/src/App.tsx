@@ -34,6 +34,9 @@ type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 
 const emptyGraph: CommitGraph = { current_commit: null, at_branch_tip: true, commits: [], branches: [], tags: [], buds: [] };
 const UNCHANGED_NOTE = "作業フォルダは変更していません。";
+/** Refetch at most once per interval when focus changes quickly; a late focus gets one trailing refetch. */
+const FOCUS_REFRESH_INTERVAL_MS = 2000;
+const FOCUS_REFRESH_FAILED = "focus_refresh_failed";
 
 /** Where a file dropped right now would go; "blocked" means the displayed panel takes no drops. */
 type DropDestination =
@@ -101,6 +104,9 @@ function App() {
   const dragDropHandler = useRef<(payload: DragDropEvent) => void>(() => {});
   const [dragging, setDragging] = useState(false);
   const operationActive = useRef(false);
+  const operationsStarted = useRef(0);
+  const focusHandler = useRef<() => void>(() => {});
+  const focusRefresh = useRef({ running: false, startedAt: 0, failed: false, timer: undefined as ReturnType<typeof setTimeout> | undefined });
 
   useEffect(() => {
     void loadSettings()
@@ -115,6 +121,7 @@ function App() {
   async function execute(operation: () => Promise<void>): Promise<boolean> {
     if (operationActive.current) return false;
     operationActive.current = true;
+    operationsStarted.current += 1;
     setBusy(true);
     setNotice(null);
     try {
@@ -129,9 +136,10 @@ function App() {
     }
   }
 
-  async function fetchWorkspace(path: string) {
+  async function fetchWorkspace(path: string, stillWanted: () => boolean = () => true) {
     const nextStatus = await runSprout<SproutStatus>(path, ["status", "--tracked", "--untracked"], sproutProgram);
     const nextGraph = await runSprout<CommitGraph>(path, ["tree"], sproutProgram);
+    if (!stillWanted()) return;
     setProjectDir(path);
     setStatus(nextStatus);
     setGraph(nextGraph);
@@ -198,6 +206,69 @@ function App() {
       await fetchWorkspace(projectDir);
     });
   }
+
+  /**
+   * Refetch quietly when the window regains focus: no busy state, so buttons and drafts stay usable,
+   * and no execute(), so the current notice stays. A result is dropped if an operation started meanwhile.
+   */
+  function refreshOnFocus() {
+    const refresh = focusRefresh.current;
+    if (!workspaceOpen || operationActive.current) return;
+    const wait = refresh.startedAt + FOCUS_REFRESH_INTERVAL_MS - Date.now();
+    if (refresh.running || wait > 0) {
+      refresh.timer ??= setTimeout(() => {
+        refresh.timer = undefined;
+        focusHandler.current();
+      }, wait > 0 ? wait : FOCUS_REFRESH_INTERVAL_MS);
+      return;
+    }
+    refresh.running = true;
+    refresh.startedAt = Date.now();
+    const operations = operationsStarted.current;
+    const unchanged = () => operationsStarted.current === operations;
+    void fetchWorkspace(projectDir, unchanged)
+      .then(() => {
+        refresh.failed = false;
+        setNotice((current) => current?.code === FOCUS_REFRESH_FAILED ? null : current);
+      })
+      .catch((error) => {
+        // Warn once per failure streak, and never over a notice the user is still reading.
+        if (refresh.failed || !unchanged()) return;
+        refresh.failed = true;
+        const message = `最新の状態を取得できませんでした。表示は前回取得した内容です（${normalizeCliError(error).message}）`;
+        setNotice((current) => current ?? { code: FOCUS_REFRESH_FAILED, message, details: {}, kind: "warning" });
+      })
+      .finally(() => {
+        refresh.running = false;
+      });
+  }
+  focusHandler.current = refreshOnFocus;
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    let appWindow: ReturnType<typeof getCurrentWindow>;
+    try {
+      appWindow = getCurrentWindow();
+    } catch {
+      return undefined;
+    }
+    void appWindow
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) focusHandler.current();
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+      clearTimeout(focusRefresh.current.timer);
+      focusRefresh.current.timer = undefined;
+    };
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

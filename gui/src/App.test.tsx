@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   confirm: vi.fn(),
   onDragDropEvent: vi.fn(),
+  onFocusChanged: vi.fn(),
+  focusHandler: undefined as undefined | ((event: { payload: boolean }) => void),
   invoke: vi.fn(),
   runSprout: vi.fn(),
   loadSettings: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: mocks.confirm,
 }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onDragDropEvent: mocks.onDragDropEvent }),
+  getCurrentWindow: () => ({ onDragDropEvent: mocks.onDragDropEvent, onFocusChanged: mocks.onFocusChanged }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("./lib/sprout", async (importOriginal) => ({
@@ -112,9 +114,17 @@ describe("Sprout GUI operations", () => {
       mocks.dragHandler = handler;
       return vi.fn();
     });
+    mocks.focusHandler = undefined;
+    mocks.onFocusChanged.mockImplementation(async (handler) => {
+      mocks.focusHandler = handler;
+      return vi.fn();
+    });
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
 
   it("shows one screen with a top bar, map area, and side panel", async () => {
     const user = userEvent.setup();
@@ -222,7 +232,7 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["track", "C:\\work\\sprout-project\\dropped.png"], "");
   });
 
-  it("refreshes workspace state only from the update button", async () => {
+  it("refreshes workspace state from the update button and ignores DOM focus events", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
@@ -1483,6 +1493,218 @@ describe("Sprout GUI operations", () => {
     fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(null) });
     await screen.findByText("プレビューの操作が完了しました");
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\source.pdf"], "");
+  });
+
+  describe("refresh when the window regains focus", () => {
+    const changedStatus = { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] };
+    const focus = (focused = true) => act(async () => mocks.focusHandler?.({ payload: focused }));
+    const statusCalls = () => mocks.runSprout.mock.calls.filter((call) => call[1][0] === "status").length;
+    const saveState = () => screen.getByLabelText("保存状態").textContent;
+    const secondEntry = { ...commitEntry, id: "b".repeat(64), parent_id: commitEntry.id, message: "External snapshot" };
+
+    function deferred<T>() {
+      let resolve: (value: T) => void = () => undefined;
+      let reject: (reason: unknown) => void = () => undefined;
+      const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+      return { promise, resolve, reject };
+    }
+
+    async function openFocusWorkspace(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      await openWorkspace(user);
+      await waitFor(() => expect(mocks.focusHandler).toBeTypeOf("function"));
+    }
+
+    async function showNotice(user: ReturnType<typeof userEvent.setup>) {
+      mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "Earlier failure", details: {} });
+      await user.click(screen.getByRole("button", { name: "更新" }));
+      expect(await screen.findByText("Earlier failure")).toBeTruthy();
+    }
+
+    it("updates changes, tracking, the top bar and the map on focus, and ignores blur", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      const calls = statusCalls();
+      await focus(false);
+      expect(statusCalls()).toBe(calls);
+
+      mockWorkspace({ ...changedStatus, tracked: ["design/main.psd", "new.txt"], untracked: [] }, [secondEntry, commitEntry]);
+      await focus();
+
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
+      expect(screen.getByRole("heading", { name: "未保存の変更 1件" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "External snapshot" })).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      expect(screen.getByText("追跡中（2件）")).toBeTruthy();
+    });
+
+    it("does not refetch or interrupt while an operation runs", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      const commit = deferred<unknown>();
+      await user.type(screen.getByLabelText("メッセージ"), "Save design");
+      mocks.runSprout.mockReturnValueOnce(commit.promise);
+      await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
+      const calls = mocks.runSprout.mock.calls.length;
+
+      await focus();
+      expect(mocks.runSprout).toHaveBeenCalledTimes(calls);
+
+      mockWorkspace(cleanStatus, [secondEntry, commitEntry]);
+      await act(async () => commit.resolve({ id: secondEntry.id, branch: "main", branch_id: "main", created_branch: false, message: "Save design", removed_paths: [] }));
+      expect(await screen.findByText(/を作成しました/)).toBeTruthy();
+      expect(mocks.runSprout).toHaveBeenCalledTimes(calls + 2);
+    });
+
+    it("throttles rapid focus changes and refetches once afterwards", async () => {
+      const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+      await openFocusWorkspace(user);
+      const calls = statusCalls();
+      mockWorkspace(changedStatus);
+      await focus();
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
+      for (let index = 0; index < 5; index += 1) {
+        await focus(false);
+        await focus();
+      }
+      expect(statusCalls()).toBe(calls + 1);
+
+      mockWorkspace();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      expect(statusCalls()).toBe(calls + 2);
+      await waitFor(() => expect(saveState()).toBe("保存済み"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(statusCalls()).toBe(calls + 2);
+    });
+
+    it("keeps the notice, enabled buttons and drafts while refetching", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      await showNotice(user);
+      await user.type(screen.getByLabelText("メッセージ"), "Half written");
+      const pending = deferred<SproutStatus>();
+      mocks.runSprout.mockReturnValueOnce(pending.promise);
+      mocks.runSprout.mockResolvedValueOnce({ current_commit: commitEntry.id, at_branch_tip: true, commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [] }], branches: mainBranch, tags: [], buds: [] });
+
+      await focus();
+
+      expect(screen.queryByLabelText("操作中")).toBeNull();
+      expect((screen.getByRole("button", { name: "更新" }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByLabelText("メッセージ") as HTMLTextAreaElement).disabled).toBe(false);
+      await act(async () => pending.resolve(changedStatus));
+
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
+      expect((screen.getByLabelText("メッセージ") as HTMLTextAreaElement).value).toBe("Half written");
+      expect(screen.getByText("Earlier failure")).toBeTruthy();
+    });
+
+    it("keeps the selected leaf and a memo draft without reloading the detail", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
+      mocks.runSprout.mockResolvedValueOnce(detail);
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      await user.click(await screen.findByRole("button", { name: "メモを書く" }));
+      await user.type(screen.getByRole("textbox", { name: "メモを編集" }), "Draft memo");
+      mocks.runSprout.mockClear();
+      mockWorkspace(changedStatus);
+
+      await focus();
+
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
+      expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree"]);
+      expect(screen.getByRole("region", { name: "選択中のスナップショット" })).toBeTruthy();
+      expect((screen.getByRole("textbox", { name: "メモを編集" }) as HTMLTextAreaElement).value).toBe("Draft memo");
+    });
+
+    it("clears the selection when the selected leaf disappeared", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
+      mocks.runSprout.mockResolvedValueOnce(detail);
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      await screen.findByRole("region", { name: "選択中のスナップショット" });
+      mockWorkspace(cleanStatus, []);
+
+      await focus();
+
+      await waitFor(() => expect(screen.queryByRole("region", { name: "選択中のスナップショット" })).toBeNull());
+      expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+    });
+
+    it("drops a late result when an operation started during the refetch", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      const stale = deferred<SproutStatus>();
+      mocks.runSprout.mockReturnValueOnce(stale.promise);
+      await focus();
+      mockWorkspace({ ...cleanStatus, changes: [{ state: "added", path: "a.txt" }, { state: "added", path: "b.txt" }] });
+      await user.click(screen.getByRole("button", { name: "更新" }));
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 2"));
+
+      mockWorkspace(changedStatus);
+      mocks.runSprout.mockReset();
+      mocks.runSprout.mockResolvedValueOnce({ current_commit: commitEntry.id, at_branch_tip: true, commits: [], branches: mainBranch, tags: [], buds: [] });
+      await act(async () => stale.resolve(changedStatus));
+      await act(async () => undefined);
+
+      expect(saveState()).toBe("未保存の変更 2");
+    });
+
+    it("warns once about repeated failures, does not block operations, and clears after success", async () => {
+      const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+      await openFocusWorkspace(user);
+      const locked = { code: "repository_locked", message: "another Sprout operation is already running", details: { retryable: true } };
+
+      mocks.runSprout.mockRejectedValueOnce(locked);
+      await focus();
+      expect(await screen.findByText(/最新の状態を取得できませんでした/)).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "通知を閉じる" }));
+
+      mocks.runSprout.mockRejectedValueOnce(locked);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await focus();
+      await act(async () => undefined);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect((screen.getByRole("button", { name: "更新" }) as HTMLButtonElement).disabled).toBe(false);
+
+      mockWorkspace(changedStatus);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await focus();
+      await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
+
+      mocks.runSprout.mockRejectedValueOnce(locked);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await focus();
+      expect(await screen.findByText(/最新の状態を取得できませんでした/)).toBeTruthy();
+      mockWorkspace();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await focus();
+      await waitFor(() => expect(screen.queryByText(/最新の状態を取得できませんでした/)).toBeNull());
+    });
+
+    it("does not replace a notice the user is reading when the refetch fails", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      await showNotice(user);
+      mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "locked", details: {} });
+
+      await focus();
+      await act(async () => undefined);
+
+      expect(screen.getByText("Earlier failure")).toBeTruthy();
+      expect(screen.queryByText(/最新の状態を取得できませんでした/)).toBeNull();
+    });
+
+    it("does not refetch before a workspace is open", async () => {
+      render(<App />);
+      await waitFor(() => expect(mocks.focusHandler).toBeTypeOf("function"));
+      await focus();
+      expect(mocks.runSprout).not.toHaveBeenCalled();
+    });
   });
 
   describe("drops and pastes follow the displayed panel", () => {
