@@ -9,6 +9,7 @@ import CommitPanel from "./components/CommitPanel";
 import FilePanel from "./components/FilePanel";
 import ProjectMenu, { RecentProjectList, projectName } from "./components/ProjectMenu";
 import TrashPanel from "./components/TrashPanel";
+import MaintenancePanel from "./components/MaintenancePanel";
 import SavePanel from "./components/SavePanel";
 import SproutMap, { type MapSelection } from "./components/SproutMap";
 import "./App.css";
@@ -18,6 +19,10 @@ import {
   runSprout,
   type Bud,
   type TrashItem,
+  type DoctorReport,
+  type GcResult,
+  type RepositoryStats,
+  formatBytes,
   type CommitDeletion,
   type CommitDetail,
   type CommitGraph,
@@ -91,6 +96,11 @@ function App() {
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
   useEffect(() => { setTrashOpen(false); setTrashItems([]); }, [projectDir]);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [repositoryStats, setRepositoryStats] = useState<RepositoryStats | null>(null);
+  const [gcResult, setGcResult] = useState<GcResult | null>(null);
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
+  useEffect(() => { setMaintenanceOpen(false); setRepositoryStats(null); setGcResult(null); setDoctorReport(null); }, [projectDir]);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -400,6 +410,7 @@ function App() {
 
   function selectCommit(commitId: string) {
     setTrashOpen(false);
+    setMaintenanceOpen(false);
     if (!projectDir) return;
     if (operationActive.current) return;
     if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
@@ -412,6 +423,7 @@ function App() {
 
   function selectBud(budId: string) {
     setTrashOpen(false);
+    setMaintenanceOpen(false);
     setComparison(null);
     setSelection({ kind: "bud", id: budId });
     setFilesOpen(false);
@@ -419,6 +431,7 @@ function App() {
 
   function selectBranch(branchId: string) {
     setTrashOpen(false);
+    setMaintenanceOpen(false);
     setComparison(null);
     setSelection({ kind: "branch", id: branchId });
     setFilesOpen(false);
@@ -466,6 +479,7 @@ function App() {
 
   function selectUnsaved() {
     setTrashOpen(false);
+    setMaintenanceOpen(false);
     setComparison(null);
     setSelection({ kind: "unsaved" });
     setFilesOpen(false);
@@ -590,6 +604,7 @@ function App() {
     if (operationActive.current) return { kind: "blocked", message: "操作の実行中はドロップできません" };
     if (settingsOpen) return { kind: "blocked", message: "CLI設定を閉じるとドロップできます" };
     if (displayedPanel === "trash") return { kind: "blocked", message: "ゴミ箱を閉じるとドロップできます" };
+    if (displayedPanel === "maintenance") return { kind: "blocked", message: "保守を閉じるとドロップできます" };
     if (displayedPanel === "compare") return { kind: "blocked", message: "比較を閉じるとドロップできます" };
     if (displayedPanel === "loading") return { kind: "blocked", message: "葉の詳細を表示してからドロップしてください" };
     if (displayedPanel === "commit" && commitDetail) return { kind: "preview", commitId: commitDetail.id, message: `葉「${commitDetail.message}」（${shortId(commitDetail.id)}）のプレビューに追加します` };
@@ -855,6 +870,7 @@ function App() {
 
   function openSaveForm() {
     setTrashOpen(false);
+    setMaintenanceOpen(false);
     setComparison(null);
     setFilesOpen(false);
     setSelection({ kind: "unsaved" });
@@ -898,7 +914,45 @@ function App() {
     void execute(async () => {
       const items = await runSprout<TrashItem[]>(projectDir, ["trash", "list"], sproutProgram);
       setTrashItems(items);
+      setMaintenanceOpen(false);
       setTrashOpen(true);
+    });
+  }
+
+  function openMaintenance() {
+    void execute(async () => {
+      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["stats"], sproutProgram));
+      setGcResult(null);
+      setDoctorReport(null);
+      setTrashOpen(false);
+      setComparison(null);
+      setFilesOpen(false);
+      setMaintenanceOpen(true);
+    });
+  }
+
+  function collectGarbage() {
+    void execute(async () => {
+      const preview = await runSprout<GcResult>(projectDir, ["gc", "--dry-run"], sproutProgram);
+      if (preview.removed_objects === 0 && preview.removed_temps === 0) {
+        setGcResult(null);
+        setNotice({ code: "gc_nothing", message: "回収できる容量はありません。ゴミ箱に保持中のデータは、完全削除すると回収できます。", details: {}, kind: "success" });
+        return;
+      }
+      if (!await confirmDialog(`オブジェクト ${preview.removed_objects}個、一時ファイル ${preview.removed_temps}個を削除し、${formatBytes(preview.freed_bytes)}を回収します。ゴミ箱に保持中のデータは回収しません。続行しますか？`, {
+        title: "容量を回収", kind: "warning", okLabel: "回収", cancelLabel: "キャンセル",
+      })) return;
+      const result = await runSprout<GcResult>(projectDir, ["gc"], sproutProgram);
+      setGcResult(result);
+      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["stats"], sproutProgram));
+      setNotice({ code: "gc_done", message: `${formatBytes(result.freed_bytes)}を回収しました`, details: {}, kind: "success" });
+    });
+  }
+
+  function checkRepository() {
+    void execute(async () => {
+      setDoctorReport(null);
+      setDoctorReport(await runSprout<DoctorReport>(projectDir, ["doctor", "--report"], sproutProgram));
     });
   }
 
@@ -942,13 +996,14 @@ function App() {
   const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
   const workspaceOpen = Boolean(projectDir && status && !initCandidate);
   // Follows the order of sidePanel() so drops and pastes act on what is actually displayed.
-  const displayedPanel = trashOpen ? "trash" : comparison ? "compare" : filesOpen ? "files"
+  const displayedPanel = trashOpen ? "trash" : maintenanceOpen ? "maintenance" : comparison ? "compare" : filesOpen ? "files"
     : selection?.kind === "commit" ? (commitDetail?.id === selection.id ? "commit" : "loading")
     : selectedBranch ? "branch" : selectedBud ? "bud" : "save";
   const hoverDestination = dragging ? dropDestination() : null;
 
   function sidePanel() {
     if (trashOpen) return <TrashPanel items={trashItems} busy={busy} onInspect={inspectTrash} onRestore={restoreTrash} onPurge={purgeTrash} onClose={() => setTrashOpen(false)} />;
+    if (maintenanceOpen) return <MaintenancePanel stats={repositoryStats} gcResult={gcResult} doctor={doctorReport} busy={busy} onCollect={collectGarbage} onCheck={checkRepository} onClose={() => setMaintenanceOpen(false)} />;
     if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
       return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} onClose={() => setFilesOpen(false)} />;
@@ -1017,8 +1072,9 @@ function App() {
         {status && (
           <>
             <button className="button ghost" onClick={refreshProject} disabled={busy}>更新</button>
-            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => { setTrashOpen(false); setComparison(null); setFilesOpen(!filesOpen); }} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
+            <button className={`button ghost${filesOpen ? " pressed" : ""}`} onClick={() => { setTrashOpen(false); setMaintenanceOpen(false); setComparison(null); setFilesOpen(!filesOpen); }} aria-pressed={filesOpen} disabled={busy}>ファイル</button>
             <button className="button ghost" onClick={openTrash} disabled={busy}>ゴミ箱</button>
+            <button className={`button ghost${maintenanceOpen ? " pressed" : ""}`} onClick={openMaintenance} aria-pressed={maintenanceOpen} disabled={busy}>保守</button>
             <button className="button primary" onClick={openSaveForm} disabled={busy}>保存</button>
           </>
         )}

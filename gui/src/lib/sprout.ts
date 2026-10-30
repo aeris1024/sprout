@@ -161,6 +161,33 @@ export interface CommitDeletion {
   reclaimable_bytes: number;
 }
 
+export interface RepositoryStats {
+  commits: number;
+  branches: number;
+  tracked_paths: number;
+  buds: number;
+  objects: number;
+  objects_bytes: number;
+  logical_bytes: number;
+  unique_bytes: number;
+  dedup_saved_bytes: number;
+}
+
+export interface GcResult {
+  dry_run: boolean;
+  removed_objects: number;
+  removed_temps: number;
+  freed_bytes: number;
+  objects: string[];
+  temps: string[];
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  checked_objects: number;
+  issues: { kind: string; detail: string }[];
+}
+
 export interface SproutCliError {
   code: string;
   message: string;
@@ -233,6 +260,13 @@ export function branchIdentityLabel({ createdName, currentName }: BranchIdentity
   if (currentName === null) return `${createdName}（削除済み）`;
   if (currentName !== createdName) return `${currentName}（作成時: ${createdName}）`;
   return currentName;
+}
+
+export function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GiB`;
 }
 
 export function formatLocalTime(value: string): string {

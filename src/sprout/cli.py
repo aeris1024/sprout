@@ -2125,12 +2125,16 @@ def serve() -> None:
 
 @app.command()
 def doctor(
+    report: Annotated[
+        bool, typer.Option("--report", help="Exit successfully even when issues are found")
+    ] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
     ] = False,
 ) -> None:
     """Inspect repository integrity without changing files."""
     result = repo().doctor()
+    failure_code = 0 if report else 1
     if json_output:
         _echo_json(
             {
@@ -2142,7 +2146,7 @@ def doctor(
             }
         )
         if not result.ok:
-            raise typer.Exit(1)
+            raise typer.Exit(failure_code)
         return
     for issue in result.issues:
         typer.echo(f"{issue.kind:<18} {issue.detail}")
@@ -2152,7 +2156,7 @@ def doctor(
     typer.echo(
         f"Found {len(result.issues)} issue(s) ({result.checked_objects} objects checked)"
     )
-    raise typer.Exit(1)
+    raise typer.Exit(failure_code)
 
 
 @app.command()

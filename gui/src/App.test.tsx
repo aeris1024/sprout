@@ -796,6 +796,91 @@ describe("Sprout GUI operations", () => {
     expect(screen.queryByRole("region", { name: "ゴミ箱" })).toBeNull();
   });
 
+  describe("maintenance panel", () => {
+    const stats = { commits: 3, branches: 2, tracked_paths: 4, buds: 1, objects: 5, objects_bytes: 2048, logical_bytes: 4096, unique_bytes: 3072, dedup_saved_bytes: 1024 };
+    const preview = { dry_run: true, removed_objects: 2, removed_temps: 1, freed_bytes: 2048, objects: ["a", "b"], temps: ["t"] };
+
+    async function openPanel(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      await openWorkspace(user);
+      mocks.runSprout.mockResolvedValueOnce(stats);
+      await user.click(screen.getByRole("button", { name: "保守" }));
+      return screen.findByRole("region", { name: "保守" });
+    }
+
+    it("shows repository size and counts", async () => {
+      const user = userEvent.setup();
+      const panel = await openPanel(user);
+      for (const text of ["3件", "2件", "4件", "1件", "5個", "4.0 KiB", "2.0 KiB", "1.0 KiB"]) expect(panel.textContent).toContain(text);
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["stats"], "");
+    });
+
+    it("collects only after confirmation and shows the result", async () => {
+      const user = userEvent.setup();
+      const panel = await openPanel(user);
+      expect(panel.textContent).toContain("ゴミ箱に保持中のデータは回収しません");
+
+      mocks.runSprout.mockResolvedValueOnce(preview);
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+      expect(mocks.confirm.mock.calls[0][0]).toContain("オブジェクト 2個、一時ファイル 1個");
+      expect(mocks.confirm.mock.calls[0][0]).toContain("2.0 KiB");
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "gc")).toBe(false);
+
+      mocks.runSprout
+        .mockResolvedValueOnce(preview)
+        .mockResolvedValueOnce({ ...preview, dry_run: false })
+        .mockResolvedValueOnce({ ...stats, objects: 3, objects_bytes: 1024 });
+      mocks.confirm.mockResolvedValueOnce(true);
+      await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
+      expect(await within(panel).findByText(/オブジェクト 2個、一時ファイル 1個を削除し、2.0 KiBを回収しました/)).toBeTruthy();
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["gc"], "");
+      expect(panel.textContent).toContain("3個");
+    });
+
+    it("says when nothing can be collected without asking", async () => {
+      const user = userEvent.setup();
+      const panel = await openPanel(user);
+      mocks.runSprout.mockResolvedValueOnce({ ...preview, removed_objects: 0, removed_temps: 0, freed_bytes: 0, objects: [], temps: [] });
+      await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
+      expect(await screen.findByText(/回収できる容量はありません/)).toBeTruthy();
+      expect(mocks.confirm).not.toHaveBeenCalled();
+    });
+
+    it("shows a clean check and issues as results rather than failures", async () => {
+      const user = userEvent.setup();
+      const panel = await openPanel(user);
+      mocks.runSprout.mockResolvedValueOnce({ ok: true, checked_objects: 12, issues: [] });
+      await user.click(within(panel).getByRole("button", { name: "検査する" }));
+      expect(await within(panel).findByText("問題はありません（12個を検査）")).toBeTruthy();
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["doctor", "--report"], "");
+
+      mocks.runSprout.mockResolvedValueOnce({ ok: false, checked_objects: 12, issues: [{ kind: "corrupt_object", detail: "abc" }, { kind: "future_issue", detail: "x" }] });
+      await user.click(within(panel).getByRole("button", { name: "検査する" }));
+      expect(await within(panel).findByText("2件の問題が見つかりました（12個を検査）")).toBeTruthy();
+      expect(within(panel).getByText("内容の破損: abc")).toBeTruthy();
+      expect(within(panel).getByText("future_issue: x")).toBeTruthy();
+      expect(screen.queryByText("操作を完了できませんでした")).toBeNull();
+    });
+
+    it("reports a failed collection and keeps the panel open", async () => {
+      const user = userEvent.setup();
+      const panel = await openPanel(user);
+      mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "another Sprout operation is already running", details: {} });
+      await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
+      expect(await screen.findByText("another Sprout operation is already running")).toBeTruthy();
+      expect(screen.getByRole("region", { name: "保守" })).toBeTruthy();
+    });
+
+    it("closes when another panel opens", async () => {
+      const user = userEvent.setup();
+      await openPanel(user);
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      expect(screen.queryByRole("region", { name: "保守" })).toBeNull();
+    });
+  });
+
   it("shows trash restore conflicts without applying or losing the item", async () => {
     const user = userEvent.setup();
     render(<App />);

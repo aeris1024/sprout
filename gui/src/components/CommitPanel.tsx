@@ -2,21 +2,15 @@ import { useEffect, useState, type ComponentProps } from "react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
-import { branchIdentity, branchIdentityLabel, formatLocalTime, type BranchInfo, type CommitAttachment, type CommitDetail, type DeletedBranch, type GraphTag } from "../lib/sprout";
+import { branchIdentity, branchIdentityLabel, formatBytes, formatLocalTime, type BranchInfo, type CommitAttachment, type CommitDetail, type DeletedBranch, type GraphTag } from "../lib/sprout";
 
 const roleLabels: Record<string, string> = {
   thumbnail: "サムネイル",
   preview: "プレビュー",
 };
 
-function formatSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MiB`;
-}
-
 function attachmentLabel(attachment: CommitAttachment): string {
-  return `${roleLabels[attachment.role] ?? attachment.role}: ${attachment.original_name}（${attachment.media_type}・${formatSize(attachment.size)}）`;
+  return `${roleLabels[attachment.role] ?? attachment.role}: ${attachment.original_name}（${attachment.media_type}・${formatBytes(attachment.size)}）`;
 }
 
 interface CommitPanelProps {
