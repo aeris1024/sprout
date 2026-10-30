@@ -31,6 +31,7 @@ from .errors import SproutError
 CONTROL_DIR = ".sprout"
 DB_NAME = "repository.db"
 IGNORE_FILE = ".sproutignore"
+# V1 is frozen. Any incompatible schema change must increment this number.
 SCHEMA_VERSION = "1"
 RESTORE_PLAN_VERSION = 1
 OBJECT_COMPRESSION = "zstd"
@@ -556,13 +557,14 @@ class Repository:
                 # Peek without the repository lock so read-only commands can run
                 # while a long write holds it. Recover only when an interrupted
                 # operation is recorded; re-check under the lock inside recover.
-                with repo.connect() as db:
+                with closing(sqlite3.connect(f"{repo.db_path.as_uri()}?mode=ro", uri=True)) as db:
                     row = db.execute(
                         "SELECT value FROM meta WHERE key='active_operation'"
                     ).fetchone()
                 if row is None:
                     raise SproutError("repository is missing operation metadata")
                 if row[0]:
+                    repo._check_recovery_compatibility(row[0])
                     with repo.lock():
                         repo._recover_pending_materialization()
                 return repo
@@ -596,6 +598,18 @@ class Repository:
         }
         return metadata, tables
 
+    @staticmethod
+    def _format_error(reason: str, *, code: str = "unsupported_repository_format",
+                      details: dict[str, Any] | None = None) -> SproutError:
+        return SproutError(
+            reason + "; preserve the entire project including .sprout, use a compatible "
+            "Sprout version to export needed data, then reinitialize a separate copy "
+            "(see README: storage compatibility)",
+            code=code,
+            details={"supported_schema_version": SCHEMA_VERSION,
+                     "recovery": "backup_and_reinitialize", **(details or {})},
+        )
+
     def check_schema(self) -> None:
         try:
             # Inspect unsupported repositories without changing their journal mode.
@@ -606,30 +620,29 @@ class Repository:
                     db.execute("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")
                 )
         except sqlite3.Error as exc:
-            raise SproutError(f"cannot read repository: {exc}") from exc
+            raise self._format_error(f"cannot read repository: {exc}",
+                                     details={"reason": "unreadable_metadata"}) from exc
         found_version = metadata.get("schema_version", "missing")
         if found_version != SCHEMA_VERSION:
-            raise SproutError(
-                f"unsupported repository schema version: {found_version} "
-                f"(expected {SCHEMA_VERSION}); reinitialize the repository "
-                "with this Sprout version"
+            raise self._format_error(
+                f"unsupported repository schema version: {found_version} (expected {SCHEMA_VERSION})",
+                details={"reason": "schema_version", "found_schema_version": found_version},
             )
         missing_tables = sorted(REQUIRED_SCHEMA_TABLES - tables)
         if missing_tables:
-            raise SproutError(
-                "repository schema is incomplete; missing tables: "
-                + ", ".join(missing_tables)
-                + "; reinitialize the repository with this Sprout version"
+            raise self._format_error(
+                "repository schema is incomplete; missing tables: " + ", ".join(missing_tables),
+                details={"reason": "missing_tables", "missing_tables": missing_tables},
             )
         missing_metadata = sorted(REQUIRED_META_KEYS - metadata.keys())
         if missing_metadata:
-            raise SproutError(
-                "repository metadata is incomplete; missing keys: "
-                + ", ".join(missing_metadata)
-                + "; reinitialize the repository with this Sprout version"
+            raise self._format_error(
+                "repository metadata is incomplete; missing keys: " + ", ".join(missing_metadata),
+                details={"reason": "missing_metadata", "missing_keys": missing_metadata},
             )
         if any(actual_schema.get(name) != sql for name, sql in expected_schema().items()):
-            raise SproutError("unsupported or incomplete repository structure; reinitialize the repository")
+            raise self._format_error("unsupported or incomplete repository structure",
+                                     details={"reason": "schema_structure"})
         with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as db:
             state = db.execute(
                 "SELECT s.current_commit_id FROM repository_state s "
@@ -640,12 +653,13 @@ class Repository:
                 for table in sorted(REQUIRED_SCHEMA_TABLES)
             )
             if state is None or invalid_reference:
-                raise SproutError("invalid repository state or references; reinitialize the repository")
+                raise self._format_error("invalid repository state or references",
+                                         details={"reason": "invalid_references"})
         found_compression = metadata["object_compression"]
         if found_compression != OBJECT_COMPRESSION:
-            raise SproutError(
-                f"unsupported object compression: {found_compression} "
-                f"(expected {OBJECT_COMPRESSION})"
+            raise self._format_error(
+                f"unsupported object compression: {found_compression} (expected {OBJECT_COMPRESSION})",
+                details={"reason": "object_compression", "compression": found_compression},
             )
         try:
             uuid.UUID(metadata["repository_id"])
@@ -3008,8 +3022,15 @@ class Repository:
             self._write_restore_progress(operation_dir, plan)
 
     def _validate_restore_plan(self, plan: dict[str, Any]) -> None:
-        if (type(plan.get("version")) is not int or plan["version"] != RESTORE_PLAN_VERSION
-                or not isinstance(plan.get("actions"), list)):
+        if type(plan.get("version")) is not int or plan["version"] != RESTORE_PLAN_VERSION:
+            raise SproutError(
+                "invalid restore recovery plan: unsupported version; backups retained; "
+                "preserve the entire project including .sprout and reopen with a compatible Sprout version",
+                code="unsupported_restore_plan_version",
+                details={"found_version": plan.get("version"),
+                         "supported_version": RESTORE_PLAN_VERSION},
+            )
+        if not isinstance(plan.get("actions"), list):
             raise SproutError("invalid restore recovery plan")
         count = len(plan["actions"])
         if (type(plan.get("attempted")) is not int or not 0 <= plan["attempted"] <= count
@@ -3104,6 +3125,16 @@ class Repository:
             source = self._restore_internal(operation_dir / "staged" / relative)
             os.replace(source, destination)
             os.utime(destination, ns=(action["mtime_ns"], action["mtime_ns"]))
+
+    def _check_recovery_compatibility(self, active: str) -> None:
+        if not active.startswith("restore-") or Path(active).name != active:
+            raise SproutError("invalid active restore operation")
+        operation_dir = self._restore_internal(self.tmp / active)
+        try:
+            plan = self._read_restore_plan(operation_dir)
+            self._validate_restore_plan(plan)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise SproutError(f"cannot recover interrupted operation: {active}") from exc
 
     def _recover_pending_materialization(self) -> None:
         with self.connect() as db:

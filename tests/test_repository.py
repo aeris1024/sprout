@@ -135,7 +135,7 @@ def test_discover_rejects_unsupported_schema_without_modifying_it(
         db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
 
     assert_discover_rejected_without_changes(
-        repo, rf"unsupported repository schema version: {version} \(expected 1\); reinitialize"
+        repo, rf"unsupported repository schema version: {version} \(expected 1\); preserve the entire project"
     )
 
 
@@ -158,7 +158,7 @@ def test_discover_rejects_original_v1_structure_without_modifying_it(tmp_path: P
         db.close()
     write(repo.root, "asset.bin", b"unsaved work")
     write(repo.objects, "ab/ab-original", b"uncompressed object")
-    assert_discover_rejected_without_changes(repo, "missing tables: .*; reinitialize")
+    assert_discover_rejected_without_changes(repo, "missing tables: .*; preserve the entire project")
 
 
 def test_schema_check_reads_committed_version_from_wal(tmp_path: Path) -> None:
@@ -179,7 +179,7 @@ def test_discover_rejects_missing_schema_table_without_modifying_it(tmp_path: Pa
     with repo.connect() as db:
         db.execute("PRAGMA foreign_keys=OFF")
         db.execute(f"DROP TABLE {table}")
-    match = "cannot read repository" if table == "meta" else f"missing tables: {table}; reinitialize"
+    match = "cannot read repository" if table == "meta" else f"missing tables: {table}; preserve the entire project"
     assert_discover_rejected_without_changes(repo, match)
 
 
@@ -191,7 +191,7 @@ def test_discover_rejects_missing_metadata_without_modifying_it(tmp_path: Path, 
     repo = create_repo(tmp_path)
     with repo.connect() as db:
         db.execute("DELETE FROM meta WHERE key=?", (key,))
-    match = "schema version: missing" if key == "schema_version" else f"missing keys: {key}; reinitialize"
+    match = "schema version: missing" if key == "schema_version" else f"missing keys: {key}; preserve the entire project"
     assert_discover_rejected_without_changes(repo, match)
 
 

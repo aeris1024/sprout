@@ -705,6 +705,22 @@ describe("Sprout GUI operations", () => {
     expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
   });
 
+  it.each([
+    ["unsupported_repository_format", "unsupported repository schema version: 99; preserve the entire project including .sprout"],
+    ["unsupported_restore_plan_version", "invalid restore recovery plan: unsupported version; backups retained"],
+    ["unsupported_object_encoding", "unsupported object encoding 'future': abc123"],
+  ])("shows compatibility reasons for %s without offering initialization", async (code, message) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue(project);
+    mocks.runSprout.mockRejectedValueOnce({ code, message, details: {} });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+    expect(await screen.findByRole("heading", { name: "このプロジェクトを開けませんでした" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "このフォルダを初期化" })).toBeNull();
+    expect(mocks.runSprout).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a retry action for repository locks", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue(project);
