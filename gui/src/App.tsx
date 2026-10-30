@@ -674,15 +674,23 @@ function App() {
   function growBranch(commitId: string, name: string) {
     if (!projectDir) return;
     void execute(async () => {
+      let result: { bud: Bud | null };
       try {
-        await runSprout<GoResult>(projectDir, ["go", commitId], sproutProgram);
-        await runSprout(projectDir, ["branch", name, commitId, "--switch"], sproutProgram);
+        result = await runSprout<{ bud: Bud | null }>(projectDir, ["branch", name, commitId, "--switch", "--keep-changes"], sproutProgram);
       } catch (error) {
-        await fetchWorkspace(projectDir);
-        throw normalizeCliError(error);
+        // A refused branch moves nothing; the refresh only guards against an unexpected failure.
+        await fetchWorkspace(projectDir).catch(() => {});
+        throw unchangedError(error);
       }
       await fetchWorkspace(projectDir);
-      setNotice({ code: "branch_created", message: `${shortId(commitId)} から枝 ${name} を伸ばしました`, details: { name }, kind: "success" });
+      setNotice({
+        code: "branch_created",
+        message: result.bud
+          ? `未保存の変更をつぼみに残して ${shortId(commitId)} から枝 ${name} を伸ばしました`
+          : `${shortId(commitId)} から枝 ${name} を伸ばしました`,
+        details: { name },
+        kind: "success",
+      });
     });
   }
 

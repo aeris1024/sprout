@@ -504,19 +504,48 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await user.click(await screen.findByRole("button", { name: "ここから枝を伸ばす" }));
     await user.type(screen.getByLabelText("新しい枝の名前"), "rethink");
-    mocks.runSprout
-      .mockResolvedValueOnce({ current_commit: commitEntry.id, branch: "main", branch_id: "main", at_branch_tip: true, bud: null, changes: [] })
-      .mockResolvedValueOnce({ id: "rethink", name: "rethink", commit_id: commitEntry.id, comment: "", current: true });
+    mocks.runSprout.mockResolvedValueOnce({ id: "rethink", name: "rethink", commit_id: commitEntry.id, comment: "", current: true, bud: null });
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "枝を作って移動" }));
     expect(await screen.findByText("aaaaaaaaaaaa から枝 rethink を伸ばしました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["branch", "rethink", commitEntry.id, "--switch"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["branch", "rethink", commitEntry.id, "--switch", "--keep-changes"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "go")).toBe(false);
 
     mocks.open.mockResolvedValueOnce("C:\\work\\out");
     mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, output: "C:\\work\\out", paths: ["design/main.psd"] });
     await user.click(screen.getByRole("button", { name: "ファイルを取り出す" }));
     expect(await screen.findByText("1件のファイルを C:\\work\\out へ書き出しました")).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["export", commitEntry.id, "--output", "C:\\work\\out"], "");
+  });
+
+  it("keeps the typed name and reports nothing moved when a branch is refused", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "ここから枝を伸ばす" }));
+    await user.type(screen.getByLabelText("新しい枝の名前"), "main");
+    mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "branch already exists: main", details: {} });
+    mockWorkspace();
+    await user.click(screen.getByRole("button", { name: "枝を作って移動" }));
+    expect(await screen.findByText(/branch already exists: main.*作業フォルダは変更していません/)).toBeTruthy();
+    expect((screen.getByLabelText("新しい枝の名前") as HTMLInputElement).value).toBe("main");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "go")).toBe(false);
+  });
+
+  it("reports a bud kept while growing a branch", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "ここから枝を伸ばす" }));
+    await user.type(screen.getByLabelText("新しい枝の名前"), "rethink");
+    mocks.runSprout.mockResolvedValueOnce({ id: "rethink", bud: { id: "bud1" } });
+    mockWorkspace();
+    await user.click(screen.getByRole("button", { name: "枝を作って移動" }));
+    expect(await screen.findByText("未保存の変更をつぼみに残して aaaaaaaaaaaa から枝 rethink を伸ばしました")).toBeTruthy();
   });
 
   it("shows the sprout map with thumbnails and selected commit actions", async () => {

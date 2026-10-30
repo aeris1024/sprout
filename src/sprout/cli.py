@@ -1408,6 +1408,13 @@ def branch(
             help="Create the branch and switch to it, restoring the start point",
         ),
     ] = False,
+    keep_changes: Annotated[
+        bool,
+        typer.Option(
+            "--keep-changes",
+            help="With --switch, keep unsaved changes as a bud instead of refusing",
+        ),
+    ] = False,
     deleted: Annotated[
         bool, typer.Option("--deleted", help="List deleted branches and when they were deleted")
     ] = False,
@@ -1473,6 +1480,27 @@ def branch(
             _echo_json({"id": branch_id, "name": name, "comment": set_comment.strip()})
             return
         typer.echo(f"Updated comment for branch {name}")
+        return
+    if keep_changes and (name is None or not switch):
+        raise SproutError("--keep-changes requires a branch name and --switch")
+    if keep_changes:
+        with _show_progress(repository, enabled=not json_output):
+            commit_id, stashed = repository.grow_branch(name, comment, start_point=start_point)
+        if json_output:
+            _echo_json(
+                {
+                    "id": repository.branch_id(name),
+                    "name": name,
+                    "commit_id": commit_id,
+                    "comment": comment.strip(),
+                    "current": True,
+                    "bud": _bud_json(stashed) if stashed is not None else None,
+                }
+            )
+            return
+        if stashed is not None:
+            typer.echo(f"Saved bud {_bud_summary(stashed)}")
+        typer.echo(f"Created and switched to branch {name}")
         return
     if name is not None:
         with _show_progress(repository, enabled=not json_output):

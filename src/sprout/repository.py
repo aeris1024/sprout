@@ -3200,6 +3200,18 @@ class Repository:
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
+        self._insert_branch(name, commit_id, comment)
+        if switch:
+            try:
+                self._materialize(
+                    self.manifest(commit_id), head_branch=name, current_commit=commit_id
+                )
+            except Exception:
+                self._forget_unused_branch(name)
+                raise
+        return commit_id
+
+    def _insert_branch(self, name: str, commit_id: str, comment: str) -> None:
         try:
             with self.connect() as db:
                 if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
@@ -3210,20 +3222,36 @@ class Repository:
                 )
         except sqlite3.IntegrityError as exc:
             raise SproutError(f"branch already exists: {name}") from exc
-        if switch:
-            try:
-                self._materialize(
-                    self.manifest(commit_id), head_branch=name, current_commit=commit_id
-                )
-            except Exception:
-                with self.connect() as db:
-                    db.execute(
-                        "DELETE FROM branches WHERE name=? AND deleted=0 "
-                        "AND id != (SELECT head_branch_id FROM repository_state WHERE id=1)",
-                        (name,),
-                    )
-                raise
-        return commit_id
+
+    def _forget_unused_branch(self, name: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM branches WHERE name=? AND deleted=0 "
+                "AND id != (SELECT head_branch_id FROM repository_state WHERE id=1)",
+                (name,),
+            )
+
+    @locked
+    def grow_branch(
+        self, name: str, comment: str = "", *, start_point: str | None = None
+    ) -> tuple[str, Bud | None]:
+        """Create a branch and move to it, keeping unsaved changes as a bud.
+
+        The name is checked before anything moves, so a refused branch changes nothing.
+        """
+        self._validate_reference_name(name, "branch")
+        commit_id = self.resolve_commit(start_point) if start_point is not None else self.current_commit()
+        if commit_id is None:
+            raise SproutError("cannot create branch before first commit")
+        target = self.manifest(commit_id)
+        self._validate_restore_inputs(target)
+        self._insert_branch(name, commit_id, comment)
+        try:
+            stashed = self._materialize_keeping_changes(target, head_branch=name, current_commit=commit_id)
+        except Exception:
+            self._forget_unused_branch(name)
+            raise
+        return commit_id, stashed
 
     @locked
     def delete_branch(self, name: str) -> str:
