@@ -264,10 +264,10 @@ def test_thumbnail_content_gets_file_time_when_first_committed_as_file(tmp_path)
 
 
 @pytest.mark.parametrize("statement", [
-    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) "
-    "SELECT commit_id, 'other.bin', object_hash, size + 1, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
-    "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) "
-    "SELECT commit_id, 'other.bin', 'f' || substr(object_hash, 2), size, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, path_key, object_hash, size, mtime_ns, file_id) "
+    "SELECT commit_id, 'other.bin', 'other.bin', object_hash, size + 1, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
+    "INSERT INTO commit_files(commit_id, path, path_key, object_hash, size, mtime_ns, file_id) "
+    "SELECT commit_id, 'other.bin', 'other.bin', 'f' || substr(object_hash, 2), size, mtime_ns, 'ffffffffffffffffffffffffffffffff' FROM commit_files",
     "DELETE FROM objects",
     "UPDATE objects SET hash='ABC'",
     "UPDATE objects SET stored_size=-1",

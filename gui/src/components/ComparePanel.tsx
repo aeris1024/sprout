@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { normalizeCliError, runSprout, type CommitGraph, type SproutCliError } from "../lib/sprout";
 
-type Difference = { state: string; path: string; old_size: number | null; new_size: number | null };
+type Difference = { state: string; path: string; old_size: number | null; new_size: number | null; previous_path?: string };
 interface Props {
   projectDir: string;
   program: string;
@@ -12,7 +12,7 @@ interface Props {
   onChange: (source: string, target: string) => void;
   onClose: () => void;
 }
-const labels: Record<string, string> = { added: "追加", modified: "変更", deleted: "削除" };
+const labels: Record<string, string> = { added: "追加", modified: "変更", deleted: "削除", renamed: "改名" };
 
 export default function ComparePanel({ projectDir, program, commits, source, target, busy, onChange, onClose }: Props) {
   const [result, setResult] = useState<Difference[] | null>(null);
@@ -52,6 +52,6 @@ export default function ComparePanel({ projectDir, program, commits, source, tar
     </label>)}
     <button className="button primary" disabled={busy || loading || !valid} onClick={() => void compare()}>{loading ? "比較中…" : "比較する"}</button>
     {error && <div role="alert"><p>{error.message}</p><code>{error.code}</code>{typeof error.details.path === "string" && <p>{error.details.path}</p>}</div>}
-    {result && (result.length === 0 ? <p role="status">差分はありません</p> : <ul className="file-list" aria-label="ファイル差分">{result.map((entry) => <li className="file-row" key={entry.path}><span>{labels[entry.state] ?? entry.state}</span><span>{entry.path}</span><small>{entry.old_size ?? "—"} → {entry.new_size ?? "—"} B</small></li>)}</ul>)}
+    {result && (result.length === 0 ? <p role="status">差分はありません</p> : <ul className="file-list" aria-label="ファイル差分">{result.map((entry) => <li className="file-row" key={entry.path}><span>{labels[entry.state] ?? entry.state}</span><span>{entry.previous_path ? `${entry.previous_path} → ${entry.path}` : entry.path}</span><small>{entry.old_size ?? "—"} → {entry.new_size ?? "—"} B</small></li>)}</ul>)}
   </section>;
 }

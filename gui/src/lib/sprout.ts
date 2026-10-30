@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export interface StatusChange {
-  state: "added" | "modified" | "deleted" | string;
+  state: "added" | "modified" | "deleted" | "renamed" | string;
   path: string;
+  /** Saved spelling of the path when only its spelling changed. */
+  previous_path?: string;
 }
 
 export interface SproutStatus {

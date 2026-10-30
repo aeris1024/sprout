@@ -122,6 +122,34 @@ def utc_timestamp(moment: datetime | None = None) -> str:
     return moment.isoformat(timespec="microseconds")
 
 
+def path_key(path: str) -> str:
+    """Identify a path across letter case and Unicode composition on every OS."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", path).casefold())
+
+
+def reject_path_conflicts(paths: Iterable[str]) -> None:
+    """Reject paths that would land on one file, or on a file and its descendant."""
+    by_key: dict[str, str] = {}
+    for path in sorted(paths):
+        other = by_key.setdefault(path_key(path), path)
+        if other != path:
+            raise SproutError(
+                f"path conflicts with {other}: {path}",
+                code="path_case_conflict",
+                details={"path": path, "conflicting_path": other},
+            )
+    for key, path in by_key.items():
+        parts = key.split("/")
+        for index in range(1, len(parts)):
+            other = by_key.get("/".join(parts[:index]))
+            if other is not None:
+                raise SproutError(
+                    f"path conflicts with {other}: {path}",
+                    code="path_case_conflict",
+                    details={"path": path, "conflicting_path": other},
+                )
+
+
 SCHEMA = f"""
 PRAGMA foreign_keys = ON;
 CREATE TABLE meta (
@@ -186,11 +214,13 @@ CREATE TABLE file_identities (
 CREATE TABLE commit_files (
     commit_id TEXT NOT NULL REFERENCES commits(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
+    path_key TEXT NOT NULL,
     file_id TEXT NOT NULL REFERENCES file_identities(id),
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
     PRIMARY KEY (commit_id, path),
+    UNIQUE (commit_id, path_key),
     UNIQUE (commit_id, file_id),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
@@ -245,6 +275,7 @@ CREATE TABLE tags (
 );
 CREATE TABLE tracked_paths (
     path TEXT PRIMARY KEY NOT NULL,
+    path_key TEXT NOT NULL UNIQUE,
     file_id TEXT NOT NULL UNIQUE REFERENCES file_identities(id)
 );
 CREATE TABLE buds (
@@ -258,11 +289,13 @@ CREATE TABLE buds (
 CREATE TABLE bud_files (
     bud_id TEXT NOT NULL REFERENCES buds(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
+    path_key TEXT NOT NULL,
     file_id TEXT NOT NULL REFERENCES file_identities(id),
     object_hash TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
     mtime_ns INTEGER NOT NULL CHECK (typeof(mtime_ns) = 'integer'),
     PRIMARY KEY (bud_id, path),
+    UNIQUE (bud_id, path_key),
     UNIQUE (bud_id, file_id),
     FOREIGN KEY (object_hash, size) REFERENCES objects(hash, size)
 );
@@ -304,6 +337,7 @@ class FileState:
 class StatusEntry:
     state: str
     path: str
+    previous_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +346,7 @@ class DiffEntry:
     path: str
     old_size: int | None = None
     new_size: int | None = None
+    previous_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -791,7 +826,67 @@ class Repository:
 
     @staticmethod
     def _path_key(path: str) -> str:
-        return os.path.normcase(path) if os.name == "nt" else path
+        return path_key(path)
+
+    def _relative_destination(self, value: Path) -> str:
+        """Resolve a new path while keeping the spelling the user typed for its name."""
+        absolute = value if value.is_absolute() else Path.cwd() / value
+        if absolute.name in {"", ".", ".."}:
+            return self._relative_file(value, must_exist=False)
+        try:
+            relative = (absolute.parent.resolve(strict=False) / absolute.name).relative_to(self.root)
+        except ValueError as exc:
+            raise SproutError(f"path is outside the project: {value}") from exc
+        if relative.parts[0] == CONTROL_DIR:
+            raise SproutError(f"cannot track Sprout metadata: {value}")
+        return relative.as_posix()
+
+    def _disk_spellings(self, paths: Iterable[str]) -> dict[str, str | None]:
+        """Find how each path is actually spelled on disk; None when it is missing."""
+        listings: dict[Path, tuple[set[str], dict[str, list[str]]]] = {}
+
+        def lookup(directory: Path, name: str) -> str | None:
+            if directory not in listings:
+                try:
+                    names = os.listdir(directory)
+                except OSError:
+                    names = []
+                by_key: dict[str, list[str]] = {}
+                for item in names:
+                    by_key.setdefault(path_key(item), []).append(item)
+                listings[directory] = (set(names), by_key)
+            exact, by_key = listings[directory]
+            if name in exact:
+                return name
+            matches = by_key.get(path_key(name), [])
+            return matches[0] if len(matches) == 1 else None
+
+        result: dict[str, str | None] = {}
+        for relative in paths:
+            current = self.root
+            parts: list[str] = []
+            for part in relative.split("/"):
+                actual = lookup(current, part)
+                if actual is None:
+                    parts = []
+                    break
+                parts.append(actual)
+                current = current / actual
+            result[relative] = "/".join(parts) if parts and current.is_file() else None
+        return result
+
+    def _adopt_disk_spellings(self) -> None:
+        """Record spelling-only renames made outside Sprout; the file ID is kept."""
+        spellings = self._disk_spellings(self.tracked())
+        changed = {old: new for old, new in spellings.items() if new is not None and new != old}
+        if not changed:
+            return
+        with self.connect() as db:
+            db.executemany(
+                "UPDATE tracked_paths SET path=? WHERE path=?",
+                ((new, old) for old, new in changed.items()),
+            )
+        self.worktree_cache.invalidate([*changed, *changed.values()])
 
     def _ignore_rules(self) -> list[IgnoreRule]:
         path = self.root / IGNORE_FILE
@@ -877,13 +972,45 @@ class Repository:
             else:
                 raise SproutError(f"file or directory does not exist: {value}")
         with self.connect() as db:
+            existing = {path_key(row[0]): row[0] for row in db.execute("SELECT path FROM tracked_paths")}
+            final = dict(existing)
+            added: list[str] = []
+            respelled: dict[str, str] = {}
             for path in sorted(paths):
-                if not db.execute("SELECT 1 FROM tracked_paths WHERE path=?", (path,)).fetchone():
-                    file_id = uuid.uuid4().hex
-                    db.execute("INSERT INTO file_identities(id) VALUES(?)", (file_id,))
-                    db.execute("INSERT INTO tracked_paths(path,file_id) VALUES(?,?)", (path, file_id))
-        self.worktree_cache.invalidate(paths)
+                key = path_key(path)
+                current = final.get(key)
+                if current == path:
+                    continue
+                if current is None:
+                    added.append(path)
+                elif current in existing.values() and self._same_working_file(current, path):
+                    respelled[current] = path
+                else:
+                    raise SproutError(
+                        f"path conflicts with {current}: {path}",
+                        code="path_case_conflict",
+                        details={"path": path, "conflicting_path": current},
+                    )
+                final[key] = path
+            reject_path_conflicts(final.values())
+            db.executemany(
+                "UPDATE tracked_paths SET path=? WHERE path=?",
+                ((new, old) for old, new in respelled.items()),
+            )
+            for path in added:
+                file_id = uuid.uuid4().hex
+                db.execute("INSERT INTO file_identities(id) VALUES(?)", (file_id,))
+                db.execute(
+                    "INSERT INTO tracked_paths(path,path_key,file_id) VALUES(?,?,?)",
+                    (path, path_key(path), file_id),
+                )
+        self.worktree_cache.invalidate([*paths, *respelled])
         return sorted(paths)
+
+    def _same_working_file(self, tracked: str, candidate: str) -> bool:
+        """Tell a respelled file from a second file that differs only by spelling."""
+        old, new = self.root / Path(tracked), self.root / Path(candidate)
+        return not old.exists() or (new.exists() and os.path.samefile(old, new))
 
     @locked
     def untrack(self, values: list[Path]) -> list[str]:
@@ -893,7 +1020,7 @@ class Repository:
             for value in values:
                 relative = self._relative_file(value, must_exist=False)
                 relative_key = self._path_key(relative)
-                prefix_key = relative_key.rstrip("/\\") + os.sep
+                prefix_key = relative_key.rstrip("/") + "/"
                 requested.extend(
                     path
                     for path in tracked
@@ -911,6 +1038,7 @@ class Repository:
             raise SproutError(f"symbolic links are not supported: {source}")
         if not source_input.exists():
             raise SproutError(f"file does not exist: {source}")
+        self._adopt_disk_spellings()
         source_relative = self._relative_file(source)
         tracked = self.tracked()
         if source_relative not in tracked:
@@ -919,30 +1047,52 @@ class Repository:
         if not source_absolute.is_file():
             raise SproutError(f"tracked path is not a file: {source}")
 
-        destination_relative = self._relative_file(destination, must_exist=False)
+        destination_relative = self._relative_destination(destination)
         destination_absolute = self.root / Path(destination_relative)
-        if destination_absolute.exists():
+        respelling = (
+            destination_relative != source_relative
+            and path_key(destination_relative) == path_key(source_relative)
+        )
+        if destination_absolute.exists() and not (
+            respelling and os.path.samefile(source_absolute, destination_absolute)
+        ):
             raise SproutError(f"destination already exists: {destination}")
         if destination_absolute.is_symlink():
             raise SproutError(f"symbolic links are not supported: {destination}")
-        if destination_relative in tracked:
+        others = tracked - {source_relative}
+        if path_key(destination_relative) in {path_key(path) for path in others}:
             raise SproutError(f"destination is already tracked: {destination}")
+        reject_path_conflicts(others | {destination_relative})
 
         destination_absolute.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(source_absolute, destination_absolute)
+        self._rename_file(source_absolute, destination_absolute, respelling=respelling)
         try:
             with self.connect() as db:
                 db.execute(
-                    "UPDATE tracked_paths SET path=? WHERE path=?",
-                    (destination_relative, source_relative),
+                    "UPDATE tracked_paths SET path=?, path_key=? WHERE path=?",
+                    (destination_relative, path_key(destination_relative), source_relative),
                 )
         except Exception:
-            if destination_absolute.is_file() and not source_absolute.exists():
+            if destination_absolute.is_file() and (respelling or not source_absolute.exists()):
                 source_absolute.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(destination_absolute, source_absolute)
+                self._rename_file(destination_absolute, source_absolute, respelling=respelling)
             raise
         self.worktree_cache.invalidate([source_relative, destination_relative])
         return source_relative, destination_relative
+
+    @staticmethod
+    def _rename_file(source: Path, destination: Path, *, respelling: bool) -> None:
+        """Rename a file; a spelling-only change goes through a temporary name."""
+        if not respelling:
+            os.replace(source, destination)
+            return
+        temporary = destination.with_name(f".sprout-rename-{uuid.uuid4().hex}")
+        os.replace(source, temporary)
+        try:
+            os.replace(temporary, destination)
+        except OSError:
+            os.replace(temporary, source)
+            raise
 
     def tracked(self) -> set[str]:
         with self.connect() as db:
@@ -955,24 +1105,25 @@ class Repository:
     def tracking_status(self, values: list[Path]) -> list[tuple[str, bool]]:
         """Return tracked state for files, or tracked descendants for directories."""
         tracked = self.tracked()
+        tracked_keys = {path_key(path) for path in tracked}
         results: dict[str, bool] = {}
         for value in values:
             relative = self._relative_file(value, must_exist=False)
             absolute = self.root / Path(relative)
-            prefix = relative.rstrip("/") + "/"
+            prefix = path_key(relative.rstrip("/") + "/")
             if absolute.is_dir():
-                descendants = sorted(path for path in tracked if path.startswith(prefix))
+                descendants = sorted(path for path in tracked if path_key(path).startswith(prefix))
                 for path in descendants:
                     results[path] = True
                 if not descendants:
                     results[relative + "/"] = False
             else:
-                results[relative] = relative in tracked
+                results[relative] = path_key(relative) in tracked_keys
         return sorted(results.items())
 
     def untracked_files(self) -> list[str]:
         """List regular project files that are not registered for commits."""
-        tracked = self.tracked()
+        tracked = {path_key(path) for path in self.tracked()}
         rules = self._ignore_rules()
         result: list[str] = []
         for directory, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
@@ -994,7 +1145,7 @@ class Repository:
                 if path.is_symlink():
                     continue
                 normalized = path.relative_to(self.root).as_posix()
-                if normalized in tracked:
+                if path_key(normalized) in tracked:
                     continue
                 if self._is_ignored(normalized, rules):
                     continue
@@ -1157,48 +1308,69 @@ class Repository:
             return self._manifest_from_db(db, commit_id)
 
     def status(self) -> list[StatusEntry]:
-        bindings = self.tracked_ids()
-        tracked = set(bindings)
+        bindings = self._spelled_bindings()
         head = self.manifest(self.current_commit())
-        present = {relative for relative in tracked if (self.root / Path(relative)).is_file()}
-        hashes = self._hash_worktree_files(present & set(head))
+        head_by_key = {path_key(path): path for path in head}
+        present = {relative for relative in bindings if (self.root / Path(relative)).is_file()}
+        hashes = self._hash_worktree_files(
+            relative for relative in present if path_key(relative) in head_by_key
+        )
         result: list[StatusEntry] = []
-        for relative in sorted(tracked | set(head)):
+        matched: set[str] = set()
+        for relative in sorted(bindings):
+            saved = head_by_key.get(path_key(relative))
+            if saved is not None:
+                matched.add(saved)
             if relative not in present:
-                if relative in head:
-                    result.append(StatusEntry("deleted", relative))
+                if saved is not None:
+                    result.append(StatusEntry("deleted", saved))
                 continue
-            if relative not in head:
+            if saved is None:
                 result.append(StatusEntry("added", relative))
                 continue
+            if saved != relative:
+                result.append(StatusEntry("renamed", relative, saved))
+                continue
             digest, size = hashes[relative]
-            if (digest != head[relative].object_hash or size != head[relative].size
-                    or bindings.get(relative) != head[relative].file_id):
+            if (digest != head[saved].object_hash or size != head[saved].size
+                    or bindings[relative] != head[saved].file_id):
                 result.append(StatusEntry("modified", relative))
-        return result
+        result.extend(StatusEntry("deleted", path) for path in set(head) - matched)
+        return sorted(result, key=lambda entry: entry.path)
+
+    def _spelled_bindings(self) -> dict[str, str]:
+        """Tracked paths and IDs as they are spelled on disk now, without recording it."""
+        bindings = self.tracked_ids()
+        spellings = self._disk_spellings(bindings)
+        return {spellings[path] or path: file_id for path, file_id in bindings.items()}
 
     @staticmethod
     def diff_manifests(
         before: dict[str, FileState], after: dict[str, FileState]
     ) -> list[DiffEntry]:
         result: list[DiffEntry] = []
-        for relative in sorted(set(before) | set(after)):
-            if relative not in before:
-                item = after[relative]
-                result.append(DiffEntry("added", relative, None, item.size))
-            elif relative not in after:
-                item = before[relative]
-                result.append(DiffEntry("deleted", relative, item.size, None))
-            else:
-                left = before[relative]
-                right = after[relative]
-                if left.object_hash != right.object_hash or left.size != right.size or left.file_id != right.file_id:
-                    result.append(DiffEntry("modified", relative, left.size, right.size))
-        return result
+        before_keys = {path_key(path): item for path, item in before.items()}
+        after_keys = {path_key(path): item for path, item in after.items()}
+        for key in before_keys.keys() | after_keys.keys():
+            left = before_keys.get(key)
+            right = after_keys.get(key)
+            if left is not None and right is not None and (
+                left.path == right.path or left.file_id == right.file_id
+            ):
+                if left.path != right.path:
+                    result.append(DiffEntry("renamed", right.path, left.size, right.size, left.path))
+                elif left.object_hash != right.object_hash or left.size != right.size or left.file_id != right.file_id:
+                    result.append(DiffEntry("modified", right.path, left.size, right.size))
+                continue
+            if right is not None:
+                result.append(DiffEntry("added", right.path, None, right.size))
+            if left is not None:
+                result.append(DiffEntry("deleted", left.path, left.size, None))
+        return sorted(result, key=lambda entry: entry.path)
 
     def _working_tree_manifest(self) -> dict[str, FileState]:
-        bindings = self.tracked_ids()
-        present = (relative for relative in self.tracked() if (self.root / Path(relative)).is_file())
+        bindings = self._spelled_bindings()
+        present = (relative for relative in bindings if (self.root / Path(relative)).is_file())
         return {
             relative: FileState(relative, digest, size, 0, bindings[relative])
             for relative, (digest, size) in self._hash_worktree_files(present).items()
@@ -1412,6 +1584,7 @@ class Repository:
 
     def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
         """Store every present tracked file and list tracked paths that are missing."""
+        self._adopt_disk_spellings()
         identities = self.tracked_ids()
         files: list[FileState] = []
         missing: list[str] = []
@@ -1476,8 +1649,12 @@ class Repository:
                 ),
             )
             db.executemany(
-                "INSERT INTO commit_files(commit_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
-                ((commit_id, item.path, item.object_hash, item.size, item.mtime_ns, item.file_id) for item in files),
+                "INSERT INTO commit_files(commit_id, path, path_key, object_hash, size, mtime_ns, file_id) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    (commit_id, item.path, path_key(item.path), item.object_hash, item.size, item.mtime_ns, item.file_id)
+                    for item in files
+                ),
             )
             if prepared_thumbnail is not None:
                 original_name, media_type, object_hash, size = prepared_thumbnail
@@ -2216,8 +2393,8 @@ class Repository:
     @staticmethod
     def _commit_path_hash(db: sqlite3.Connection, commit_id: str, path: str) -> str | None:
         row = db.execute(
-            "SELECT object_hash FROM commit_files WHERE commit_id=? AND path=?",
-            (commit_id, path),
+            "SELECT object_hash FROM commit_files WHERE commit_id=? AND path_key=?",
+            (commit_id, path_key(path)),
         ).fetchone()
         return row[0] if row else None
 
@@ -2316,6 +2493,17 @@ class Repository:
                 for row in db.execute(f"SELECT DISTINCT f.file_id FROM {table} f "
                                       "LEFT JOIN file_identities i ON i.id=f.file_id WHERE i.id IS NULL"):
                     issues.append(DoctorIssue("missing_file_identity", row[0]))
+            for table, scope in (('tracked_paths', "''"), ('commit_files', 'commit_id'), ('bud_files', 'bud_id')):
+                groups: dict[str, list[str]] = {}
+                for row in db.execute(f"SELECT {scope} AS scope, path, path_key FROM {table}"):
+                    groups.setdefault(row["scope"], []).append(row["path"])
+                    if path_key(row["path"]) != row["path_key"]:
+                        issues.append(DoctorIssue("invalid_path_key", f"{table}:{row['path']}"))
+                for scope_id, paths in groups.items():
+                    try:
+                        reject_path_conflicts(paths)
+                    except SproutError as exc:
+                        issues.append(DoctorIssue("path_conflict", f"{table}:{scope_id}:{exc.details['path']}"))
             for name in SEQUENCE_TABLES:
                 counter = db.execute("SELECT last_value FROM id_sequences WHERE name=?", (name,)).fetchone()
                 highest = db.execute(f"SELECT COALESCE(MAX(seq), 0) FROM {name}").fetchone()[0]
@@ -3133,14 +3321,18 @@ class Repository:
         return files
 
     def _validate_restore_inputs(self, target: dict[str, FileState], *, partial: bool = False) -> None:
+        self._adopt_disk_spellings()
         ids = [item.file_id for item in target.values()]
         if len(set(ids)) != len(ids):
             raise SproutError("duplicate file identity in snapshot", code="file_identity_conflict")
+        reject_path_conflicts(target)
         if partial:
-            bindings = self.tracked_ids()
+            bindings = {path_key(path): identity for path, identity in self.tracked_ids().items()}
+            target_keys = {path_key(path) for path in target}
             for path, item in target.items():
-                if (path in bindings and bindings[path] != item.file_id) or any(
-                    p not in target and identity == item.file_id for p, identity in bindings.items()
+                key = path_key(path)
+                if (key in bindings and bindings[key] != item.file_id) or any(
+                    p not in target_keys and identity == item.file_id for p, identity in bindings.items()
                 ):
                     raise SproutError(f"partial restore file identity collision: {path}",
                                       code="file_identity_conflict", details={"path": path, "file_id": item.file_id})
@@ -3420,14 +3612,14 @@ class Repository:
         with self.connect() as db:
             if partial:
                 db.executemany(
-                    "INSERT INTO tracked_paths(path,file_id) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET file_id=excluded.file_id",
-                    ((path, item.file_id) for path, item in target.items()),
+                    "DELETE FROM tracked_paths WHERE path_key=?", ((path_key(path),) for path in target)
                 )
             else:
                 db.execute("DELETE FROM tracked_paths")
-                db.executemany(
-                    "INSERT INTO tracked_paths(path,file_id) VALUES(?,?)", ((path, item.file_id) for path, item in target.items())
-                )
+            db.executemany(
+                "INSERT INTO tracked_paths(path,path_key,file_id) VALUES(?,?,?)",
+                ((path, path_key(path), item.file_id) for path, item in target.items()),
+            )
             if head_branch is not None:
                 db.execute("UPDATE repository_state SET head_branch_id=? WHERE id=1", (self._branch_id_from_db(db, head_branch),))
             if current_commit is not UNCHANGED:
@@ -3491,6 +3683,7 @@ class Repository:
             operation_complete = True  # DB commit is the commit point; never undo it.
             if not partial:
                 self._remove_empty_parents(current - set(target))
+                self._apply_saved_spellings(target)
         except Exception:
             if operation_complete:
                 raise
@@ -3534,6 +3727,21 @@ class Repository:
                 self._restore_tree_files(operation_dir)
                 shutil.rmtree(operation_dir, ignore_errors=True)
 
+    def _apply_saved_spellings(self, target: dict[str, FileState]) -> None:
+        """Respell folders kept by a restore; a failure only leaves a reported rename."""
+        for relative in target:
+            actual = self._disk_spellings([relative])[relative]
+            if actual is None or actual == relative:
+                continue
+            current = self.root
+            try:
+                for wanted, found in zip(relative.split("/"), actual.split("/")):
+                    if wanted != found:
+                        self._rename_file(current / found, current / wanted, respelling=True)
+                    current = current / wanted
+            except OSError:
+                return
+
     def _snapshot_ids_match(self, db: sqlite3.Connection, commit_id: str,
                             signature: dict[str, tuple[str, int]]) -> bool:
         bindings = self.tracked_ids()
@@ -3553,8 +3761,12 @@ class Repository:
         return self._matching_saved_snapshot_commit(signature) is not None
 
     def _has_unsaved_changes(self, paths: set[str] | None = None) -> bool:
+        self._adopt_disk_spellings()
         tracked = self.tracked()
         head = self.manifest(self.current_commit())
+        if paths is not None:
+            spelled = {path_key(path): path for path in tracked}
+            paths = {spelled.get(path_key(path), path) for path in paths}
         if paths is None:
             hash_paths = tracked
             status_paths = tracked | set(head)
@@ -3601,11 +3813,12 @@ class Repository:
         selected: set[str] = set()
         for value in values:
             relative = self._relative_file(value, must_exist=False)
-            if relative in manifest:
-                selected.add(relative)
+            saved = {path_key(path): path for path in manifest}.get(path_key(relative))
+            if saved is not None:
+                selected.add(saved)
                 continue
-            prefix = relative.rstrip("/") + "/"
-            matches = {path for path in manifest if path.startswith(prefix)}
+            prefix = path_key(relative.rstrip("/") + "/")
+            matches = {path for path in manifest if path_key(path).startswith(prefix)}
             if not matches:
                 raise SproutError(f"path not in commit: {relative}")
             selected.update(matches)
@@ -4101,7 +4314,7 @@ class Repository:
                     branch_name=row["branch_name"],
                     created_at=row["created_at"],
                     files=tuple(files[row["id"]]),
-                    changes=tuple(StatusEntry(entry.state, entry.path) for entry in changes),
+                    changes=tuple(StatusEntry(entry.state, entry.path, entry.previous_path) for entry in changes),
                 )
             )
         return buds
@@ -4146,8 +4359,12 @@ class Repository:
                 (bud_id, recovery.next_seq(db, "buds"), base, branch_id, branch_name, created_at),
             )
             db.executemany(
-                "INSERT INTO bud_files(bud_id, path, object_hash, size, mtime_ns, file_id) VALUES(?,?,?,?,?,?)",
-                ((bud_id, item.path, item.object_hash, item.size, item.mtime_ns, item.file_id) for item in files),
+                "INSERT INTO bud_files(bud_id, path, path_key, object_hash, size, mtime_ns, file_id) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    (bud_id, item.path, path_key(item.path), item.object_hash, item.size, item.mtime_ns, item.file_id)
+                    for item in files
+                ),
             )
             return self._buds_from_db(db, [bud_id])[0]
 

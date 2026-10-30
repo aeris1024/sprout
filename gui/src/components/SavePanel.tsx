@@ -4,6 +4,7 @@ const stateLabels: Record<string, string> = {
   added: "追加",
   modified: "変更",
   deleted: "削除",
+  renamed: "改名",
 };
 
 interface SavePanelProps {
@@ -42,7 +43,7 @@ export default function SavePanel({
           {changes.map((change) => (
             <div className="change-row" key={`${change.state}:${change.path}`}>
               <span className={`state-badge ${change.state}`}>{stateLabels[change.state] ?? change.state}</span>
-              <span>{change.path}</span>
+              <span>{change.previous_path ? `${change.previous_path} → ${change.path}` : change.path}</span>
             </div>
           ))}
         </div>

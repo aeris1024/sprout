@@ -1516,14 +1516,14 @@ def test_move_rejects_invalid_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         repo.move(Path("missing.txt"), Path("new.txt"))
     with repo.connect() as db:
         db.execute("INSERT INTO file_identities(id) VALUES(?)", ('d' * 32,))
-        db.execute("INSERT INTO tracked_paths(path,file_id) VALUES('dir',?)", ('d' * 32,))
+        db.execute("INSERT INTO tracked_paths(path,path_key,file_id) VALUES('dir','dir',?)", ('d' * 32,))
     with pytest.raises(SproutError, match="not a file"):
         repo.move(directory, Path("new.txt"))
     with pytest.raises(SproutError, match="destination already exists"):
         repo.move(tracked, existing)
     with repo.connect() as db:
         db.execute("INSERT INTO file_identities(id) VALUES(?)", ('e' * 32,))
-        db.execute("INSERT INTO tracked_paths(path,file_id) VALUES('reserved.txt',?)", ('e' * 32,))
+        db.execute("INSERT INTO tracked_paths(path,path_key,file_id) VALUES('reserved.txt','reserved.txt',?)", ('e' * 32,))
     with pytest.raises(SproutError, match="already tracked"):
         repo.move(tracked, Path("reserved.txt"))
     with pytest.raises(SproutError, match="outside"):
@@ -2559,7 +2559,7 @@ def test_untrack_deleted_file_ignores_case_on_windows(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Case-sensitive behavior is for non-Windows systems")
-def test_untrack_deleted_file_preserves_case_sensitivity_off_windows(
+def test_untrack_deleted_file_ignores_case_off_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = create_repo(tmp_path)
@@ -2568,8 +2568,8 @@ def test_untrack_deleted_file_preserves_case_sensitivity_off_windows(
     repo.track([tracked])
     tracked.unlink()
 
-    assert repo.untrack([Path("FOLDER/FILE.TXT")]) == []
-    assert repo.tracked() == {"folder/file.txt"}
+    assert repo.untrack([Path("FOLDER/FILE.TXT")]) == ["folder/file.txt"]
+    assert repo.tracked() == set()
 
 
 def test_rejects_branch_before_first_commit(tmp_path: Path) -> None:

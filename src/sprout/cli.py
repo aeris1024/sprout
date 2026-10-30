@@ -27,6 +27,7 @@ from .repository import (
     PreviewPlan,
     PruneResult,
     Repository,
+    StatusEntry,
     UNCHANGED,
 )
 
@@ -296,6 +297,19 @@ def _tag_json(repository: Repository, name: str) -> dict[str, Any]:
     raise SproutError(f"unknown tag: {name}")
 
 
+def _change_json(entry: StatusEntry) -> dict[str, Any]:
+    change = {"state": entry.state, "path": entry.path}
+    if entry.previous_path is not None:
+        change["previous_path"] = entry.previous_path
+    return change
+
+
+def _change_text(entry: StatusEntry) -> str:
+    if entry.previous_path is None:
+        return f"{entry.state:<8} {entry.path}"
+    return f"{entry.state:<8} {entry.path} (was {entry.previous_path})"
+
+
 def _bud_json(bud: Bud) -> dict[str, Any]:
     return {
         "id": bud.id,
@@ -303,7 +317,7 @@ def _bud_json(bud: Bud) -> dict[str, Any]:
         "branch_name": bud.branch_name,
         "branch_id": bud.branch_id,
         "created_at": bud.created_at,
-        "changes": [{"state": entry.state, "path": entry.path} for entry in bud.changes],
+        "changes": [_change_json(entry) for entry in bud.changes],
         "files": [
             {
                 "path": item.path,
@@ -622,7 +636,7 @@ def status(
         payload: dict[str, Any] = {
             "branch": branch_name,
             **position,
-            "changes": [{"state": entry.state, "path": entry.path} for entry in entries],
+            "changes": [_change_json(entry) for entry in entries],
         }
         if tracked:
             payload["tracked"] = sorted(repository.tracked())
@@ -634,7 +648,7 @@ def status(
     if not entries:
         typer.echo("Working tree clean")
     for entry in entries:
-        typer.echo(f"{entry.state:<8} {entry.path}")
+        typer.echo(_change_text(entry))
     if tracked:
         typer.echo("\nTracked files:")
         tracked_paths = sorted(repository.tracked())
@@ -799,6 +813,7 @@ def diff(
                 "path": entry.path,
                 "old_size": entry.old_size,
                 "new_size": entry.new_size,
+                **({"previous_path": entry.previous_path} if entry.previous_path is not None else {}),
             }
             for entry in entries
         ])
@@ -807,7 +822,9 @@ def diff(
         typer.echo("No differences")
         return
     for entry in entries:
-        if entry.state == "modified" and entry.old_size is not None and entry.new_size is not None:
+        if entry.state == "renamed":
+            typer.echo(f"{entry.state:<8} {entry.path} (was {entry.previous_path})")
+        elif entry.state == "modified" and entry.old_size is not None and entry.new_size is not None:
             typer.echo(
                 f"{entry.state:<8} {entry.path}  ({entry.old_size} bytes -> {entry.new_size} bytes)"
             )
@@ -1614,9 +1631,7 @@ def go(
                 "branch_id": result.branch_id,
                 "at_branch_tip": result.at_branch_tip,
                 "bud": _bud_json(result.bud) if result.bud is not None else None,
-                "changes": [
-                    {"state": entry.state, "path": entry.path} for entry in result.changes
-                ],
+                "changes": [_change_json(entry) for entry in result.changes],
             }
         )
         return
