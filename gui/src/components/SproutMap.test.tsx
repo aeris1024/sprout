@@ -1,10 +1,107 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import SproutMap from "./SproutMap";
 import type { Bud, CommitGraph } from "../lib/sprout";
 
 afterEach(cleanup);
+
+function renderLeaves(onSelect = vi.fn()) {
+  const commit = { parent_id: null, branch_id: "b1", branch_name: "main", created_at: "2026-10-30T03:04:05.000000+00:00", attachments: [], note: null, note_updated_at: null, labels: [] as string[] };
+  const graph: CommitGraph = {
+    current_commit: "c3",
+    at_branch_tip: true,
+    commits: [
+      { ...commit, id: "c1", message: "ラフ案を作成" },
+      { ...commit, id: "c2", parent_id: "c1", message: "Client Review", note: "確認済み", labels: ["承認済み", "wip"] },
+      { ...commit, id: "c3", parent_id: "c2", message: "とても長いメッセージなのでマップの葉では省略されてしまう説明" },
+    ],
+    branches: [{ id: "b1", name: "main", commit_id: "c3", comment: "", current: true }],
+    tags: [{ name: "submitted", commit_id: "c1", comment: "", created_at: commit.created_at }],
+    buds: [],
+  };
+  render(<SproutMap graph={graph} selection={null} unsavedCount={0} projectDir="C:/p" sproutProgram="" onSelect={onSelect} onSelectBud={vi.fn()} onSelectBranch={vi.fn()} onSelectUnsaved={vi.fn()} />);
+  const leaf = (name: string | RegExp) => screen.getByRole("button", { name });
+  return { leaf, search: screen.getByLabelText("葉を検索") };
+}
+
+function leafDimmed(element: HTMLElement) {
+  return element.classList.contains("dimmed");
+}
+
+describe("leaf information", () => {
+  it("shows the full message and time on hover and keyboard focus", () => {
+    const { leaf } = renderLeaves();
+    const long = leaf(/とても長いメッセージ/);
+    expect(long.querySelector("title")?.textContent).toContain("説明");
+    expect(document.querySelector(".map-hint")).toBeNull();
+
+    fireEvent.mouseEnter(long);
+    expect(document.querySelector(".map-hint")?.textContent).toContain("省略されてしまう説明");
+    expect(document.querySelector(".map-hint")?.textContent).toContain("2026/10/30");
+    fireEvent.mouseLeave(long);
+    expect(document.querySelector(".map-hint")).toBeNull();
+
+    fireEvent.focus(long);
+    expect(document.querySelector(".map-hint")?.textContent).toContain("省略されてしまう説明");
+    fireEvent.blur(long);
+    expect(document.querySelector(".map-hint")).toBeNull();
+  });
+
+  it("marks leaves that have a note or labels", () => {
+    const { leaf } = renderLeaves();
+    expect(leaf("Client Review").textContent).toContain("メモ・ラベル2");
+    expect(leaf("ラフ案を作成").textContent).not.toContain("メモ");
+  });
+});
+
+describe("leaf search", () => {
+  it.each([
+    ["message", "CLIENT", "Client Review"],
+    ["tag", "submit", "ラフ案を作成"],
+    ["label", "承認", "Client Review"],
+  ])("finds a leaf by %s", (_kind, text, expected) => {
+    const { leaf, search } = renderLeaves();
+    fireEvent.change(search, { target: { value: text } });
+    expect(screen.getByRole("status").textContent).toBe("1件");
+    expect(leafDimmed(leaf(expected))).toBe(false);
+    expect(leafDimmed(leaf(/とても長いメッセージ/))).toBe(true);
+  });
+
+  it("says when nothing matches and restores the map when cleared", () => {
+    const { leaf, search } = renderLeaves();
+    fireEvent.change(search, { target: { value: "存在しない" } });
+    expect(screen.getByRole("status").textContent).toBe("該当なし");
+    expect(leafDimmed(leaf("Client Review"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "検索を解除" }));
+    expect(leafDimmed(leaf("Client Review"))).toBe(false);
+    expect((search as HTMLInputElement).value).toBe("");
+    fireEvent.change(search, { target: { value: "x" } });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect((search as HTMLInputElement).value).toBe("");
+  });
+
+  it("moves through matches, selecting each leaf and wrapping around", () => {
+    const onSelect = vi.fn();
+    const { search } = renderLeaves(onSelect);
+    // Matches c1 through its tag and c2 through its message and label.
+    fireEvent.change(search, { target: { value: "i" } });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe("2件");
+
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onSelect).toHaveBeenLastCalledWith("c1");
+    expect(screen.getByRole("status").textContent).toBe("1 / 2件");
+    fireEvent.click(screen.getByRole("button", { name: "次の一致" }));
+    expect(onSelect).toHaveBeenLastCalledWith("c2");
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onSelect).toHaveBeenLastCalledWith("c1");
+    fireEvent.click(screen.getByRole("button", { name: "前の一致" }));
+    expect(onSelect).toHaveBeenLastCalledWith("c2");
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith("c1");
+  });
+});
 
 function renderMap(buds: Partial<Bud>[], onSelect = vi.fn()) {
   const graph: CommitGraph = {

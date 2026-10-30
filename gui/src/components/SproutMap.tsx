@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { BRANCH_LABEL, LABEL_LINE, MAP, badgeWidth, budX, branchLabelText, estimateChipText, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
-import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
+import { formatLocalTime, type Bud, type CommitAttachment, type CommitGraph } from "../lib/sprout";
 
 /** Measure tag chip text with the page font; falls back to the estimate without a canvas (tests). */
 function chipTextMeasure(): TextMeasure {
@@ -15,6 +15,23 @@ function chipTextMeasure(): TextMeasure {
   context.font = `600 11px ${getComputedStyle(document.body).fontFamily}`;
   const ctx = context;
   return (text) => ctx.measureText(text).width;
+}
+
+/** Search ignores letter case and Unicode composition, as paths do. */
+function searchKey(text: string): string {
+  return text.normalize("NFC").toLowerCase();
+}
+
+function leafMarks(leaf: MapLeaf): string {
+  const marks = [];
+  if (leaf.commit.note) marks.push("メモ");
+  if (leaf.commit.labels.length) marks.push(`ラベル${leaf.commit.labels.length}`);
+  return marks.join("・");
+}
+
+function leafDescription(leaf: MapLeaf): string {
+  const marks = leafMarks(leaf);
+  return [leaf.commit.message, formatLocalTime(leaf.commit.created_at), marks].filter(Boolean).join("\n");
 }
 
 const STATIC_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -157,6 +174,30 @@ export default function SproutMap({
   const zoomAnchor = useRef<{ x: number; y: number } | null>(null);
   const drag = useRef<{ pointer: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
+  const [hinted, setHinted] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(-1);
+  const searchText = searchKey(query.trim());
+  const matches = useMemo(() => searchText
+    ? layout.leaves.filter((leaf) => [leaf.commit.message, ...leaf.tags, ...leaf.commit.labels].some((text) => searchKey(text).includes(searchText)))
+    : [], [layout.leaves, searchText]);
+  const matchIds = useMemo(() => new Set(matches.map((leaf) => leaf.commit.id)), [matches]);
+  const hintedLeaf = layout.leaves.find((leaf) => leaf.commit.id === hinted);
+
+  function changeQuery(value: string) {
+    setQuery(value);
+    setMatchIndex(-1);
+  }
+
+  function stepMatch(offset: number) {
+    if (!matches.length) return;
+    const next = matchIndex < 0
+      ? (offset > 0 ? 0 : matches.length - 1)
+      : (matchIndex + offset + matches.length) % matches.length;
+    setMatchIndex(next);
+    centerOn(matches[next]);
+    onSelect(matches[next].commit.id);
+  }
 
   /** The canvas is centered vertically when it is shorter than the scroll area. */
   const canvasTop = (element: HTMLElement, scale: number) => Math.max(0, (element.clientHeight - layout.height * scale) / 2);
@@ -306,6 +347,30 @@ export default function SproutMap({
         <span>{Math.round(zoom * 100)}%</span>
         <button className="icon-button" onClick={() => changeZoom(Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))} disabled={zoomIndex === ZOOM_STEPS.length - 1} aria-label="拡大">＋</button>
         {currentLeaf && <button className="button ghost small" onClick={() => centerOn(currentLeaf)}>いまここへ戻る</button>}
+        <input
+          className="map-search"
+          aria-label="葉を検索"
+          placeholder="メッセージ・タグ・ラベルで検索"
+          value={query}
+          onChange={(event) => changeQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              stepMatch(event.shiftKey ? -1 : 1);
+            } else if (event.key === "Escape") {
+              changeQuery("");
+            }
+          }}
+        />
+        {searchText && (matches.length ? (
+          <>
+            <span role="status">{matchIndex < 0 ? `${matches.length}件` : `${matchIndex + 1} / ${matches.length}件`}</span>
+            <button className="icon-button" onClick={() => stepMatch(-1)} aria-label="前の一致">↑</button>
+            <button className="icon-button" onClick={() => stepMatch(1)} aria-label="次の一致">↓</button>
+          </>
+        ) : <span role="status">該当なし</span>)}
+        {query && <button className="icon-button" onClick={() => changeQuery("")} aria-label="検索を解除">×</button>}
+        {hintedLeaf && <span className="map-hint" title={leafDescription(hintedLeaf)}>{leafDescription(hintedLeaf).split("\n").join("・")}</span>}
       </div>
       <div
         className={`map-scroll${panning ? " panning" : ""}`}
@@ -374,7 +439,7 @@ export default function SproutMap({
             return (
               <g
                 key={leaf.commit.id}
-                className={`leaf${here ? " here" : ""}${selected ? " selected" : ""}`}
+                className={`leaf${here ? " here" : ""}${selected ? " selected" : ""}${searchText ? (matchIds.has(leaf.commit.id) ? " match" : " dimmed") : ""}`}
                 style={laneStyle(leaf.lane)}
                 role="button"
                 tabIndex={0}
@@ -382,7 +447,12 @@ export default function SproutMap({
                 aria-pressed={selected}
                 onClick={() => onSelect(leaf.commit.id)}
                 onKeyDown={(event) => onKey(event, () => onSelect(leaf.commit.id))}
+                onMouseEnter={() => setHinted(leaf.commit.id)}
+                onMouseLeave={() => setHinted(null)}
+                onFocus={() => setHinted(leaf.commit.id)}
+                onBlur={() => setHinted(null)}
               >
+                <title>{leafDescription(leaf)}</title>
                 <path className="leaf-stalk" d={`M${leaf.x} ${leaf.y} V${leaf.y - MAP.stalk + 4}`} />
                 <circle className="node" cx={leaf.x} cy={leaf.y} r={here ? 7 : 6} />
                 <rect className="leaf-card" x={leaf.leafX} y={top} width={MAP.leafWidth} height={MAP.leafHeight + MAP.caption} />
@@ -409,6 +479,7 @@ export default function SproutMap({
                     </g>
                   );
                 })}
+                {leafMarks(leaf) && <Badge className="marks-badge" x={leaf.leafX + MAP.leafWidth - 4 - badgeWidth(leafMarks(leaf), measureChip)} y={top + MAP.leafHeight - 22} text={leafMarks(leaf)} measure={measureChip} />}
                 {here && <Badge className="here-badge" x={leaf.leafX + MAP.leafWidth + 6 - badgeWidth("いまここ", measureChip)} y={top - 10} text="いまここ" measure={measureChip} />}
                 {selected && <Badge className="selected-badge" x={leaf.leafX - 6} y={top + MAP.leafHeight + MAP.caption - 2} text="選択中" measure={measureChip} />}
               </g>
