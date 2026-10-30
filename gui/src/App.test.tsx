@@ -888,6 +888,48 @@ describe("Sprout GUI operations", () => {
     expect(screen.queryByRole("region", { name: "ゴミ箱" })).toBeNull();
   });
 
+  describe("cover file", () => {
+    it("warns but keeps the save when the cover cannot make a thumbnail", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openWorkspace(user);
+      await user.type(screen.getByLabelText("メッセージ"), "Saved");
+      mocks.runSprout.mockResolvedValueOnce({ id: "bbbbbbbbbbbbbbbb", branch: "main", branch_id: "main", message: "Saved", removed_paths: [], cover: { applied: false, reason: "cover_not_image" } });
+      mockWorkspace();
+      await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
+      expect(await screen.findByText(/bbbbbbbbbbbb を作成しました。サムネイルは作れませんでした: 代表ファイルが対応する画像ではありません/)).toBeTruthy();
+    });
+
+    it("sets a cover from the file panel and reports a file that cannot make one", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openWorkspace(user);
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      const tracked = (cleanStatus.tracked ?? [])[0];
+      mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: tracked, problem: "cover_not_image" });
+      mockWorkspace();
+      await user.click(screen.getByRole("button", { name: `${tracked}を代表にする` }));
+      expect(await screen.findByText(new RegExp(`今はサムネイルを作れません: 代表ファイルが対応する画像ではありません`))).toBeTruthy();
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["cover", tracked], "");
+    });
+
+    it("applies to existing leaves only after confirmation", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await openWorkspace(user);
+      mocks.runSprout.mockReset();
+      mockWorkspace({ ...cleanStatus, cover: { file_id: "f", path: (cleanStatus.tracked ?? [])[0] } });
+      await user.click(screen.getByRole("button", { name: "更新" }));
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      mocks.runSprout.mockResolvedValueOnce({ dry_run: true, applied: ["a", "b"], skipped: [], kept: 1 });
+      mocks.confirm.mockResolvedValueOnce(false);
+      await user.click(await screen.findByRole("button", { name: "既存の葉へ適用" }));
+      await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+      expect(mocks.confirm.mock.calls[0][0]).toContain("2件の葉");
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "cover --apply")).toBe(false);
+    });
+  });
+
   describe("maintenance panel", () => {
     const stats = { commits: 3, branches: 2, tracked_paths: 4, buds: 1, objects: 5, objects_bytes: 2048, logical_bytes: 4096, unique_bytes: 3072, dedup_saved_bytes: 1024 };
     const preview = { dry_run: true, removed_objects: 2, removed_temps: 1, freed_bytes: 2048, objects: ["a", "b"], temps: ["t"] };

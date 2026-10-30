@@ -656,6 +656,9 @@ def status(
         }
         if tracked:
             payload["tracked"] = sorted(repository.tracked())
+            cover_id, cover_path = repository.cover_file()
+            if cover_id is not None:
+                payload["cover"] = {"file_id": cover_id, "path": cover_path}
         if untracked:
             payload["untracked"] = repository.untracked_files()
         _echo_json(payload)
@@ -705,14 +708,75 @@ def commit_command(
                 "created_branch": result.created_branch,
                 "message": message.strip(),
                 "removed_paths": list(result.removed_paths),
+                **(
+                    {"cover": {"applied": result.cover.applied, "reason": result.cover.reason}}
+                    if result.cover is not None
+                    else {}
+                ),
             }
         )
         return
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
+    if result.cover is not None and not result.cover.applied:
+        typer.echo(f"Warning: no thumbnail from the cover file: {result.cover.reason}", err=True)
     if result.created_branch:
         typer.echo(f"Created branch {result.branch} from a snapshot that is not a branch tip")
     typer.echo(f"[{result.branch} {result.commit_id[:12]}] {message.strip()}")
+
+
+@app.command(name="cover")
+def cover_command(
+    path: Annotated[
+        Path | None, typer.Argument(help="Tracked image to make thumbnails from; omit to inspect")
+    ] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Stop making thumbnails from a cover file")] = False,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Give existing leaves without a thumbnail one from the cover")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="With --apply, report without saving")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Inspect, set, clear, or apply the file that thumbnails are made from."""
+    if sum((path is not None, clear, apply)) > 1:
+        raise SproutError("use only one of PATH, --clear, or --apply")
+    if dry_run and not apply:
+        raise SproutError("--dry-run is only used with --apply")
+    repository = repo()
+    if apply:
+        result = repository.apply_cover(dry_run=dry_run)
+        if json_output:
+            _echo_json(result)
+            return
+        action = "Would add" if dry_run else "Added"
+        typer.echo(
+            f"{action} {len(result['applied'])} thumbnail(s); kept {result['kept']}; skipped {len(result['skipped'])}"
+        )
+        return
+    if clear:
+        repository.clear_cover()
+        if json_output:
+            _echo_json({"file_id": None, "path": None})
+            return
+        typer.echo("Cleared the cover file")
+        return
+    if path is not None:
+        file_id, relative, problem = repository.set_cover(path)
+        if json_output:
+            _echo_json({"file_id": file_id, "path": relative, "problem": problem})
+            return
+        typer.echo(f"Set the cover file to {relative}")
+        if problem is not None:
+            typer.echo(f"Warning: it cannot make a thumbnail now: {problem}", err=True)
+        return
+    file_id, relative = repository.cover_file()
+    if json_output:
+        _echo_json({"file_id": file_id, "path": relative})
+        return
+    if file_id is None:
+        typer.echo("No cover file")
+    else:
+        typer.echo(relative if relative is not None else f"{file_id} (no longer tracked)")
 
 
 @app.command(name="file-history")

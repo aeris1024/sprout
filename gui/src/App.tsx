@@ -20,6 +20,8 @@ import {
   type Bud,
   type StatusChange,
   type TrashItem,
+  type CoverApplyResult,
+  coverReasonLabel,
   type DoctorReport,
   type GcResult,
   type RepositoryStats,
@@ -337,6 +339,40 @@ function App() {
     });
   }
 
+  function setCover(path: string) {
+    void execute(async () => {
+      const result = await runSprout<{ path: string; problem: string | null }>(projectDir, ["cover", ...fileArguments([path])], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setNotice(result.problem
+        ? { code: "cover_set", message: `${result.path} を代表ファイルにしました。ただし今はサムネイルを作れません: ${coverReasonLabel(result.problem)}`, details: {}, kind: "warning" }
+        : { code: "cover_set", message: `${result.path} を代表ファイルにしました`, details: {}, kind: "success" });
+    });
+  }
+
+  function clearCover() {
+    void execute(async () => {
+      await runSprout(projectDir, ["cover", "--clear"], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "cover_cleared", message: "代表ファイルを解除しました", details: {}, kind: "success" });
+    });
+  }
+
+  function applyCover() {
+    void execute(async () => {
+      const plan = await runSprout<CoverApplyResult>(projectDir, ["cover", "--apply", "--dry-run"], sproutProgram);
+      if (plan.applied.length === 0) {
+        setNotice({ code: "cover_nothing", message: `サムネイルを作れる葉はありません（登録済み ${plan.kept}件・対象外 ${plan.skipped.length}件）`, details: {}, kind: "success" });
+        return;
+      }
+      if (!await confirmDialog(`サムネイルのない ${plan.applied.length}件の葉に、代表ファイルからサムネイルを作ります。登録済みのサムネイルは変更しません。続行しますか？`, {
+        title: "既存の葉へ適用", kind: "warning", okLabel: "適用", cancelLabel: "キャンセル",
+      })) return;
+      const result = await runSprout<CoverApplyResult>(projectDir, ["cover", "--apply"], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setNotice({ code: "cover_applied", message: `${result.applied.length}件の葉にサムネイルを作りました`, details: {}, kind: "success" });
+    });
+  }
+
   function chooseTrackFiles(directory: boolean) {
     if (!projectDir || operationActive.current) return;
     void open({
@@ -398,13 +434,15 @@ function App() {
       replaceThumbnailPath("");
       await fetchWorkspace(projectDir);
       setSelection(null);
+      const saved = result.created_branch
+        ? `新しい枝 ${result.branch} を作り、${shortId(result.id)} を保存しました`
+        : `コミット ${shortId(result.id)} を作成しました`;
+      const noCover = result.cover && !result.cover.applied;
       setNotice({
         code: "committed",
-        message: result.created_branch
-          ? `新しい枝 ${result.branch} を作り、${shortId(result.id)} を保存しました`
-          : `コミット ${shortId(result.id)} を作成しました`,
+        message: noCover ? `${saved}。サムネイルは作れませんでした: ${coverReasonLabel(result.cover?.reason)}` : saved,
         details: { id: result.id },
-        kind: "success",
+        kind: noCover ? "warning" : "success",
       });
     });
   }
@@ -1051,7 +1089,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
     if (maintenanceOpen) return <MaintenancePanel stats={repositoryStats} gcResult={gcResult} doctor={doctorReport} busy={busy} onCollect={collectGarbage} onCheck={checkRepository} onClose={() => setMaintenanceOpen(false)} />;
     if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
-      return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} onClose={() => setFilesOpen(false)} />;
+      return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} cover={status?.cover} onSetCover={setCover} onClearCover={clearCover} onApplyCover={applyCover} onClose={() => setFilesOpen(false)} />;
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) return <p className="muted">読み込み中…</p>;
@@ -1085,7 +1123,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       const base = graph.commits.find((commit) => commit.id === selectedBud.base_commit_id);
       return <BudPanel bud={selectedBud} baseMessage={base?.message ?? null} branches={graph.branches} deletedBranches={graph.deleted_branches} busy={busy} onRestore={restoreBud} onDrop={dropBud} onRename={renameBud} onClose={closeSelection} />;
     }
-    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} onKeepAsBud={keepAsBud} onRevert={revertUnsaved} />;
+    return <SavePanel changes={changes} growsBranch={status?.at_branch_tip === false} coverPath={status?.cover?.path} message={commitMessage} thumbnailPath={thumbnailPath} thumbnailPasted={Boolean(thumbnailPath) && pastedThumbnail.current === thumbnailPath} busy={busy} onMessageChange={setCommitMessage} onChooseThumbnail={chooseThumbnail} onClearThumbnail={() => replaceThumbnailPath("")} onSave={commitChanges} onKeepAsBud={keepAsBud} onRevert={revertUnsaved} />;
   }
 
   return (

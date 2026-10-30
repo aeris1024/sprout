@@ -17,6 +17,8 @@ const revertLabels: Record<string, string> = {
 interface SavePanelProps {
   changes: StatusChange[];
   growsBranch: boolean;
+  /** Tracked file a thumbnail is made from when none is chosen. */
+  coverPath?: string | null;
   message: string;
   thumbnailPath: string;
   thumbnailPasted: boolean;
@@ -32,6 +34,7 @@ interface SavePanelProps {
 export default function SavePanel({
   changes,
   growsBranch,
+  coverPath,
   message,
   thumbnailPath,
   thumbnailPasted,
@@ -91,6 +94,7 @@ export default function SavePanel({
           )}
         </div>
       </label>
+      {coverPath && !thumbnailPath && <p className="panel-copy">{`サムネイルは代表ファイル ${coverPath} から作ります。`}</p>}
       {growsBranch && changes.length > 0 && (
         <p className="panel-copy grow-note">途中の芽から保存するため、新しい枝が自動で作られます。</p>
       )}

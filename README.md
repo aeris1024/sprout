@@ -515,6 +515,20 @@ sprout thumbnail <commit-id> --delete
 
 サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
+### 代表ファイルからサムネイルを作る
+
+`poster.png`のような追跡中の画像を代表ファイルに指定すると、サムネイルを指定せずに保存したとき、そこから長辺512pxのサムネイルを自動で作ります。`--thumbnail`を指定した場合はそちらを優先します。
+
+```powershell
+sprout cover poster.png        # 指定する
+sprout cover                   # 確認する
+sprout cover --apply --dry-run # サムネイルのない既存の葉へ適用した場合を確認する
+sprout cover --apply           # 適用する（登録済みのサムネイルは変更しない）
+sprout cover --clear           # 解除する
+```
+
+指定は素材IDで保持するので、`move`や大文字小文字の改名の後も有効です。対応形式はPNG・JPEG・静止WebP・BMPです。代表ファイルが追跡されていない、画像でない、大きすぎる、読み取れない場合も保存は成功し、サムネイルなしになります。理由は警告と、`commit --json`の`cover`（`applied`と`reason`）で確認できます。`status --tracked --json`には、指定中の場合だけ`cover`を含めます。指定はリポジトリの`meta`に保存します。
+
 ## コミットのpreviewを管理する
 
 サムネイルは芽のマップへ常時表示する小さな静止画像で、1コミットに1件です。previewはコミットを選んだときに再生・表示するためのファイルで、1コミットに複数登録できます。画像、音声、動画、3Dモデル、文書、未知のバイナリなど形式は問わず、内容をそのまま保存します。media_typeはファイル名から推定し、推定できない場合は`application/octet-stream`になります。`--media-type`で明示することもできます。
@@ -663,6 +677,7 @@ sprout commit -m "ファイルを移動"
 | `switch BRANCH [--json]` | 別のブランチへ切り替える |
 | `serve` | JSON Linesで要求を受け付ける常駐モードを起動する |
 | `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
+| `cover [PATH\|--clear\|--apply [--dry-run]] [--json]` | サムネイルを作る代表ファイルを確認・指定・解除し、既存の葉へ適用する |
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元する、ゴミ箱へ移す |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force] [--json]` | 作業フォルダを変えずにコミット内のファイルを書き出す |

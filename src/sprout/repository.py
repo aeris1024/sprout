@@ -13,6 +13,7 @@ import tempfile
 import time
 import unicodedata
 import uuid
+import warnings
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterable, Iterator, TypeVar
 
 import zstandard
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from . import __version__
 from . import trash as recovery
@@ -52,6 +53,11 @@ THUMBNAIL_MAX_DIMENSION = 4096
 NOTE_MAX_CHARS = 20_000
 LABEL_MAX_CHARS = 64
 LABEL_MAX_COUNT = 32
+COVER_META_KEY = "cover_file_id"
+COVER_SIDE = 512
+COVER_MAX_BYTES = 200 * 1024 * 1024
+COVER_MAX_PIXELS = 64_000_000
+COVER_FORMATS = {"PNG", "JPEG", "WEBP", "BMP"}
 THUMBNAIL_MEDIA_TYPES = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
@@ -354,12 +360,21 @@ class DiffEntry:
 
 
 @dataclass(frozen=True)
+class CoverOutcome:
+    """Whether a save could use the cover file, and why not when it could not."""
+
+    applied: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class CommitResult:
     commit_id: str
     removed_paths: tuple[str, ...]
     branch: str
     branch_id: str
     created_branch: bool = False
+    cover: CoverOutcome | None = None
 
 
 @dataclass(frozen=True)
@@ -1584,6 +1599,158 @@ class Repository:
         return original_name, media_type, object_hash, size
 
     @staticmethod
+    def _render_cover(source: Path, directory: Path) -> tuple[Path | None, str | None]:
+        """Write a bounded thumbnail of an image, or return why it cannot be made."""
+        try:
+            if source.stat().st_size > COVER_MAX_BYTES:
+                return None, "cover_too_large"
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(source) as image:
+                    if image.format not in COVER_FORMATS:
+                        return None, "cover_not_image"
+                    if image.size[0] * image.size[1] > COVER_MAX_PIXELS:
+                        return None, "cover_too_large"
+                    if getattr(image, "n_frames", 1) != 1:
+                        return None, "cover_animated"
+                    image.load()
+                    oriented = ImageOps.exif_transpose(image)
+                    oriented.thumbnail((COVER_SIDE, COVER_SIDE), Image.Resampling.LANCZOS)
+                    if oriented.mode in {"RGBA", "LA", "PA"} or "transparency" in oriented.info:
+                        output = directory / "cover.png"
+                        oriented.convert("RGBA").save(output, format="PNG")
+                    else:
+                        output = directory / "cover.jpg"
+                        oriented.convert("RGB").save(output, format="JPEG", quality=85)
+                    return output, None
+        except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+            return None, "cover_too_large"
+        except UnidentifiedImageError:
+            return None, "cover_not_image"
+        except (OSError, SyntaxError, ValueError):
+            return None, "cover_unreadable"
+
+    def _prepare_cover(self, source: Path, name: str) -> tuple[tuple[str, str, str, int] | None, str | None]:
+        with tempfile.TemporaryDirectory(prefix="sprout-cover-") as directory:
+            rendered, reason = self._render_cover(source, Path(directory))
+            if rendered is None:
+                return None, reason
+            object_hash, size = self._store_object(rendered)
+            media_type = "image/png" if rendered.suffix == ".png" else "image/jpeg"
+            return (Path(name).stem + rendered.suffix, media_type, object_hash, size), None
+
+    def _cover_thumbnail(
+        self, files: list[FileState]
+    ) -> tuple[tuple[str, str, str, int] | None, CoverOutcome | None]:
+        """Make a save's thumbnail from the cover file; failing here never fails the save."""
+        file_id = self.cover_file()[0]
+        if file_id is None:
+            return None, None
+        item = next((state for state in files if state.file_id == file_id), None)
+        if item is None:
+            return None, CoverOutcome(False, "cover_missing")
+        prepared, reason = self._prepare_cover(self.root / Path(item.path), Path(item.path).name)
+        return prepared, CoverOutcome(prepared is not None, reason)
+
+    def cover_file(self) -> tuple[str | None, str | None]:
+        """Return the cover's file ID and its tracked path; the path is None once untracked."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM meta WHERE key=?", (COVER_META_KEY,)).fetchone()
+            if row is None:
+                return None, None
+            path = db.execute("SELECT path FROM tracked_paths WHERE file_id=?", (row[0],)).fetchone()
+            return row[0], path[0] if path else None
+
+    @locked
+    def set_cover(self, value: Path) -> tuple[str, str, str | None]:
+        """Choose a tracked file as the cover; also say if it cannot make a thumbnail now."""
+        self._adopt_disk_spellings()
+        relative = self._relative_file(value, must_exist=False)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT path, file_id FROM tracked_paths WHERE path_key=?", (path_key(relative),)
+            ).fetchone()
+            if row is None:
+                raise SproutError(f"path is not tracked: {value}", code="cover_not_tracked", details={"path": relative})
+            db.execute(
+                "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (COVER_META_KEY, row["file_id"]),
+            )
+        with tempfile.TemporaryDirectory(prefix="sprout-cover-") as directory:
+            _rendered, problem = self._render_cover(self.root / Path(row["path"]), Path(directory))
+        return row["file_id"], row["path"], problem
+
+    @locked
+    def clear_cover(self) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM meta WHERE key=?", (COVER_META_KEY,))
+
+    @locked
+    def apply_cover(self, *, dry_run: bool = False) -> dict[str, Any]:
+        """Give leaves without a thumbnail one from the cover; existing thumbnails stay."""
+        file_id = self.cover_file()[0]
+        if file_id is None:
+            raise SproutError("no cover file is set", code="cover_not_set")
+        with self.connect() as db:
+            rows = list(db.execute(
+                "SELECT c.id, f.path, f.object_hash, f.size, "
+                "EXISTS(SELECT 1 FROM commit_attachments a WHERE a.commit_id=c.id AND a.role=?) AS has_thumbnail "
+                "FROM commits c LEFT JOIN commit_files f ON f.commit_id=c.id AND f.file_id=? ORDER BY c.seq",
+                (THUMBNAIL_ROLE, file_id),
+            ))
+        applied: list[tuple[str, tuple[str, str, str, int] | None]] = []
+        skipped: list[dict[str, str]] = []
+        kept = 0
+        made: dict[str, tuple[tuple[str, str, str, int] | None, str | None]] = {}
+        with tempfile.TemporaryDirectory(prefix="sprout-cover-") as directory:
+            for row in rows:
+                if row["has_thumbnail"]:
+                    kept += 1
+                    continue
+                if row["path"] is None:
+                    skipped.append({"commit_id": row["id"], "reason": "cover_missing"})
+                    continue
+                if row["object_hash"] not in made:
+                    source = Path(directory) / row["object_hash"]
+                    try:
+                        with source.open("wb") as target:
+                            self._copy_verified_object(
+                                FileState(row["path"], row["object_hash"], row["size"], 0), target
+                            )
+                    except (OSError, SproutError):
+                        made[row["object_hash"]] = (None, "cover_unreadable")
+                    else:
+                        if dry_run:
+                            scratch = Path(directory) / f"{row['object_hash']}-render"
+                            scratch.mkdir()
+                            made[row["object_hash"]] = (None, self._render_cover(source, scratch)[1])
+                        else:
+                            made[row["object_hash"]] = self._prepare_cover(source, Path(row["path"]).name)
+                prepared, reason = made[row["object_hash"]]
+                if reason is not None:
+                    skipped.append({"commit_id": row["id"], "reason": reason})
+                else:
+                    applied.append((row["id"], prepared))
+        if not dry_run and applied:
+            now = utc_timestamp()
+            with self.connect() as db:
+                self._register_objects(db, {item[2]: item[3] for _id, item in applied}, now)
+                db.executemany(
+                    "INSERT INTO commit_attachments(id, commit_id, role, original_name, media_type, object_hash, size, "
+                    "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        (uuid.uuid4().hex, commit_id, THUMBNAIL_ROLE, *item, now, now)
+                        for commit_id, item in applied
+                    ),
+                )
+        return {
+            "dry_run": dry_run,
+            "applied": [commit_id for commit_id, _item in applied],
+            "skipped": skipped,
+            "kept": kept,
+        }
+
+    @staticmethod
     def _attachment_from_row(row: sqlite3.Row, file_ids: tuple[str, ...] = ()) -> CommitAttachment:
         return CommitAttachment(
             id=row["id"],
@@ -1635,9 +1802,11 @@ class Repository:
             raise SproutError("nothing to commit")
         if parent is None and not files:
             raise SproutError("nothing to commit")
-        prepared_thumbnail = (
-            self._prepare_thumbnail(thumbnail) if thumbnail is not None else None
-        )
+        cover: CoverOutcome | None = None
+        if thumbnail is not None:
+            prepared_thumbnail = self._prepare_thumbnail(thumbnail)
+        else:
+            prepared_thumbnail, cover = self._cover_thumbnail(files)
         commit_id = uuid.uuid4().hex
         branch = self.head_branch()
         now = datetime.now(timezone.utc)
@@ -1697,7 +1866,7 @@ class Repository:
             db.executemany("DELETE FROM tracked_paths WHERE path=?", ((p,) for p in missing))
             branch_id = self._branch_id_from_db(db, branch)
         self.worktree_cache.invalidate(missing)
-        return CommitResult(commit_id, tuple(missing), branch, branch_id, created_branch)
+        return CommitResult(commit_id, tuple(missing), branch, branch_id, created_branch, cover)
 
     @staticmethod
     def _auto_branch_name(db: sqlite3.Connection, now: datetime) -> str:
@@ -2529,6 +2698,11 @@ class Repository:
                         reject_path_conflicts(paths)
                     except SproutError as exc:
                         issues.append(DoctorIssue("path_conflict", f"{table}:{scope_id}:{exc.details['path']}"))
+            cover = db.execute("SELECT value FROM meta WHERE key=?", (COVER_META_KEY,)).fetchone()
+            if cover is not None and not db.execute(
+                "SELECT 1 FROM file_identities WHERE id=?", (cover[0],)
+            ).fetchone():
+                issues.append(DoctorIssue("invalid_cover", cover[0]))
             for name in SEQUENCE_TABLES:
                 counter = db.execute("SELECT last_value FROM id_sequences WHERE name=?", (name,)).fetchone()
                 highest = db.execute(f"SELECT COALESCE(MAX(seq), 0) FROM {name}").fetchone()[0]

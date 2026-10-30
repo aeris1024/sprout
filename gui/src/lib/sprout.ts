@@ -16,6 +16,27 @@ export interface SproutStatus {
   changes: StatusChange[];
   tracked?: string[];
   untracked?: string[];
+  /** File thumbnails are made from; path is null once it is no longer tracked. */
+  cover?: { file_id: string; path: string | null };
+}
+
+export interface CoverApplyResult {
+  dry_run: boolean;
+  applied: string[];
+  skipped: { commit_id: string; reason: string }[];
+  kept: number;
+}
+
+const coverReasons: Record<string, string> = {
+  cover_missing: "代表ファイルが追跡されていません",
+  cover_not_image: "代表ファイルが対応する画像ではありません",
+  cover_animated: "アニメーション画像は使えません",
+  cover_too_large: "代表ファイルの画像が大きすぎます",
+  cover_unreadable: "代表ファイルを読み取れませんでした",
+};
+
+export function coverReasonLabel(reason: string | null | undefined): string {
+  return (reason && coverReasons[reason]) || "代表ファイルから作れませんでした";
 }
 
 export interface PathOperationResult {
@@ -29,6 +50,8 @@ export interface CommitResult {
   created_branch?: boolean;
   message: string;
   removed_paths: string[];
+  /** Present when a cover file is set and no thumbnail was given. */
+  cover?: { applied: boolean; reason: string | null };
 }
 
 export interface CommitLogEntry {
