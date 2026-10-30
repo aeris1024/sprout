@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { BRANCH_LABEL, LABEL_LINE, MAP, badgeWidth, budX, branchLabelText, estimateChipText, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import type { Bud, CommitAttachment, CommitGraph } from "../lib/sprout";
@@ -154,6 +154,72 @@ export default function SproutMap({
   const zoom = ZOOM_STEPS[zoomIndex];
   const scroller = useRef<HTMLDivElement>(null);
   const currentLeaf = layout.leaves.find((leaf) => leaf.commit.id === layout.currentId);
+  const zoomAnchor = useRef<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ pointer: number; x: number; y: number; left: number; top: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+
+  /** The canvas is centered vertically when it is shorter than the scroll area. */
+  const canvasTop = (element: HTMLElement, scale: number) => Math.max(0, (element.clientHeight - layout.height * scale) / 2);
+
+  function centerOn(target: MapLeaf) {
+    const element = scroller.current;
+    if (!element || typeof element.scrollTo !== "function") return;
+    element.scrollTo({
+      top: (target.leafY + MAP.leafHeight / 2) * zoom + canvasTop(element, zoom) - element.clientHeight / 2,
+      left: target.x * zoom - element.clientWidth / 2,
+    });
+  }
+
+  function changeZoom(nextIndex: number) {
+    const element = scroller.current;
+    if (element) {
+      zoomAnchor.current = {
+        x: (element.scrollLeft + element.clientWidth / 2) / zoom,
+        y: (element.scrollTop + element.clientHeight / 2 - canvasTop(element, zoom)) / zoom,
+      };
+    }
+    setZoomIndex(nextIndex);
+  }
+
+  // Keep what was at the middle of the view there once the canvas has its new size.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const anchor = zoomAnchor.current;
+    zoomAnchor.current = null;
+    if (!element || !anchor) return;
+    element.scrollLeft = anchor.x * zoom - element.clientWidth / 2;
+    element.scrollTop = anchor.y * zoom + canvasTop(element, zoom) - element.clientHeight / 2;
+  }, [zoom]);
+
+  function onMapWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    // Only a map that cannot scroll vertically turns the wheel into sideways movement.
+    if (event.shiftKey || event.ctrlKey || event.deltaY === 0 || element.scrollHeight > element.clientHeight) return;
+    element.scrollLeft += event.deltaY;
+  }
+
+  function onMapPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    if (event.button !== 0 || (event.target as Element).closest?.('[role="button"], button')) return;
+    const box = element.getBoundingClientRect();
+    // Pressing a scrollbar keeps its own behaviour.
+    if (event.clientX - box.left >= element.clientWidth || event.clientY - box.top >= element.clientHeight) return;
+    drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, left: element.scrollLeft, top: element.scrollTop };
+    element.setPointerCapture?.(event.pointerId);
+    setPanning(true);
+    event.preventDefault();
+  }
+
+  function onMapPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!drag.current) return;
+    event.currentTarget.scrollLeft = drag.current.left - (event.clientX - drag.current.x);
+    event.currentTarget.scrollTop = drag.current.top - (event.clientY - drag.current.y);
+  }
+
+  function onMapPointerEnd() {
+    drag.current = null;
+    setPanning(false);
+  }
 
   useEffect(() => {
     const element = scroller.current;
@@ -162,11 +228,7 @@ export default function SproutMap({
     // Center the current leaf once the scroll area has a size; hidden windows report zero.
     const center = () => {
       if (element.clientHeight === 0) return false;
-      const offsetY = Math.max(0, (element.clientHeight - layout.height * zoom) / 2);
-      element.scrollTo({
-        top: (target.leafY + MAP.leafHeight / 2) * zoom + offsetY - element.clientHeight / 2,
-        left: target.x * zoom - element.clientWidth / 2,
-      });
+      centerOn(target);
       return true;
     };
     const frame = requestAnimationFrame(center);
@@ -179,7 +241,7 @@ export default function SproutMap({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [projectDir, layout.currentId, layout.leaves.length, zoom]);
+  }, [projectDir, layout.currentId, layout.leaves.length]);
 
   if (layout.leaves.length === 0) {
     return (
@@ -240,11 +302,20 @@ export default function SproutMap({
   return (
     <div className="sprout-map">
       <div className="map-toolbar" aria-label="表示倍率">
-        <button className="icon-button" onClick={() => setZoomIndex(Math.max(0, zoomIndex - 1))} disabled={zoomIndex === 0} aria-label="縮小">−</button>
+        <button className="icon-button" onClick={() => changeZoom(Math.max(0, zoomIndex - 1))} disabled={zoomIndex === 0} aria-label="縮小">−</button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button className="icon-button" onClick={() => setZoomIndex(Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))} disabled={zoomIndex === ZOOM_STEPS.length - 1} aria-label="拡大">＋</button>
+        <button className="icon-button" onClick={() => changeZoom(Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))} disabled={zoomIndex === ZOOM_STEPS.length - 1} aria-label="拡大">＋</button>
+        {currentLeaf && <button className="button ghost small" onClick={() => centerOn(currentLeaf)}>いまここへ戻る</button>}
       </div>
-      <div className="map-scroll" ref={scroller}>
+      <div
+        className={`map-scroll${panning ? " panning" : ""}`}
+        ref={scroller}
+        onWheel={onMapWheel}
+        onPointerDown={onMapPointerDown}
+        onPointerMove={onMapPointerMove}
+        onPointerUp={onMapPointerEnd}
+        onPointerCancel={onMapPointerEnd}
+      >
         <svg
           className="map-canvas"
           width={layout.width * zoom}
