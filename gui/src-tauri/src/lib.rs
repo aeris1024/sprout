@@ -32,8 +32,9 @@ impl SproutCliError {
 
 fn command_arguments(args: &[String]) -> Vec<String> {
     let mut result = args.to_vec();
-    if !result.iter().any(|argument| argument == "--json") {
-        result.push("--json".to_owned());
+    let separator = result.iter().position(|argument| argument == "--").unwrap_or(result.len());
+    if !result[..separator].iter().any(|argument| argument == "--json") {
+        result.insert(separator, "--json".to_owned());
     }
     result
 }
@@ -316,6 +317,13 @@ fn thumbnail_data_url(media_type: &str, bytes: &[u8]) -> Result<String, SproutCl
     Ok(format!("data:{media_type};base64,{}", BASE64.encode(bytes)))
 }
 
+fn thumbnail_export_arguments(commit_id: &str, output: &Path) -> Vec<String> {
+    vec![
+        "leaf".to_owned(), "thumbnail".to_owned(), "export".to_owned(), commit_id.to_owned(),
+        "--output".to_owned(), output.to_string_lossy().into_owned(),
+    ]
+}
+
 #[tauri::command]
 fn read_sprout_thumbnail(
     state: tauri::State<'_, ServeState>,
@@ -337,12 +345,7 @@ fn read_sprout_thumbnail(
         "sprout-gui-thumbnail-{}-{sequence}.bin",
         std::process::id()
     ));
-    let args = vec![
-        "thumbnail".to_owned(),
-        commit_id.clone(),
-        "--output".to_owned(),
-        output.to_string_lossy().into_owned(),
-    ];
+    let args = thumbnail_export_arguments(&commit_id, &output);
     let export_result = execute(&state, project_dir, args, sprout_program);
     if let Err(error) = export_result {
         let _ = fs::remove_file(&output);
@@ -575,6 +578,20 @@ mod tests {
             command_arguments(&["status".to_owned(), "--json".to_owned()]),
             vec!["status", "--json"]
         );
+        assert_eq!(
+            command_arguments(&thumbnail_export_arguments("leaf-id", Path::new("out.png"))),
+            vec!["leaf", "thumbnail", "export", "leaf-id", "--output", "out.png", "--json"]
+        );
+    }
+
+    #[test]
+    fn json_flag_precedes_positional_text_and_does_not_consume_label_values() {
+        let args: Vec<String> = ["leaf", "label", "add", "--", "leaf-id", "--json"].into_iter().map(str::to_owned).collect();
+        assert_eq!(command_arguments(&args), vec!["leaf", "label", "add", "--json", "--", "leaf-id", "--json"]);
+        let explicit: Vec<String> = ["branch", "comment", "--json", "--", "main", "-comment"].into_iter().map(str::to_owned).collect();
+        assert_eq!(command_arguments(&explicit), explicit);
+        let option_value: Vec<String> = ["leaf", "edit", "leaf-id", "--note=--json"].into_iter().map(str::to_owned).collect();
+        assert_eq!(command_arguments(&option_value), vec!["leaf", "edit", "leaf-id", "--note=--json", "--json"]);
     }
 
     #[test]

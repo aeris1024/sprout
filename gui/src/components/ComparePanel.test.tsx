@@ -19,7 +19,7 @@ it("shows direction, CLI changes and performs only a read command", async () => 
   fireEvent.click(screen.getByText("比較する"));
   await screen.findByText("new.bin");
   for (const label of ["追加", "変更", "削除", "changed.bin", "old.bin"]) expect(screen.getByText(label)).toBeTruthy();
-  expect(vi.mocked(runSprout).mock.calls).toEqual([["project", ["diff", "a", "b"], "sprout"]]);
+  expect(vi.mocked(runSprout).mock.calls).toEqual([["project", ["file", "diff", "a", "b"], "sprout"]]);
 });
 it("clears old results when targets change and displays empty results", async () => {
   vi.mocked(runSprout).mockResolvedValue([]);

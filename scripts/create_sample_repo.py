@@ -159,7 +159,7 @@ class SampleBuilder:
         return thumbnail
 
     def commit(self, message: str, thumbnail: Path | None = None) -> str:
-        args = ["commit", "-m", message]
+        args = ["leaf", "create", "-m", message]
         if thumbnail:
             args += ["--thumbnail", str(thumbnail)]
         return self.sprout.json(*args)["id"]
@@ -170,7 +170,7 @@ class SampleBuilder:
         palette_commit, reviewed = self.build_main()
         self.add_previews(reviewed)
         self.build_side_branches(palette_commit, reviewed)
-        sprout.run("switch", "main")
+        sprout.run("go", "--branch", "main")
         self.leave_working_state()
 
     def build_main(self) -> tuple[str, str]:
@@ -179,9 +179,9 @@ class SampleBuilder:
         self.write("brief.md", BRIEF)
         self.write_palette(SPRING)
         thumbnail = self.save_poster(draw_poster(SPRING))
-        sprout.run("track", ".sproutignore", "brief.md", "palette.json", "poster.png")
+        sprout.run("file", "track", ".sproutignore", "brief.md", "palette.json", "poster.png")
         draft = self.commit("ラフ案を作成", thumbnail)
-        sprout.run("tag", "first-draft", draft, "-m", "初稿")
+        sprout.run("leaf", "tag", "create", "first-draft", draft, "-m", "初稿")
 
         self.write_palette(BRIGHT)
         palette_commit = self.commit(
@@ -192,26 +192,26 @@ class SampleBuilder:
         logo.parent.mkdir()
         draw_logo(BRIGHT).save(logo)
         write_wav(self.root / "audio" / "jingle.wav", (523.25, 659.25, 783.99))
-        sprout.run("track", "assets", "audio")
+        sprout.run("file", "track", "assets", "audio")
         added = self.commit(
             "ロゴとジングルを追加",
             self.save_poster(draw_poster(BRIGHT, "SPRING MARKET", logo=True)),
         )
-        sprout.run("label", added, "wip")
+        sprout.run("leaf", "label", "add", added, "wip")
 
         self.write("notes/feedback.md", FEEDBACK)
-        sprout.run("track", "notes/feedback.md")
+        sprout.run("file", "track", "notes/feedback.md")
         reviewed = self.commit(
             "クライアント修正を反映",
             self.save_poster(
                 draw_poster(BRIGHT, "SPRING MARKET", 72, 1.25, logo=True)
             ),
         )
-        sprout.run("tag", "submitted", reviewed, "-m", "提出版")
-        sprout.run("label", reviewed, "submitted")
-        sprout.run("note", reviewed, "クライアント確認済み。印刷所へ入稿した版。")
+        sprout.run("leaf", "tag", "create", "submitted", reviewed, "-m", "提出版")
+        sprout.run("leaf", "label", "add", reviewed, "submitted")
+        sprout.run("leaf", "edit", reviewed, "--note", "クライアント確認済み。印刷所へ入稿した版。")
 
-        sprout.run("move", "assets/logo.png", "assets/brand/logo.png")
+        sprout.run("file", "move", "assets/logo.png", "assets/brand/logo.png")
         self.commit("ロゴを assets/brand へ整理")
         return palette_commit, reviewed
 
@@ -235,7 +235,7 @@ class SampleBuilder:
     def build_side_branches(self, palette_commit: str, reviewed: str) -> None:
         sprout = self.sprout
         # 過去のコミットから分岐した別案
-        sprout.run("branch", "night", palette_commit, "--switch", "-m", "夜祭り版の案")
+        sprout.run("branch", "create", "night", palette_commit, "--switch", "-m", "夜祭り版の案")
         self.write_palette(NIGHT)
         self.commit("夜祭り版の配色を試す", self.save_poster(draw_poster(NIGHT)))
         self.commit(
@@ -243,29 +243,29 @@ class SampleBuilder:
             self.save_poster(draw_poster(NIGHT, "NIGHT MARKET", stars=True)),
         )
 
-        sprout.run("branch", "logo-test", reviewed, "--switch", "-m", "ロゴ差し替えの検討")
+        sprout.run("branch", "create", "logo-test", reviewed, "--switch", "-m", "ロゴ差し替えの検討")
         draw_logo(NIGHT).save(self.root / "assets" / "logo.png")
         self.commit("ロゴの配色を試す")
 
         # 枝を消してもコミットはtreeに残る
-        sprout.run("branch", "abandoned", reviewed, "--switch")
+        sprout.run("branch", "create", "abandoned", reviewed, "--switch")
         self.write("brief.md", BRIEF + "- 没案: 横長レイアウト\n")
         self.commit("横長レイアウトの没案")
-        sprout.run("switch", "main")
-        sprout.run("branch", "--delete", "abandoned")
+        sprout.run("go", "--branch", "main")
+        sprout.run("branch", "delete", "abandoned")
 
     def leave_working_state(self) -> None:
         sprout = self.sprout
         # つぼみを1つ残してから、追跡ファイルは先端の内容へ戻す
         self.write("brief.md", BRIEF + "- 検討中: 配布用チラシも作る？\n")
-        sprout.run("bud", "--save")
-        sprout.run("restore", "main", "--discard")
+        sprout.run("bud", "save")
+        sprout.run("go", "--branch", "main", "--discard")
 
         # 現在位置が変わるとゴミ箱から復旧できないため、葉の削除は最後に行う
         self.write("notes/feedback.md", FEEDBACK + "\n- （書きかけ）\n")
         mistake = self.commit("誤って保存した版")
-        sprout.run("delete-commit", mistake, "--yes")
-        sprout.run("restore", "main", "--discard")
+        sprout.run("leaf", "delete", mistake, "--yes")
+        sprout.run("go", "--branch", "main", "--discard")
         # 準備で破棄した変更や枝は残さず、ゴミ箱には削除した葉だけを置く
         for item in sprout.json("trash", "list"):
             if item["kind"] != "commit":
@@ -275,7 +275,7 @@ class SampleBuilder:
         self.write("cache/render.tmp", "無視パターンの確認用\n")
         shutil.copyfile(GUIDE, self.root / "GUIDE.md")
 
-        doctor = sprout.json("doctor")
+        doctor = sprout.json("maintenance", "doctor")
         if not doctor["ok"]:
             raise RuntimeError(f"sample repository is unhealthy: {doctor['issues']}")
 

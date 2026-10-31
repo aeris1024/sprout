@@ -16,14 +16,14 @@ Sprout GUIでこのフォルダを開くと、サムネイル付きのコミッ�
 ## 1. 履歴を眺める
 
 ```powershell
-sprout tree
-sprout log --oneline
-sprout show submitted --timezone local
-sprout log --label submitted
-sprout log poster.png --oneline
+sprout leaf tree
+sprout leaf list --oneline
+sprout leaf show submitted --timezone local
+sprout leaf list --label submitted
+sprout leaf list poster.png --oneline
 ```
 
-`tree`には、ブランチを削除した`abandoned`のコミットも`created:abandoned`として残っています。
+`leaf tree`には、ブランチを削除した`abandoned`のコミットも`created:abandoned`として残っています。
 
 ## 2. 状態を確認する
 
@@ -43,22 +43,22 @@ sprout status --tracked --untracked
 sprout trash list
 sprout trash restore <trash-id> --dry-run
 sprout trash restore <trash-id>
-sprout log --oneline
+sprout leaf list --oneline
 ```
 
 作業ファイルは変更されないため、復旧したコミットとの差分が未保存の変更として表示されます。確認したら、もう一度その葉を削除して元の状態へ戻します。
 
 ```powershell
 sprout status
-sprout delete-commit main --dry-run
-sprout delete-commit main --yes
-sprout restore main --discard
+sprout leaf delete main --dry-run
+sprout leaf delete main --yes
+sprout go --branch main --discard
 ```
 
 ## 4. 差分を見る
 
 ```powershell
-sprout diff first-draft submitted
+sprout file diff first-draft submitted
 ```
 
 ## 5. 編集してコミットする
@@ -66,8 +66,8 @@ sprout diff first-draft submitted
 ```powershell
 Add-Content brief.md "- 追記: 雨天決行" -Encoding utf8
 sprout status
-sprout diff
-sprout commit -m "雨天時の案内を追記"
+sprout file diff
+sprout leaf create -m "雨天時の案内を追記"
 ```
 
 ## 6. 別案へ切り替える
@@ -75,65 +75,65 @@ sprout commit -m "雨天時の案内を追記"
 `night`へ切り替えると、`poster.png`が夜祭り版に変わります。画像を開いて確かめてみてください。
 
 ```powershell
-sprout switch night
-sprout switch main
+sprout go --branch night
+sprout go --branch main
 ```
 
 ## 7. 未保存の変更の保護とつぼみ
 
-未保存の変更があると、`switch`は作業を守るために中止します。`go`なら変更を「つぼみ」として残して移動します。
+未保存の変更があると、`go`は変更を「つぼみ」として残して移動します。変更がある場合に移動を中止したいときは`--reject-changes`を指定します。
 
 ```powershell
 Add-Content brief.md "- 追記: 試しの変更" -Encoding utf8
-sprout switch night
-sprout go night
-sprout bud
+sprout go --branch night --reject-changes
+sprout go --branch night
+sprout bud list
 ```
 
 一覧に、今残したつぼみと、最初から入っている「配布用チラシ」のつぼみが並びます。先頭に表示されるIDを指定すると戻せます。
 
 ```powershell
-sprout go main
-sprout bud --restore <bud-id>
-sprout restore main --discard
+sprout go --branch main
+sprout bud restore <bud-id>
+sprout go --branch main --discard
 ```
 
 ## 8. 一部のファイルだけ昔に戻す
 
 ```powershell
-sprout restore first-draft palette.json
+sprout file restore first-draft palette.json
 sprout status
-sprout restore main --discard
+sprout go --branch main --discard
 ```
 
 ## 9. previewとメモ
 
 ```powershell
-sprout preview list submitted
-sprout note submitted
-sprout label submitted
+sprout leaf preview list submitted
+sprout leaf show submitted
+sprout leaf label list submitted
 ```
 
 ## 10. 改名をまたぐ履歴
 
-`assets/brand/logo.png`は`assets/logo.png`から移動したファイルです。`show`で`file_id`を確認して指定します。
+`assets/brand/logo.png`は`assets/logo.png`から移動したファイルです。`leaf show`で`file_id`を確認して指定します。
 
 ```powershell
-sprout show main --json
-sprout file-history <file-id>
+sprout leaf show main --json
+sprout leaf list --file-id <file-id>
 ```
 
 ## 11. 取り出しと保守
 
-`export`は親フォルダへファイルを書き出します。それ以外は`--dry-run`や読み取り専用のコマンドなので、履歴は変わりません。
+`file export`は親フォルダへファイルを書き出します。それ以外は`--dry-run`や読み取り専用のコマンドなので、履歴は変わりません。
 
 ```powershell
-sprout export submitted --output ../sprout-sample-export
-sprout archive --output ../sprout-sample-archive --dry-run
-sprout prune first-draft submitted --dry-run
-sprout gc --dry-run
-sprout stats
-sprout doctor
+sprout file export submitted --output ../sprout-sample-export
+sprout leaf archive --output ../sprout-sample-archive --dry-run
+sprout leaf prune first-draft submitted --dry-run
+sprout maintenance gc --dry-run
+sprout maintenance stats
+sprout maintenance doctor
 ```
 
 ## やり直す

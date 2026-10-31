@@ -32,7 +32,7 @@ export default function ComparePanel({ projectDir, program, commits, source, tar
     setError(null);
     setLoading(true);
     try {
-      const differences = await runSprout<Difference[]>(projectDir, ["diff", source, target], program);
+      const differences = await runSprout<Difference[]>(projectDir, ["file", "diff", source, target], program);
       if (generation.current === request) setResult(differences);
     } catch (cause) {
       if (generation.current === request) setError(normalizeCliError(cause));

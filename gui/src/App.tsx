@@ -58,6 +58,16 @@ function shortId(value: string | null): string {
   return value ? value.slice(0, 12) : "-";
 }
 
+/** End option parsing when editable positional text starts like an option. */
+function positionalArguments(...values: string[]): string[] {
+  return values.some((value) => value.startsWith("-")) ? ["--", ...values] : values;
+}
+
+/** Keep option values such as the literal --json separate from actual CLI flags. */
+function textOption(flag: string, value: string): string[] {
+  return value.startsWith("-") ? [`${flag === "-m" ? "--message" : flag}=${value}`] : [flag, value];
+}
+
 /** True for fields that take typed text; a focused checkbox or button does not capture a paste. */
 function isTextField(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -77,7 +87,7 @@ function deletionSummary(preview: CommitDeletion): string {
   }
   if (preview.rebased_buds.length > 0) lines.push(`つぼみ ${preview.rebased_buds.length}件の起点は${parent}へ付け替わります。`);
   if (preview.reclaimable_objects.length > 0) {
-    lines.push(`${preview.reclaimable_objects.length}個のオブジェクト（${preview.reclaimable_bytes} bytes）はゴミ箱に保持され、sprout gc から保護されます。`);
+    lines.push(`${preview.reclaimable_objects.length}個のオブジェクト（${preview.reclaimable_bytes} bytes）はゴミ箱に保持され、sprout maintenance gc から保護されます。`);
   }
   lines.push("続行しますか？");
   return lines.join("\n");
@@ -171,7 +181,7 @@ function App() {
 
   async function fetchWorkspace(path: string, stillWanted: () => boolean = () => true) {
     const nextStatus = await runSprout<SproutStatus>(path, ["status", "--tracked", "--untracked"], sproutProgram);
-    const nextGraph = await runSprout<CommitGraph>(path, ["tree"], sproutProgram);
+    const nextGraph = await runSprout<CommitGraph>(path, ["leaf", "tree"], sproutProgram);
     if (!stillWanted()) return;
     setProjectDir(path);
     setStatus(nextStatus);
@@ -349,7 +359,7 @@ function App() {
   function trackPaths(paths: string[]) {
     if (!projectDir || paths.length === 0) return;
     void execute(async () => {
-      const result = await runSprout<PathOperationResult>(projectDir, ["track", ...paths], sproutProgram);
+      const result = await runSprout<PathOperationResult>(projectDir, ["file", "track", ...paths], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice({
         code: result.paths.length ? "paths_tracked" : "no_paths_tracked",
@@ -362,7 +372,7 @@ function App() {
 
   function setCover(path: string) {
     void execute(async () => {
-      const result = await runSprout<{ path: string; problem: string | null }>(projectDir, ["cover", ...fileArguments([path])], sproutProgram);
+      const result = await runSprout<{ path: string; problem: string | null }>(projectDir, ["leaf", "thumbnail", "source", "set", ...fileArguments([path])], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice(result.problem
         ? { code: "cover_set", message: `${result.path} をサムネイル自動生成元にしました。ただし今はサムネイルを作れません: ${coverReasonLabel(result.problem)}`, details: {}, kind: "warning" }
@@ -372,7 +382,7 @@ function App() {
 
   function clearCover() {
     void execute(async () => {
-      await runSprout(projectDir, ["cover", "--clear"], sproutProgram);
+      await runSprout(projectDir, ["leaf", "thumbnail", "source", "clear"], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice({ code: "cover_cleared", message: "サムネイル自動生成元を解除しました", details: {}, kind: "success" });
     });
@@ -380,7 +390,7 @@ function App() {
 
   function applyCover() {
     void execute(async () => {
-      const plan = await runSprout<CoverApplyResult>(projectDir, ["cover", "--apply", "--dry-run"], sproutProgram);
+      const plan = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply", "--dry-run"], sproutProgram);
       if (plan.applied.length === 0) {
         setNotice({ code: "cover_nothing", message: `サムネイルを作れる葉はありません（登録済み ${plan.kept}件・対象外 ${plan.skipped.length}件）`, details: {}, kind: "success" });
         return;
@@ -388,7 +398,7 @@ function App() {
       if (!await confirmDialog(`サムネイルのない ${plan.applied.length}件の葉に、サムネイル自動生成元からサムネイルを作ります。登録済みのサムネイルは変更しません。続行しますか？`, {
         title: "既存の葉へ適用", kind: "warning", okLabel: "適用", cancelLabel: "キャンセル",
       })) return;
-      const result = await runSprout<CoverApplyResult>(projectDir, ["cover", "--apply"], sproutProgram);
+      const result = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply"], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice({ code: "cover_applied", message: `${result.applied.length}件の葉にサムネイルを作りました`, details: {}, kind: "success" });
     });
@@ -410,7 +420,7 @@ function App() {
   function untrackPath(path: string) {
     if (!projectDir) return;
     void execute(async () => {
-      const result = await runSprout<PathOperationResult>(projectDir, ["untrack", path], sproutProgram);
+      const result = await runSprout<PathOperationResult>(projectDir, ["file", "untrack", path], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice({
         code: result.paths.length ? "paths_untracked" : "no_paths_untracked",
@@ -448,7 +458,7 @@ function App() {
       return;
     }
     void execute(async () => {
-      const args = ["commit", "-m", message];
+      const args = ["leaf", "create", ...textOption("-m", message)];
       if (thumbnailPath) args.push("--thumbnail", thumbnailPath);
       const result = await runSprout<CommitResult>(projectDir, args, sproutProgram);
       setCommitMessage("");
@@ -482,7 +492,7 @@ function App() {
     setCommitLoadError(null);
     const read = { path: projectDir, id: commitId, program: sproutProgram };
     detailRead.current = read;
-    void runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram)
+    void runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram)
       .then((detail) => {
         if (detailRead.current === read) setCommitDetail(detail);
       })
@@ -522,11 +532,11 @@ function App() {
   }
 
   function renameBranch(branchId: string, name: string) {
-    return editBranch(branchId, (current) => ["branch", current, "--rename", name], (current) => `ブランチ ${current} の名前を ${name} に変更しました`);
+    return editBranch(branchId, (current) => ["branch", "rename", ...positionalArguments(current, name)], (current) => `ブランチ ${current} の名前を ${name} に変更しました`);
   }
 
   function setBranchComment(branchId: string, comment: string) {
-    return editBranch(branchId, (current) => ["branch", current, "--set-comment", comment], (current) => `ブランチ ${current} のコメントを変更しました`);
+    return editBranch(branchId, (current) => ["branch", "comment", ...positionalArguments(current, comment)], (current) => `ブランチ ${current} のコメントを変更しました`);
   }
 
   function deleteBranch(branchId: string) {
@@ -538,13 +548,13 @@ function App() {
       okLabel: "削除",
       cancelLabel: "キャンセル",
     }).then((accepted) => {
-      if (accepted) void editBranch(branchId, (current) => ["branch", "--delete", current], (current) => `ブランチ ${current} を削除しました`);
+      if (accepted) void editBranch(branchId, (current) => ["branch", "delete", current], (current) => `ブランチ ${current} を削除しました`);
     });
   }
 
   function renameBud(budId: string, name: string) {
     return execute(async () => {
-      await runSprout(projectDir, ["bud", "--rename", budId, name], sproutProgram);
+      await runSprout(projectDir, ["bud", "rename", ...positionalArguments(budId, name)], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice({ code: "bud_renamed", message: name.trim() ? `つぼみの名前を「${name.trim()}」にしました` : "つぼみの名前を消しました", details: { bud_id: budId }, kind: "success" });
     });
@@ -571,7 +581,7 @@ function App() {
     return execute(async () => {
       await runSprout(projectDir, args, sproutProgram);
       await fetchWorkspace(projectDir);
-      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram));
       setNotice({ code: "annotation_updated", message, details: { commit_id: commitId }, kind: "success" });
     });
   }
@@ -580,27 +590,27 @@ function App() {
     const deleting = !note.trim();
     return editCommit(
       commitId,
-      deleting ? ["note", commitId, "--delete"] : ["note", commitId, note],
+      deleting ? ["leaf", "edit", commitId, "--clear-note"] : ["leaf", "edit", commitId, ...textOption("--note", note)],
       deleting ? `${shortId(commitId)} のメモを削除しました` : `${shortId(commitId)} のメモを保存しました`,
     );
   }
 
   function addLabel(commitId: string, label: string) {
-    return editCommit(commitId, ["leaf", "label", "add", commitId, label], `ラベル「${label.trim()}」を追加しました`);
+    return editCommit(commitId, ["leaf", "label", "add", ...positionalArguments(commitId, label)], `ラベル「${label.trim()}」を追加しました`);
   }
 
   function removeLabel(commitId: string, label: string) {
-    return editCommit(commitId, ["leaf", "label", "remove", commitId, label], `ラベル「${label}」を外しました`);
+    return editCommit(commitId, ["leaf", "label", "remove", ...positionalArguments(commitId, label)], `ラベル「${label}」を外しました`);
   }
 
   function createTag(commitId: string, name: string, comment: string) {
-    const args = ["tag", name, commitId];
-    if (comment.trim()) args.push("--comment", comment);
+    const args = ["leaf", "tag", "create", name, commitId];
+    if (comment.trim()) args.push(...textOption("--comment", comment));
     return editCommit(commitId, args, `タグ ${name} を付けました`);
   }
 
   function setTagComment(commitId: string, name: string, comment: string) {
-    return editCommit(commitId, ["tag", name, "--set-comment", comment], `タグ ${name} のコメントを変更しました`);
+    return editCommit(commitId, ["leaf", "tag", "comment", ...positionalArguments(name, comment)], `タグ ${name} のコメントを変更しました`);
   }
 
   function deleteTag(commitId: string, name: string) {
@@ -611,7 +621,7 @@ function App() {
       okLabel: "削除",
       cancelLabel: "キャンセル",
     }).then((accepted) => {
-      if (accepted) void editCommit(commitId, ["tag", "--delete", name], `タグ ${name} を削除しました`);
+      if (accepted) void editCommit(commitId, ["leaf", "tag", "delete", name], `タグ ${name} を削除しました`);
     });
   }
 
@@ -628,9 +638,9 @@ function App() {
   }
 
   async function applyCommitThumbnail(commitId: string, path: string) {
-    await runSprout(projectDir, ["thumbnail", commitId, path], sproutProgram);
+    await runSprout(projectDir, ["leaf", "thumbnail", "set", commitId, path], sproutProgram);
     await fetchWorkspace(projectDir);
-    setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+    setCommitDetail(await runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram));
     setNotice({ code: "thumbnail_saved", message: `${shortId(commitId)} のサムネイルを保存しました`, details: { commit_id: commitId }, kind: "success" });
   }
 
@@ -714,9 +724,9 @@ function App() {
       return;
     }
     void execute(async () => {
-      await runSprout(projectDir, ["message", commitId, normalized], sproutProgram);
+      await runSprout(projectDir, ["leaf", "edit", commitId, ...textOption("--message", normalized)], sproutProgram);
       await fetchWorkspace(projectDir);
-      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram));
       setNotice({ code: "message_updated", message: `${shortId(commitId)} のメッセージを変更しました`, details: { commit_id: commitId }, kind: "success" });
     });
   }
@@ -766,7 +776,7 @@ function App() {
     void execute(async () => {
       let result: { bud: Bud | null };
       try {
-        result = await runSprout<{ bud: Bud | null }>(projectDir, ["branch", name, commitId, "--switch", "--keep-changes"], sproutProgram);
+        result = await runSprout<{ bud: Bud | null }>(projectDir, ["branch", "create", name, commitId, "--switch"], sproutProgram);
       } catch (error) {
         // A refused branch moves nothing; the refresh only guards against an unexpected failure.
         await fetchWorkspace(projectDir).catch(() => {});
@@ -794,7 +804,7 @@ function App() {
     void execute(async () => {
       const selected = await open({ directory: true, multiple: false, title: "書き出し先のフォルダを選択" });
       if (typeof selected !== "string") return;
-      const result = await runSprout<{ paths: string[]; output: string }>(projectDir, ["export", commitId, ...fileArguments(paths), "--output", selected], sproutProgram);
+      const result = await runSprout<{ paths: string[]; output: string }>(projectDir, ["file", "export", commitId, ...fileArguments(paths), "--output", selected], sproutProgram);
       setNotice({ code: "exported", message: `${result.paths.length}件のファイルを ${result.output} へ書き出しました`, details: {}, kind: "success" });
     });
   }
@@ -807,7 +817,7 @@ function App() {
         title: "選択したファイルだけ戻す", kind: "warning", okLabel: "戻す", cancelLabel: "キャンセル",
       });
       if (!accepted) return;
-      const args = ["restore", commitId, ...fileArguments(paths)];
+      const args = ["file", "restore", commitId, ...fileArguments(paths)];
       try {
         await runSprout(projectDir, args, sproutProgram);
       } catch (cause) {
@@ -829,7 +839,7 @@ function App() {
   type PreviewPlan = { previews: { original_name: string; size: number }[]; additional_bytes: number; requires_confirmation: boolean };
 
   async function registerPreviews(commitId: string, paths: string[], replacement?: string) {
-    const args = ["preview", replacement ? "replace" : "add", commitId, ...(replacement ? [replacement] : []), ...fileArguments(paths)];
+    const args = ["leaf", "preview", replacement ? "replace" : "add", commitId, ...(replacement ? [replacement] : []), ...fileArguments(paths)];
     const plan = await runSprout<PreviewPlan>(projectDir, [...args, "--dry-run"], sproutProgram);
     if (plan.requires_confirmation) {
       const accepted = await confirmDialog(`100 MiBを超えるファイルを含みます。\n${plan.previews.map((item) => `${item.original_name}: ${item.size.toLocaleString()} B`).join("\n")}\n容量は圧縮前で最大 ${plan.additional_bytes.toLocaleString()} B 増加します。登録しますか？`, {
@@ -845,7 +855,7 @@ function App() {
     void execute(async () => {
       if (!await operation()) return;
       await fetchWorkspace(projectDir);
-      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram));
       setNotice({ code: "preview_updated", message: "プレビューの操作が完了しました", details: {}, kind: "success" });
     });
   }
@@ -884,7 +894,7 @@ function App() {
   function deletePreview(commitId: string, id: string) {
     previewOperation(commitId, async () => {
       if (!await confirmDialog("このプレビューをゴミ箱へ移します。添付一覧が変更される前ならゴミ箱から復旧できます。続行しますか？", { title: "プレビューを削除", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" })) return false;
-      await runSprout(projectDir, ["preview", "delete", commitId, id], sproutProgram);
+      await runSprout(projectDir, ["leaf", "preview", "delete", commitId, id], sproutProgram);
       return true;
     });
   }
@@ -893,14 +903,14 @@ function App() {
     void execute(async () => {
       const output = await save({ title: "プレビューを取り出す", defaultPath: name });
       if (!output) return;
-      await runSprout(projectDir, ["preview", "export", commitId, id, "--output", output], sproutProgram);
+      await runSprout(projectDir, ["leaf", "preview", "export", commitId, id, "--output", output], sproutProgram);
       setNotice({ code: "preview_exported", message: `プレビューを ${output} へ取り出しました`, details: {}, kind: "success" });
     });
   }
 
   function orderPreviews(commitId: string, ids: string[]) {
     previewOperation(commitId, async () => {
-      await runSprout(projectDir, ["preview", "order", commitId, ...ids], sproutProgram);
+      await runSprout(projectDir, ["leaf", "preview", "order", commitId, ...ids], sproutProgram);
       return true;
     });
   }
@@ -910,7 +920,7 @@ function App() {
     void execute(async () => {
       let result: { restored: Bud; saved: Bud | null };
       try {
-        result = await runSprout(projectDir, ["bud", "--restore", budId], sproutProgram);
+        result = await runSprout(projectDir, ["bud", "restore", budId], sproutProgram);
       } catch (error) {
         throw unchangedError(error);
       }
@@ -935,7 +945,7 @@ function App() {
     }).then((accepted) => {
       if (!accepted) return;
       void execute(async () => {
-        await runSprout(projectDir, ["bud", "--drop", budId, "--yes"], sproutProgram);
+        await runSprout(projectDir, ["bud", "delete", budId, "--yes"], sproutProgram);
         await fetchWorkspace(projectDir);
         setSelection(null);
         setNotice({ code: "bud_dropped", message: "つぼみをゴミ箱へ移しました", details: {}, kind: "success" });
@@ -947,7 +957,7 @@ function App() {
     if (!projectDir || operationActive.current) return;
     void execute(async () => {
       try {
-        await runSprout<Bud>(projectDir, ["bud", "--save"], sproutProgram);
+        await runSprout<Bud>(projectDir, ["bud", "save"], sproutProgram);
       } catch (error) {
         // Nothing to keep means the view was stale; refresh so the panel matches the working folder.
         if (normalizeCliError(error).code === "nothing_to_save") await fetchWorkspace(projectDir).catch(() => {});
@@ -973,7 +983,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       });
       if (!accepted) return;
       try {
-        await runSprout(projectDir, untrack ? ["untrack", ...fileArguments([change.path])] : ["restore", commitId!, ...fileArguments([change.path]), "--discard"], sproutProgram);
+        await runSprout(projectDir, untrack ? ["file", "untrack", ...fileArguments([change.path])] : ["file", "restore", commitId!, ...fileArguments([change.path]), "--discard"], sproutProgram);
       } catch (error) {
         throw unchangedError(error);
       }
@@ -1014,7 +1024,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
   async function deleteCommit(commitId: string) {
     if (!projectDir || operationActive.current) return;
     await execute(async () => {
-      const preview = await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--dry-run"], sproutProgram);
+      const preview = await runSprout<CommitDeletion>(projectDir, ["leaf", "delete", commitId, "--dry-run"], sproutProgram);
       const accepted = await confirmDialog(deletionSummary(preview), {
         title: "この葉を削除",
         kind: "warning",
@@ -1022,7 +1032,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
         cancelLabel: "キャンセル",
       });
       if (!accepted) return;
-      await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--yes"], sproutProgram);
+      await runSprout<CommitDeletion>(projectDir, ["leaf", "delete", commitId, "--yes"], sproutProgram);
       await fetchWorkspace(projectDir);
       closeSelection();
       setNotice({ code: "commit_deleted", message: `葉 ${shortId(commitId)} を削除しました`, details: { commit_id: commitId }, kind: "success" });
@@ -1040,7 +1050,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
   function openMaintenance() {
     void execute(async () => {
-      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["stats"], sproutProgram));
+      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["maintenance", "stats"], sproutProgram));
       setGcResult(null);
       setDoctorReport(null);
       setTrashOpen(false);
@@ -1052,7 +1062,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
   function collectGarbage() {
     void execute(async () => {
-      const preview = await runSprout<GcResult>(projectDir, ["gc", "--dry-run"], sproutProgram);
+      const preview = await runSprout<GcResult>(projectDir, ["maintenance", "gc", "--dry-run"], sproutProgram);
       if (preview.removed_objects === 0 && preview.removed_temps === 0) {
         setGcResult(null);
         setNotice({ code: "gc_nothing", message: "回収できる容量はありません。ゴミ箱に保持中のデータは、完全削除すると回収できます。", details: {}, kind: "success" });
@@ -1061,9 +1071,9 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       if (!await confirmDialog(`オブジェクト ${preview.removed_objects}個、一時ファイル ${preview.removed_temps}個を削除し、${formatBytes(preview.freed_bytes)}を回収します。ゴミ箱に保持中のデータは回収しません。続行しますか？`, {
         title: "容量を回収", kind: "warning", okLabel: "回収", cancelLabel: "キャンセル",
       })) return;
-      const result = await runSprout<GcResult>(projectDir, ["gc"], sproutProgram);
+      const result = await runSprout<GcResult>(projectDir, ["maintenance", "gc"], sproutProgram);
       setGcResult(result);
-      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["stats"], sproutProgram));
+      setRepositoryStats(await runSprout<RepositoryStats>(projectDir, ["maintenance", "stats"], sproutProgram));
       setNotice({ code: "gc_done", message: `${formatBytes(result.freed_bytes)}を回収しました`, details: {}, kind: "success" });
     });
   }
@@ -1071,7 +1081,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
   function checkRepository() {
     void execute(async () => {
       setDoctorReport(null);
-      setDoctorReport(await runSprout<DoctorReport>(projectDir, ["doctor", "--report"], sproutProgram));
+      setDoctorReport(await runSprout<DoctorReport>(projectDir, ["maintenance", "doctor", "--report"], sproutProgram));
     });
   }
 
@@ -1150,7 +1160,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       }
       return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
-          await runSprout(projectDir, ["preview", "metadata", commitDetail.id, id,
+          await runSprout(projectDir, ["leaf", "preview", "edit", commitDetail.id, id,
             `--name=${data.display_name}`, `--description=${data.description}`], sproutProgram);
           return true;
         }),

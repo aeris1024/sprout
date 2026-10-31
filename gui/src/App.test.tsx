@@ -147,7 +147,7 @@ describe("Sprout GUI operations", () => {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
     expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
-    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree"]);
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf"]);
   });
 
   it("offers init, loads the workspace, and remembers the project", async () => {
@@ -215,13 +215,13 @@ describe("Sprout GUI operations", () => {
     await user.click(within(panel).getByRole("button", { name: "追跡する" }));
 
     expect(await screen.findByText("1件を追跡対象に追加しました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["track", "notes.txt"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["file", "track", "notes.txt"], "");
 
     mocks.runSprout.mockResolvedValueOnce({ paths: ["design/main.psd"] });
     mockWorkspace({ ...cleanStatus, tracked: ["notes.txt"], untracked: ["design/main.psd"] });
     await user.click(screen.getAllByRole("button", { name: "追跡解除" })[0]);
     expect(await screen.findByText("1件を追跡対象から外しました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["untrack", "design/main.psd"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["file", "untrack", "design/main.psd"], "");
   });
 
   it("tracks paths dropped on the Tauri window", async () => {
@@ -237,7 +237,7 @@ describe("Sprout GUI operations", () => {
     });
 
     expect(await screen.findByText("1件を追跡対象に追加しました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["track", "C:\\work\\sprout-project\\dropped.png"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["file", "track", "C:\\work\\sprout-project\\dropped.png"], "");
   });
 
   it("refreshes workspace state from the update button and ignores DOM focus events", async () => {
@@ -273,7 +273,7 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
 
     expect(await screen.findByText(/葉 bbbbbbbbbbbb を保存しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["commit", "-m", "Save design", "--thumbnail", image], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "create", "-m", "Save design", "--thumbnail", image], "");
   });
 
   it("commits with a pasted clipboard image as the thumbnail and discards the temporary file", async () => {
@@ -294,7 +294,7 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
 
     expect(await screen.findByText(/葉 bbbbbbbbbbbb を保存しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["commit", "-m", "Save design", "--thumbnail", tempPath], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "create", "-m", "Save design", "--thumbnail", tempPath], "");
     expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: tempPath });
   });
 
@@ -347,7 +347,7 @@ describe("Sprout GUI operations", () => {
     await user.click(commitButton);
     expect(commitButton.disabled).toBe(true);
     commitButton.click();
-    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "commit")).toHaveLength(1);
+    expect(mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "leaf" && call[1][1] === "create"))).toHaveLength(1);
 
     await act(async () => {
       finishCommit({ id: "c".repeat(64), branch: "main", branch_id: "main", message: "Long snapshot", removed_paths: [] });
@@ -523,8 +523,28 @@ describe("Sprout GUI operations", () => {
     mockWorkspace({ ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] }, [], mainBranch, { ...graph, buds: [] });
     await user.click(screen.getByRole("button", { name: "このつぼみに戻る" }));
     expect(await screen.findByText("つぼみの変更に戻りました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "--restore", bud.id], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "restore", bud.id], "");
     expect(screen.getByRole("region", { name: "未保存の変更" })).toBeTruthy();
+  });
+
+  it("keeps an option-like bud name as positional text", async () => {
+    const user = userEvent.setup();
+    const bud = { id: "f".repeat(32), base_commit_id: commitEntry.id, branch_id: "main", branch_name: "main", name: "", created_at: commitEntry.created_at, changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
+    const graph: CommitGraph = { current_commit: commitEntry.id, at_branch_tip: true, commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [] }], branches: mainBranch, tags: [], buds: [bud] };
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [], mainBranch, graph);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    await user.click(screen.getByRole("button", { name: "つぼみ（1件の変更）" }));
+    await user.click(screen.getByRole("button", { name: "名前を付ける" }));
+    const editor = screen.getByRole("textbox", { name: "つぼみの名前" });
+    await user.type(editor, "-name");
+    mocks.runSprout.mockResolvedValueOnce({ ...bud, name: "-name" });
+    mockWorkspace(cleanStatus, [], mainBranch, { ...graph, buds: [{ ...bud, name: "-name" }] });
+    await user.click(within(editor.closest("form")!).getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("つぼみの名前を「-name」にしました")).toBeTruthy();
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "rename", "--", bud.id, "-name"], "");
   });
 
   describe("unsaved changes actions", () => {
@@ -536,7 +556,7 @@ describe("Sprout GUI operations", () => {
       await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
       await screen.findByRole("heading", { name: "sprout-project" });
     }
-    const writes = () => mocks.runSprout.mock.calls.map((call) => call[1]).filter((args) => !["status", "tree"].includes(args[0]));
+    const writes = () => mocks.runSprout.mock.calls.map((call) => call[1]).filter((args) => args[0] !== "status" && !(args[0] === "leaf" && args[1] === "tree"));
 
     it("moves unsaved changes into a bud without moving, and refreshes the map and top bar", async () => {
       const user = userEvent.setup();
@@ -549,7 +569,7 @@ describe("Sprout GUI operations", () => {
       });
       await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
       expect(await screen.findByText("未保存の変更をつぼみへ移し、作業フォルダを今の葉の内容に戻しました")).toBeTruthy();
-      expect(writes()).toEqual([["bud", "--save"]]);
+      expect(writes()).toEqual([["bud", "save"]]);
       expect(screen.getByRole("button", { name: "つぼみ（1件の変更）" })).toBeTruthy();
       expect(screen.getByLabelText("保存状態").textContent).not.toContain("未保存の変更");
       expect(screen.queryByRole("button", { name: "未保存の芽" })).toBeNull();
@@ -569,7 +589,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace();
       await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
       expect((await screen.findByRole("alert")).textContent).toContain("つぼみへ移す未保存の変更がありません（作業フォルダは変更していません。）");
-      expect(writes()).toEqual([["bud", "--save"]]);
+      expect(writes()).toEqual([["bud", "save"]]);
       expect(screen.getByLabelText("保存状態").textContent).not.toContain("未保存の変更 1");
     });
 
@@ -590,7 +610,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace(dirty([{ state: "modified", path: "other.txt" }]));
       await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
       expect(await screen.findByText("design/main.psd を元に戻しました")).toBeTruthy();
-      expect(writes()).toEqual([["restore", commitEntry.id, "design/main.psd", "--discard"]]);
+      expect(writes()).toEqual([["file", "restore", commitEntry.id, "design/main.psd", "--discard"]]);
       expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
     });
 
@@ -602,7 +622,7 @@ describe("Sprout GUI operations", () => {
       await user.click(screen.getByRole("button", { name: "new.txtを追跡から外す" }));
       expect(await screen.findByText("new.txt を追跡対象から外しました。ファイルは残っています")).toBeTruthy();
       expect(mocks.confirm.mock.calls[0][0]).toContain("ファイル自体は削除せず");
-      expect(writes()).toEqual([["untrack", "new.txt"]]);
+      expect(writes()).toEqual([["file", "untrack", "new.txt"]]);
     });
 
     it("shows the reason and leaves the file alone when a revert fails", async () => {
@@ -611,7 +631,7 @@ describe("Sprout GUI operations", () => {
       mocks.runSprout.mockRejectedValueOnce({ code: "untracked_conflict", message: "Cannot restore", details: { path: "design/main.psd" } });
       await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
       expect((await screen.findByRole("alert")).textContent).toContain("未追跡のファイルを上書きしてしまうため中止しました（作業フォルダは変更していません。）");
-      expect(writes()).toEqual([["restore", commitEntry.id, "design/main.psd", "--discard"]]);
+      expect(writes()).toEqual([["file", "restore", commitEntry.id, "design/main.psd", "--discard"]]);
     });
 
     it("offers no one-step revert for renamed files", async () => {
@@ -667,14 +687,14 @@ describe("Sprout GUI operations", () => {
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "ブランチを作って移動" }));
     expect(await screen.findByText("aaaaaaaaaaaa からブランチ rethink を作りました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["branch", "rethink", commitEntry.id, "--switch", "--keep-changes"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["branch", "create", "rethink", commitEntry.id, "--switch"], "");
     expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "go")).toBe(false);
 
     mocks.open.mockResolvedValueOnce("C:\\work\\out");
     mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, output: "C:\\work\\out", paths: ["design/main.psd"] });
     await chooseLeafAction(user, "ファイルを取り出す");
     expect(await screen.findByText("1件のファイルを C:\\work\\out へ書き出しました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["export", commitEntry.id, "--output", "C:\\work\\out"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["file", "export", commitEntry.id, "--output", "C:\\work\\out"], "");
   });
 
   it("keeps the typed name and reports nothing moved when a branch is refused", async () => {
@@ -771,7 +791,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce(detail);
     await chooseLeafAction(user, "サムネイルを変更");
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", tipId, image], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "set", tipId, image], "");
   });
 
   it("edits a selected commit message and refreshes the map and detail", async () => {
@@ -794,7 +814,7 @@ describe("Sprout GUI operations", () => {
     await user.click(within(editor.closest("form") as HTMLElement).getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/のメッセージを変更しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["message", commitEntry.id, "Renamed snapshot"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "edit", commitEntry.id, "--message", "Renamed snapshot"], "");
     expect(screen.getByRole("heading", { name: "Renamed snapshot" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Renamed snapshot" })).toBeTruthy();
   });
@@ -858,7 +878,7 @@ describe("Sprout GUI operations", () => {
     await act(async () => finishDialog(image));
 
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", rootId, image], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "set", rootId, image], "");
     expect(await screen.findByRole("img", { name: "Past commitのサムネイル" })).toBeTruthy();
   });
 
@@ -880,7 +900,7 @@ describe("Sprout GUI operations", () => {
     fireEvent.paste(document.body, { clipboardData: clipboardData(image) });
 
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", commitEntry.id, tempPath], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "set", commitEntry.id, tempPath], "");
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: tempPath }));
   });
 
@@ -893,7 +913,7 @@ describe("Sprout GUI operations", () => {
     leaf.focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["show", commitEntry.id], "");
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "show", commitEntry.id], "");
 
     const canvas = screen.getByRole("group", { name: "芽のマップ" });
     const width = Number(canvas.getAttribute("width"));
@@ -984,7 +1004,7 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
     expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
     expect(screen.queryByRole("region", { name })).toBeNull();
-    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["show", commitEntry.id], "");
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "show", commitEntry.id], "");
   });
 
   describe("concurrent leaf detail reads", () => {
@@ -1152,7 +1172,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace();
       await user.click(screen.getByRole("button", { name: `${tracked}をサムネイル自動生成元に設定` }));
       expect(await screen.findByText(new RegExp(`今はサムネイルを作れません: サムネイル自動生成元が対応する画像ではありません`))).toBeTruthy();
-      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["cover", tracked], "");
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "source", "set", tracked], "");
     });
 
     it("applies to existing leaves only after confirmation", async () => {
@@ -1168,7 +1188,7 @@ describe("Sprout GUI operations", () => {
       await user.click(await screen.findByRole("button", { name: "既存の葉へ適用" }));
       await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
       expect(mocks.confirm.mock.calls[0][0]).toContain("2件の葉");
-      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "cover --apply")).toBe(false);
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "leaf thumbnail source apply")).toBe(false);
     });
   });
 
@@ -1188,7 +1208,7 @@ describe("Sprout GUI operations", () => {
       const user = userEvent.setup();
       const panel = await openPanel(user);
       for (const text of ["3件", "2件", "4件", "1件", "5個", "4.0 KiB", "2.0 KiB", "1.0 KiB"]) expect(panel.textContent).toContain(text);
-      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["stats"], "");
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["maintenance", "stats"], "");
     });
 
     it("collects only after confirmation and shows the result", async () => {
@@ -1202,7 +1222,7 @@ describe("Sprout GUI operations", () => {
       await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
       expect(mocks.confirm.mock.calls[0][0]).toContain("オブジェクト 2個、一時ファイル 1個");
       expect(mocks.confirm.mock.calls[0][0]).toContain("2.0 KiB");
-      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "gc")).toBe(false);
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "maintenance gc")).toBe(false);
 
       mocks.runSprout
         .mockResolvedValueOnce(preview)
@@ -1211,7 +1231,7 @@ describe("Sprout GUI operations", () => {
       mocks.confirm.mockResolvedValueOnce(true);
       await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
       expect(await within(panel).findByText(/オブジェクト 2個、一時ファイル 1個を削除し、2.0 KiBを回収しました/)).toBeTruthy();
-      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["gc"], "");
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["maintenance", "gc"], "");
       expect(panel.textContent).toContain("3個");
     });
 
@@ -1230,7 +1250,7 @@ describe("Sprout GUI operations", () => {
       mocks.runSprout.mockResolvedValueOnce({ ok: true, checked_objects: 12, issues: [] });
       await user.click(within(panel).getByRole("button", { name: "検査する" }));
       expect(await within(panel).findByText("問題はありません（12個を検査）")).toBeTruthy();
-      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["doctor", "--report"], "");
+      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["maintenance", "doctor", "--report"], "");
 
       mocks.runSprout.mockResolvedValueOnce({ ok: false, checked_objects: 12, issues: [{ kind: "corrupt_object", detail: "abc" }, { kind: "future_issue", detail: "x" }] });
       await user.click(within(panel).getByRole("button", { name: "検査する" }));
@@ -1364,7 +1384,7 @@ describe("Sprout GUI operations", () => {
     mockWorkspace({ ...cleanStatus, current_commit: null, changes: rootBud.changes }, [], graph.branches, { ...graph, buds: [] });
     await user.click(screen.getByRole("button", { name: "このつぼみに戻る" }));
     expect(await screen.findByText("つぼみの変更に戻りました")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "--restore", rootBud.id], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["bud", "restore", rootBud.id], "");
   });
 
   describe("snapshot notes, labels, and tags", () => {
@@ -1396,6 +1416,56 @@ describe("Sprout GUI operations", () => {
     const id = commitEntry.id;
     const sentArgs = () => mocks.runSprout.mock.calls.map((call) => call[1]);
 
+    it.each(["message", "note", "label"])("preserves the literal --json as %s text", async (field) => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      let region: HTMLElement;
+      if (field === "message") {
+        await user.click(screen.getByRole("button", { name: "メッセージを編集" }));
+        const editor = screen.getByRole("textbox", { name: "メッセージを編集" });
+        await user.clear(editor); await user.type(editor, "--json");
+        region = editor.closest("form")!;
+        mockEdit({}, { message: "--json" });
+      } else if (field === "note") {
+        region = screen.getByRole("region", { name: "メモ" });
+        await user.click(within(region).getByRole("button", { name: "メモを書く" }));
+        await user.type(within(region).getByRole("textbox", { name: "メモを編集" }), "--json");
+        mockEdit({}, { note: "--json" });
+      } else {
+        region = screen.getByRole("region", { name: "ラベル" });
+        mocks.runSprout.mockResolvedValueOnce([]);
+        await user.type(within(region).getByRole("combobox", { name: "追加するラベル" }), "--json");
+        mockEdit({}, { labels: ["--json"] });
+      }
+      await user.click(within(region).getByRole("button", { name: field === "label" ? "追加" : "保存" }));
+      await waitFor(() => expect(sentArgs()).toContainEqual(field === "label"
+        ? ["leaf", "label", "add", "--", id, "--json"]
+        : ["leaf", "edit", id, `--${field}=--json`]));
+      await waitFor(() => expect(screen.queryByLabelText("操作中")).toBeNull());
+    });
+
+    it("preserves a leading dash in edited tag comments", async () => {
+      const user = userEvent.setup();
+      const tag = { name: "keep", commit_id: id, comment: "old", created_at: commitEntry.created_at };
+      render(<App />);
+      await openWorkspace(user);
+      mocks.runSprout.mockResolvedValueOnce(detailOf());
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      // Create the tag through the ordinary form so the refreshed graph owns its display.
+      const tags = within(screen.getByRole("region", { name: "タグ" }));
+      await user.type(tags.getByRole("textbox", { name: "新しいタグの名前" }), "keep");
+      mockEdit(tag, {}, [tag]);
+      await user.click(tags.getByRole("button", { name: "タグを付ける" }));
+      await screen.findByText("タグ keep を付けました");
+      await user.click(tags.getByRole("button", { name: "タグ「keep」のコメントを編集" }));
+      const editor = tags.getByRole("textbox", { name: "タグ「keep」のコメント" });
+      await user.clear(editor); await user.type(editor, "-comment");
+      mockEdit({}, {}, [{ ...tag, comment: "-comment" }]);
+      await user.click(tags.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("タグ keep のコメントを変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["leaf", "tag", "comment", "--", "keep", "-comment"]);
+    });
+
     it("writes, keeps on refusal, and deletes a note", async () => {
       const user = userEvent.setup();
       await openDetail(user);
@@ -1414,7 +1484,7 @@ describe("Sprout GUI operations", () => {
       mockEdit({ commit_id: id, note: "色味を確認", note_updated_at: "now", labels: [] }, { note: "色味を確認", note_updated_at: "now" });
       await user.click(memo.getByRole("button", { name: "保存" }));
       expect(await screen.findByText(/のメモを保存しました/)).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["note", id, "色味を確認"]);
+      expect(sentArgs()).toContainEqual(["leaf", "edit", id, "--note", "色味を確認"]);
       expect(memo.getByText("色味を確認")).toBeTruthy();
       expect(memo.queryByRole("textbox")).toBeNull();
 
@@ -1423,7 +1493,7 @@ describe("Sprout GUI operations", () => {
       mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: [] }, {});
       await user.click(memo.getByRole("button", { name: "保存" }));
       expect(await screen.findByText(/のメモを削除しました/)).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["note", id, "--delete"]);
+      expect(sentArgs()).toContainEqual(["leaf", "edit", id, "--clear-note"]);
       expect(memo.getByText("メモはありません")).toBeTruthy();
     });
 
@@ -1482,7 +1552,7 @@ describe("Sprout GUI operations", () => {
       mockEdit(tag, {}, [tag]);
       await user.click(tagRegion().getByRole("button", { name: "タグを付ける" }));
       expect(await screen.findByText("タグ 提出版 を付けました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["tag", "提出版", id, "--comment", "初稿"]);
+      expect(sentArgs()).toContainEqual(["leaf", "tag", "create", "提出版", id, "--comment", "初稿"]);
       expect(tagRegion().getByText("#提出版")).toBeTruthy();
       expect(tagRegion().getByText("初稿")).toBeTruthy();
       expect(screen.getByText("#提出版", { selector: "text" })).toBeTruthy();
@@ -1494,19 +1564,19 @@ describe("Sprout GUI operations", () => {
       mockEdit({ ...tag, comment: "最終版" }, {}, [{ ...tag, comment: "最終版" }]);
       await user.click(tagRegion().getByRole("button", { name: "保存" }));
       expect(await screen.findByText("タグ 提出版 のコメントを変更しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["tag", "提出版", "--set-comment", "最終版"]);
+      expect(sentArgs()).toContainEqual(["leaf", "tag", "comment", "提出版", "最終版"]);
       expect(tagRegion().getByText("最終版")).toBeTruthy();
 
       mocks.confirm.mockResolvedValueOnce(false);
       await user.click(tagRegion().getByRole("button", { name: "タグ「提出版」を削除" }));
       expect(mocks.confirm).toHaveBeenCalledWith(expect.stringContaining("葉は削除されません"), expect.objectContaining({ kind: "warning" }));
-      expect(sentArgs().some((args) => args[0] === "tag" && args.includes("--delete"))).toBe(false);
+      expect(sentArgs().some((args) => args[0] === "leaf" && args[1] === "tag" && args[2] === "delete")).toBe(false);
 
       mocks.confirm.mockResolvedValueOnce(true);
       mockEdit({ name: "提出版", deleted: true }, {});
       await user.click(tagRegion().getByRole("button", { name: "タグ「提出版」を削除" }));
       expect(await screen.findByText("タグ 提出版 を削除しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["tag", "--delete", "提出版"]);
+      expect(sentArgs()).toContainEqual(["leaf", "tag", "delete", "提出版"]);
       expect(tagRegion().getByText("タグはありません")).toBeTruthy();
     });
 
@@ -1534,9 +1604,9 @@ describe("Sprout GUI operations", () => {
       expect(message).toContain("Initial design");
       expect(message).toContain("ブランチ main は葉のない状態へ移ります");
       expect(message).toContain("作業ファイルは変わらず、未保存の変更として残ります");
-      expect(message).toContain("sprout gc");
+      expect(message).toContain("sprout maintenance gc");
       expect(options).toEqual(expect.objectContaining({ kind: "warning", okLabel: "削除" }));
-      expect(sentArgs()).toContainEqual(["delete-commit", id, "--dry-run"]);
+      expect(sentArgs()).toContainEqual(["leaf", "delete", id, "--dry-run"]);
       expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
       expect(screen.getByRole("region", { name: "選択中の葉" })).toBeTruthy();
 
@@ -1547,7 +1617,7 @@ describe("Sprout GUI operations", () => {
       });
       await chooseLeafAction(user, "この葉を削除");
       expect(await screen.findByText(`葉 ${id.slice(0, 12)} を削除しました`)).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["delete-commit", id, "--yes"]);
+      expect(sentArgs()).toContainEqual(["leaf", "delete", id, "--yes"]);
       expect(screen.queryByRole("region", { name: "選択中の葉" })).toBeNull();
     });
 
@@ -1625,6 +1695,22 @@ describe("Sprout GUI operations", () => {
       await screen.findByRole("heading", { name: "sprout-project" });
     }
 
+    it("preserves option-like branch comment text", async () => {
+      const user = userEvent.setup();
+      await openMap(user);
+      await user.click(screen.getByRole("button", { name: "ブランチ side" }));
+      const panel = within(screen.getByRole("region", { name: "選択中のブランチ" }));
+      await user.click(panel.getByRole("button", { name: "コメントを編集" }));
+      const editor = panel.getByRole("textbox", { name: "ブランチのコメントを編集" });
+      await user.clear(editor); await user.type(editor, "-comment");
+      mocks.runSprout.mockResolvedValueOnce({ id: "side-id", name: "side", comment: "-comment" });
+      const graph = branchGraph({ comment: "-comment" });
+      mockWorkspace(status, [], graph.branches, graph);
+      await user.click(panel.getByRole("button", { name: "保存" }));
+      expect(await screen.findByText("ブランチ side のコメントを変更しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["branch", "comment", "--", "side", "-comment"]);
+    });
+
     it("renames and comments on a branch chosen from the map and keeps it selected by ID", async () => {
       const user = userEvent.setup();
       await openMap(user);
@@ -1650,7 +1736,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace(status, [], graph.branches, graph);
       await user.click(panel.getByRole("button", { name: "名前を変更" }));
       expect(await screen.findByText("ブランチ side の名前を idea に変更しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["branch", "side", "--rename", "idea"]);
+      expect(sentArgs()).toContainEqual(["branch", "rename", "side", "idea"]);
       const renamed = within(screen.getByRole("region", { name: "選択中のブランチ" }));
       expect(renamed.getByRole("heading", { name: "idea" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "ブランチ idea" }).getAttribute("aria-pressed")).toBe("true");
@@ -1662,7 +1748,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace(status, [], graph.branches, graph);
       await user.click(renamed.getByRole("button", { name: "保存" }));
       expect(await screen.findByText("ブランチ idea のコメントを変更しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["branch", "idea", "--set-comment", ""]);
+      expect(sentArgs()).toContainEqual(["branch", "comment", "idea", ""]);
       expect(renamed.getByText("コメントはありません")).toBeTruthy();
 
       mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, id: rootId, branch_id: "side-id", branch_name: "side", message: "Side root", thumbnail: null, attachments: [], files: [] });
@@ -1691,7 +1777,7 @@ describe("Sprout GUI operations", () => {
       mockWorkspace(status, [], graph.branches, graph);
       await user.click(screen.getByRole("button", { name: "ブランチを削除" }));
       expect(await screen.findByText("ブランチ side を削除しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["branch", "--delete", "side"]);
+      expect(sentArgs()).toContainEqual(["branch", "delete", "side"]);
       expect(screen.queryByRole("region", { name: "選択中のブランチ" })).toBeNull();
       expect(screen.getByText("削除済みブランチ由来: side")).toBeTruthy();
     });
@@ -1749,8 +1835,8 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce([]);
     await user.click(screen.getByRole("button", { name: "比較する" }));
     await screen.findByText("差分はありません");
-    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["diff", commitEntry.id, "b".repeat(64)], "");
-    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show", "diff"]);
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["file", "diff", commitEntry.id, "b".repeat(64)], "");
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf", "leaf", "file"]);
   });
 
   async function openSavedFiles(user: ReturnType<typeof userEvent.setup>) {
@@ -1774,8 +1860,8 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce({ paths: ["assets/a.bin", "assets/sub/b.bin"], output: "C:\\export" });
     await user.click(screen.getByRole("button", { name: "選択したファイルを取り出す" }));
     await screen.findByText(/2件のファイルを.*へ書き出しました/);
-    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["export", commitEntry.id, "assets/a.bin", "assets/sub/b.bin", "--output", "C:\\export"], "");
-    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show", "export"]);
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["file", "export", commitEntry.id, "assets/a.bin", "assets/sub/b.bin", "--output", "C:\\export"], "");
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf", "leaf", "file"]);
   });
 
   it("restores one file and refreshes changes without moving snapshot references", async () => {
@@ -1789,8 +1875,8 @@ describe("Sprout GUI operations", () => {
     expect(mocks.confirm.mock.calls[0][0]).toContain("assets/a.bin");
     expect(mocks.confirm.mock.calls[0][0]).toContain("選択外のファイル・現在位置・ブランチ先端は変わりません");
     expect(mocks.runSprout.mock.calls.map((call) => call[1])).toEqual([
-      ["status", "--tracked", "--untracked"], ["tree"], ["show", commitEntry.id],
-      ["restore", commitEntry.id, "assets/a.bin"], ["status", "--tracked", "--untracked"], ["tree"],
+      ["status", "--tracked", "--untracked"], ["leaf", "tree"], ["leaf", "show", commitEntry.id],
+      ["file", "restore", commitEntry.id, "assets/a.bin"], ["status", "--tracked", "--untracked"], ["leaf", "tree"],
     ]);
     expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
   });
@@ -1803,7 +1889,7 @@ describe("Sprout GUI operations", () => {
     else mocks.confirm.mockResolvedValueOnce(false);
     await user.click(screen.getByRole("button", { name: operation === "export" ? "選択したファイルを取り出す" : "選択したファイルだけ戻す" }));
     await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
-    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree", "show"]);
+    expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf", "leaf"]);
   });
 
   it.each([false, true])("retries with discard only after explicit approval: %s", async (accepted) => {
@@ -1819,10 +1905,10 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "選択したファイルだけ戻す" }));
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
-    const calls = mocks.runSprout.mock.calls.filter((call) => call[1][0] === "restore");
+    const calls = mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "file" && call[1][1] === "restore"));
     expect(calls.map((call) => call[1])).toEqual(accepted
-      ? [["restore", commitEntry.id, "assets/a.bin"], ["restore", commitEntry.id, "assets/a.bin", "--discard"]]
-      : [["restore", commitEntry.id, "assets/a.bin"]]);
+      ? [["file", "restore", commitEntry.id, "assets/a.bin"], ["file", "restore", commitEntry.id, "assets/a.bin", "--discard"]]
+      : [["file", "restore", commitEntry.id, "assets/a.bin"]]);
   });
 
   it.each([
@@ -1838,7 +1924,7 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(new RegExp(shown))).toBeTruthy();
     expect(screen.getByText("対象: assets/a.bin")).toBeTruthy();
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "restore")).toHaveLength(1);
+    expect(mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "file" && call[1][1] === "restore"))).toHaveLength(1);
   });
 
   it("reports an export collision without forcing overwrite", async () => {
@@ -1849,7 +1935,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockRejectedValueOnce({ code: "output_exists", message: "Already exists", details: { path: "assets/a.bin" } });
     await user.click(screen.getByRole("button", { name: "選択したファイルを取り出す" }));
     await screen.findByText("Already exists");
-    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "export")).toHaveLength(1);
+    expect(mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "file" && call[1][1] === "export"))).toHaveLength(1);
     expect(mocks.runSprout.mock.lastCall?.[1]).not.toContain("--force");
   });
 
@@ -1899,8 +1985,8 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText("Review")).toBeTruthy();
     expect(screen.queryByText("代表")).toBeNull();
     expect(screen.queryByText("対象素材: scene.blend")).toBeNull();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "metadata", commitEntry.id, "p1", "--name=Review", "--description=Notes"], "");
-    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "preview" && call[1][1] === "image")).toBe(false);
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "preview", "edit", commitEntry.id, "p1", "--name=Review", "--description=Notes"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => (call[1][0] === "leaf" && call[1][1] === "preview") && call[1][2] === "image")).toBe(false);
   });
 
   it.each([false, true])("confirms a large preview before registration: %s", async (accepted) => {
@@ -1914,11 +2000,11 @@ describe("Sprout GUI operations", () => {
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
     await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
     expect(mocks.confirm.mock.calls[0][0]).toContain("200,000,000");
-    const calls = mocks.runSprout.mock.calls.filter((call) => call[1][0] === "preview").map((call) => call[1]);
+    const calls = mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "leaf" && call[1][1] === "preview")).map((call) => call[1]);
     expect(calls).toEqual(accepted ? [
-      ["preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"],
-      ["preview", "add", commitEntry.id, "C:\\movie.mp4", "--yes"],
-    ] : [["preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"]]);
+      ["leaf", "preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"],
+      ["leaf", "preview", "add", commitEntry.id, "C:\\movie.mp4", "--yes"],
+    ] : [["leaf", "preview", "add", commitEntry.id, "C:\\movie.mp4", "--dry-run"]]);
   });
 
   it("adds multiple preview files from a native drop instead of tracking them", async () => {
@@ -1928,8 +2014,8 @@ describe("Sprout GUI operations", () => {
     previewRefresh();
     act(() => mocks.dragHandler?.({ payload: { type: "drop", paths: ["C:\\one.wav", "C:\\two.bin"] } }));
     await screen.findByText("プレビューの操作が完了しました");
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\one.wav", "C:\\two.bin"], "");
-    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "track")).toBe(false);
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "preview", "add", commitEntry.id, "C:\\one.wav", "C:\\two.bin"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => (call[1][0] === "file" && call[1][1] === "track"))).toBe(false);
   });
 
   it.each(["replace", "delete", "order"])("uses stable attachment IDs for preview %s", async (action) => {
@@ -1945,8 +2031,8 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name }));
     await screen.findByText("プレビューの操作が完了しました");
     expect(mocks.runSprout).toHaveBeenCalledWith(project, action === "replace"
-      ? ["preview", "replace", commitEntry.id, "p1", "C:\\new.wav"]
-      : action === "delete" ? ["preview", "delete", commitEntry.id, "p1"] : ["preview", "order", commitEntry.id, "p2", "p1"], "");
+      ? ["leaf", "preview", "replace", commitEntry.id, "p1", "C:\\new.wav"]
+      : action === "delete" ? ["leaf", "preview", "delete", commitEntry.id, "p1"] : ["leaf", "preview", "order", commitEntry.id, "p2", "p1"], "");
   });
 
   it("exports a preview to a chosen file without force", async () => {
@@ -1956,7 +2042,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce({ output: "C:\\out.wav" });
     await user.click(screen.getByRole("button", { name: "voice.wavを取り出す" }));
     await screen.findByText(/プレビューを.*へ取り出しました/);
-    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["preview", "export", commitEntry.id, "p1", "--output", "C:\\out.wav"], "");
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "preview", "export", commitEntry.id, "p1", "--output", "C:\\out.wav"], "");
   });
 
   it("preserves the displayed preview order on failure", async () => {
@@ -1967,7 +2053,7 @@ describe("Sprout GUI operations", () => {
     await screen.findByText("別のSproutの操作が実行中です。終わってから再試行してください");
     const list = within(screen.getByRole("region", { name: "プレビュー管理" })).getByRole("list");
     expect(within(list).getAllByRole("listitem")[0].textContent).toContain("voice.wav");
-    expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "preview")).toHaveLength(1);
+    expect(mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "leaf" && call[1][1] === "preview"))).toHaveLength(1);
   });
 
   it.each([false, true])("pastes arbitrary preview files and cleans up after failure=%s", async (failure) => {
@@ -1980,7 +2066,7 @@ describe("Sprout GUI operations", () => {
     fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(new File(["voice"], "voice.wav", { type: "audio/wav" })) });
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("discard_pasted_thumbnail", { path: "C:\\temp\\voice.wav" }));
     expect(mocks.invoke).toHaveBeenCalledWith("save_pasted_preview", { name: "voice.wav", data: "dm9pY2U=" });
-    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "thumbnail")).toBe(false);
+    expect(mocks.runSprout.mock.calls.some((call) => (call[1][0] === "leaf" && call[1][1] === "thumbnail"))).toBe(false);
     if (failure) await screen.findByText("Cannot add");
   });
 
@@ -1992,8 +2078,8 @@ describe("Sprout GUI operations", () => {
     previewRefresh();
     fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(new File(["image"], "image.png", { type: "image/png" })) });
     await screen.findByText("プレビューの操作が完了しました");
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\temp\\image.png"], "");
-    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "thumbnail")).toBe(false);
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "preview", "add", commitEntry.id, "C:\\temp\\image.png"], "");
+    expect(mocks.runSprout.mock.calls.some((call) => (call[1][0] === "leaf" && call[1][1] === "thumbnail"))).toBe(false);
   });
 
   it("adds native Explorer clipboard paths when WebView files are absent", async () => {
@@ -2004,7 +2090,7 @@ describe("Sprout GUI operations", () => {
     previewRefresh();
     fireEvent.paste(screen.getByRole("group", { name: "プレビュー貼り付け領域" }), { clipboardData: clipboardData(null) });
     await screen.findByText("プレビューの操作が完了しました");
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "add", commitEntry.id, "C:\\source.pdf"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "preview", "add", commitEntry.id, "C:\\source.pdf"], "");
   });
 
   describe("refresh when the window regains focus", () => {
@@ -2126,7 +2212,7 @@ describe("Sprout GUI operations", () => {
       await focus();
 
       await waitFor(() => expect(saveState()).toBe("未保存の変更 1"));
-      expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "tree"]);
+      expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf"]);
       expect(screen.getByRole("region", { name: "選択中の葉" })).toBeTruthy();
       expect((screen.getByRole("textbox", { name: "メモを編集" }) as HTMLTextAreaElement).value).toBe("Draft memo");
     });
@@ -2225,7 +2311,7 @@ describe("Sprout GUI operations", () => {
       id: "t1", position: 0, commit_id: commitEntry.id, role: "thumbnail" as const, original_name: "old.png", media_type: "image/png",
       object_hash: "f".repeat(64), size: 3, created_at: commitEntry.created_at, updated_at: commitEntry.created_at,
     };
-    const leafChanges = () => mocks.runSprout.mock.calls.filter((call) => ["preview", "thumbnail", "track"].includes(call[1][0]));
+    const leafChanges = () => mocks.runSprout.mock.calls.filter((call) => (call[1][0] === "leaf" && ["preview", "thumbnail"].includes(call[1][1])) || (call[1][0] === "file" && call[1][1] === "track"));
     const drag = (payload: { type: string; paths: string[] }) => act(() => mocks.dragHandler?.({ payload }));
 
     /** Open a leaf detail, then show the named panel over it while the leaf stays selected. */
@@ -2273,7 +2359,7 @@ describe("Sprout GUI operations", () => {
       drag({ type: "drop", paths: ["C:\\one.wav"] });
 
       expect(await screen.findByText("1件を追跡対象に追加しました")).toBeTruthy();
-      expect(leafChanges().map((call) => call[1])).toEqual([["track", "C:\\one.wav"]]);
+      expect(leafChanges().map((call) => call[1])).toEqual([["file", "track", "C:\\one.wav"]]);
     });
 
     it("shows the destination leaf while hovering and clears it when the drag leaves", async () => {
@@ -2372,7 +2458,7 @@ describe("Sprout GUI operations", () => {
       expect(mocks.confirm.mock.calls[0][0]).toContain("置き換えます");
       if (accepted) {
         expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
-        expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", commitEntry.id, "C:\\temp\\clipboard.png"], "");
+        expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "set", commitEntry.id, "C:\\temp\\clipboard.png"], "");
       } else {
         await act(async () => undefined);
         expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());

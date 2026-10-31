@@ -16,7 +16,7 @@ it("loads only the selected image and closes the display", async () => {
   expect(runSprout).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "one.pngを表示" }));
   expect((await screen.findByRole("img", { name: "one.png" })).getAttribute("src")).toBe(reply.data_url);
-  expect(runSprout).toHaveBeenCalledWith("project", ["preview", "image", "commit", "one"], "sprout");
+  expect(runSprout).toHaveBeenCalledWith("project", ["leaf", "preview", "image", "commit", "one"], "sprout");
   expect(screen.getByText("3000 × 1500 px（表示用に縮小）")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "画像表示を閉じる" }));
   expect(screen.queryByRole("img")).toBeNull();

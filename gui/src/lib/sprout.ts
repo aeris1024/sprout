@@ -175,7 +175,7 @@ export interface GoResult {
   changes: StatusChange[];
 }
 
-/** What `delete-commit` changes, or would change with --dry-run. */
+/** What `leaf delete` changes, or would change with --dry-run. */
 export interface CommitDeletion {
   dry_run: boolean;
   commit: { id: string; created_at: string; message: string };

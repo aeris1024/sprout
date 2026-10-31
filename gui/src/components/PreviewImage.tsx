@@ -12,7 +12,7 @@ export default function PreviewImage({ projectDir, program, attachment, onClose 
     let active = true;
     setImage(null);
     setError("");
-    void runSprout<ImageReply>(projectDir, ["preview", "image", attachment.commit_id, attachment.id], program)
+    void runSprout<ImageReply>(projectDir, ["leaf", "preview", "image", attachment.commit_id, attachment.id], program)
       .then((reply) => { if (active) setImage(reply); })
       .catch((cause) => { if (active) setError(normalizeCliError(cause).message); });
     return () => { active = false; };
