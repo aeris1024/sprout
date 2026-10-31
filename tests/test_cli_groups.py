@@ -73,7 +73,11 @@ def test_leaf_archive_dry_run_and_write_preserve_the_source(tmp_path, monkeypatc
     output = tmp_path / 'archive'
     args = ('--output', str(output), '--dry-run')
     dry = call('leaf', 'archive', *args)
-    assert dry == call('archive', *args)
+    legacy = call('archive', *args)
+    assert {key: value for key, value in dry.items() if key != 'free_bytes'} == {
+        key: value for key, value in legacy.items() if key != 'free_bytes'
+    }
+    assert dry['free_bytes'] >= 0 and legacy['free_bytes'] >= 0
     assert dry['commits'] == 1 and dry['files'] > 0
     assert not output.exists()
     actual = call('leaf', 'archive', '--output', str(output))
@@ -147,3 +151,56 @@ def test_nested_leaf_usage_errors_keep_serve_usable(tmp_path, monkeypatch):
     assert call('leaf', 'tree')['commits'] == []
     created = call('leaf', 'create', '-m', 'after usage error')
     assert call('leaf', 'show', created['id'])['message'] == 'after usage error'
+
+
+def test_leaf_tag_commands_keep_json_comments_and_literal_command_names(tmp_path, monkeypatch):
+    repo, asset = project(tmp_path, monkeypatch)
+    first = call('leaf', 'create', '-m', 'first')['id']
+    assert call('leaf', 'tag', 'list') == []
+    for name in ('list', 'create', 'comment', 'delete'):
+        result = call('leaf', 'tag', 'create', name, '-m', '  initial  ')
+        assert result['name'] == name and result['commit_id'] == first
+        assert result['comment'] == 'initial'
+    assert call('leaf', 'tag', 'list') == call('tag')
+    assert call('leaf', 'tag', 'comment', 'comment', ' revised ')['comment'] == 'revised'
+    assert call('leaf', 'tag', 'comment', 'comment', '')['comment'] == ''
+    asset.write_bytes(b'second')
+    second = call('leaf', 'create', '-m', 'second')['id']
+    # With a detached current position, the default remains the branch tip.
+    call('go', first)
+    assert call('leaf', 'tag', 'create', 'tip')['commit_id'] == second
+    assert call('leaf', 'tag', 'create', 'explicit', first)['commit_id'] == first
+    assert repo.head_commit() == second and asset.read_bytes() == b'first'
+
+
+def test_leaf_tag_delete_protection_recovery_and_name_collision(tmp_path, monkeypatch):
+    repo, asset = project(tmp_path, monkeypatch)
+    leaf = call('leaf', 'create', '-m', 'first')['id']
+    call('leaf', 'tag', 'create', 'keep')
+    refusal = run_command(app, ['leaf', 'delete', leaf, '--yes', '--json'])
+    assert refusal['error']['code'] == 'tagged_commit'
+    assert call('leaf', 'tag', 'delete', 'keep') == {'name': 'keep', 'deleted': True}
+    assert repo.resolve_commit(leaf) == leaf
+    item = repo.trash_items()[0]['id']
+    call('leaf', 'tag', 'create', 'keep', '-m', 'new tag')
+    rejected = run_command(app, ['trash', 'restore', item, '--json'])
+    assert not rejected['ok']
+    assert call('leaf', 'tag', 'list')[0]['comment'] == 'new tag'
+    call('leaf', 'tag', 'delete', 'keep')
+    call('trash', 'restore', item)
+    assert call('leaf', 'tag', 'list')[0]['comment'] == ''
+    assert asset.read_bytes() == b'first'
+
+
+def test_leaf_tag_invalid_input_and_collisions_do_not_change_other_metadata(tmp_path, monkeypatch):
+    repo, asset = project(tmp_path, monkeypatch)
+    leaf = call('leaf', 'create', '-m', 'first')['id']
+    repo.add_label(leaf, 'approved')
+    repo.set_note(leaf, 'memo')
+    call('leaf', 'tag', 'create', 'keep')
+    before = call('leaf', 'show', leaf)
+    for args in [('create', 'keep'), ('create', ''), ('create', 'missing', 'absent'), ('comment', 'missing', 'text'), ('delete', 'missing')]:
+        rejected = run_command(app, ['leaf', 'tag', *args, '--json'])
+        assert not rejected['ok']
+        assert call('leaf', 'show', leaf) == before
+        assert asset.read_bytes() == b'first'

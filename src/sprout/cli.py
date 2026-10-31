@@ -101,9 +101,11 @@ app = typer.Typer(
     help="Offline snapshot version control for local files.",
 )
 leaf_app = typer.Typer(no_args_is_help=True, help="Create and manage saved leaves.")
+tag_app = typer.Typer(no_args_is_help=True, help="Name and protect saved leaves with tags.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
 app.add_typer(leaf_app, name="leaf")
+leaf_app.add_typer(tag_app, name="tag")
 app.add_typer(file_app, name="file")
 app.add_typer(maintenance_app, name="maintenance")
 
@@ -1687,6 +1689,47 @@ def tag(
     for tag_name, commit_id, tag_comment, _created_at in tags:
         suffix = f"  # {tag_comment}" if tag_comment else ""
         typer.echo(f"{tag_name:<20} {commit_id[:12]}{suffix}")
+
+
+@tag_app.command(name="list")
+def tag_list(
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List tags and their comments."""
+    tag(json_output=json_output)
+
+
+@tag_app.command(name="create")
+def tag_create(
+    name: Annotated[str, typer.Argument(help="New tag name")],
+    commit: Annotated[
+        str | None,
+        typer.Argument(help="Leaf ID, prefix, branch, or tag; defaults to the branch tip", autocompletion=_complete_references),
+    ] = None,
+    comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the new tag")] = "",
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Create a tag without changing the working files or current position."""
+    tag(name=name, commit=commit, comment=comment, json_output=json_output)
+
+
+@tag_app.command(name="comment")
+def tag_comment(
+    name: Annotated[str, typer.Argument(help="Existing tag name")],
+    text: Annotated[str, typer.Argument(help="New comment; an empty string clears it")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Replace or clear a tag's comment."""
+    tag(name=name, set_comment=text, json_output=json_output)
+
+
+@tag_app.command(name="delete")
+def tag_delete(
+    name: Annotated[str, typer.Argument(help="Tag to move to the trash")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Delete the tag while retaining its leaf and recovery data."""
+    tag(delete=name, json_output=json_output)
 
 
 @app.command()
