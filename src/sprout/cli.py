@@ -296,7 +296,7 @@ def _tag_json(repository: Repository, name: str) -> dict[str, Any]:
     for tag_name, commit_id, comment, created_at in repository.tags():
         if tag_name == name:
             return {"name": tag_name, "commit_id": commit_id, "comment": comment, "created_at": created_at}
-    raise SproutError(f"unknown tag: {name}")
+    raise SproutError(f"unknown tag: {name}", code="unknown_tag", details={"name": name})
 
 
 def _change_json(entry: StatusEntry) -> dict[str, Any]:

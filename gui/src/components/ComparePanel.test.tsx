@@ -35,7 +35,7 @@ it("retains targets on errors and can retry", async () => {
   vi.mocked(runSprout).mockRejectedValueOnce({ code: "repository_locked", message: "Locked", details: {} }).mockResolvedValueOnce([]);
   render(<ComparePanel {...props} />);
   fireEvent.click(screen.getByText("比較する"));
-  await screen.findByText("Locked");
+  await screen.findByText("別のSproutの操作が実行中です。終わってから再試行してください");
   expect((screen.getByLabelText("比較先") as HTMLSelectElement).value).toBe("b");
   fireEvent.click(screen.getByText("比較する"));
   await screen.findByText("差分はありません");

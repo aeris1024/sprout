@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { translateCliError } from "./cliErrors";
 
 export interface StatusChange {
   state: "added" | "modified" | "deleted" | "renamed" | string;
@@ -215,6 +216,8 @@ export interface SproutCliError {
   code: string;
   message: string;
   details: Record<string, unknown>;
+  /** The message is already in the GUI's words and is not to be looked up again. */
+  translated?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -246,14 +249,16 @@ export function normalizeCliError(error: unknown): SproutCliError {
 
   if (isRecord(candidate)) {
     const details = isRecord(candidate.details) ? candidate.details : {};
-    return {
-      code: typeof candidate.code === "string" ? candidate.code : "gui_error",
-      message:
-        typeof candidate.message === "string"
-          ? candidate.message
-          : "Sproutの操作に失敗しました",
-      details,
-    };
+    const code = typeof candidate.code === "string" ? candidate.code : "gui_error";
+    if (typeof candidate.message !== "string") {
+      return { code, message: "Sproutの操作に失敗しました", details };
+    }
+    // Errors pass through here again on their way to the notice, some with text added.
+    if (candidate.translated === true) {
+      return { code, message: candidate.message, details, translated: true };
+    }
+    const message = translateCliError(code, candidate.message, details);
+    return { code, message, details, ...(message !== candidate.message && { translated: true }) };
   }
 
   return {
@@ -264,7 +269,8 @@ export function normalizeCliError(error: unknown): SproutCliError {
 }
 
 export function isUninitializedProject(error: SproutCliError): boolean {
-  return error.message.includes("not inside a Sprout project");
+  // CLIs older than the not_initialized code report this only in the message.
+  return error.code === "not_initialized" || error.message.includes("not inside a Sprout project");
 }
 
 export interface BranchIdentity {

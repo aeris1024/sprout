@@ -118,7 +118,7 @@ def test_serve_reports_errors_and_keeps_running(tmp_path: Path, monkeypatch) -> 
         "invalid_request",
         "invalid_request",
         "invalid_request",
-        "sprout_error",
+        "unknown_commit",
         "usage_error",
         "invalid_cwd",
         None,

@@ -634,7 +634,7 @@ class Repository:
             # Directory creation is the atomic claim that prevents concurrent init.
             control.mkdir()
         except FileExistsError as exc:
-            raise SproutError(f"already initialized: {root}") from exc
+            raise SproutError(f"already initialized: {root}", code="already_initialized") from exc
         repo = cls(root, progress)
         try:
             repo.objects.mkdir()
@@ -698,7 +698,7 @@ class Repository:
                     with repo.lock():
                         repo._recover_pending_materialization()
                 return repo
-        raise SproutError("not inside a Sprout project (run 'sprout init')")
+        raise SproutError("not inside a Sprout project (run 'sprout init')", code="not_initialized")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -852,9 +852,9 @@ class Repository:
         try:
             relative = absolute.relative_to(self.root)
         except ValueError as exc:
-            raise SproutError(f"path is outside the project: {value}") from exc
+            raise SproutError(f"path is outside the project: {value}", code="path_outside_project", details={"path": str(value)}) from exc
         if not relative.parts or relative.parts[0] == CONTROL_DIR:
-            raise SproutError(f"cannot track Sprout metadata: {value}")
+            raise SproutError(f"cannot track Sprout metadata: {value}", code="sprout_metadata_path", details={"path": str(value)})
         return relative.as_posix()
 
     @staticmethod
@@ -869,9 +869,9 @@ class Repository:
         try:
             relative = (absolute.parent.resolve(strict=False) / absolute.name).relative_to(self.root)
         except ValueError as exc:
-            raise SproutError(f"path is outside the project: {value}") from exc
+            raise SproutError(f"path is outside the project: {value}", code="path_outside_project", details={"path": str(value)}) from exc
         if relative.parts[0] == CONTROL_DIR:
-            raise SproutError(f"cannot track Sprout metadata: {value}")
+            raise SproutError(f"cannot track Sprout metadata: {value}", code="sprout_metadata_path", details={"path": str(value)})
         return relative.as_posix()
 
     def _disk_spellings(self, paths: Iterable[str]) -> dict[str, str | None]:
@@ -972,7 +972,7 @@ class Repository:
         for value in values:
             absolute = (value if value.is_absolute() else Path.cwd() / value)
             if absolute.is_symlink():
-                raise SproutError(f"symbolic links are not supported: {value}")
+                raise SproutError(f"symbolic links are not supported: {value}", code="symlink_not_supported", details={"path": str(value)})
             if absolute.is_dir():
                 self._relative_file(absolute)
                 for directory, dirs, files in os.walk(absolute, topdown=True, followlinks=False):
@@ -1003,7 +1003,7 @@ class Repository:
                 # Explicit file paths bypass ignore rules, like git add --force for a path.
                 paths.add(self._relative_file(absolute))
             else:
-                raise SproutError(f"file or directory does not exist: {value}")
+                raise SproutError(f"file or directory does not exist: {value}", code="path_not_found", details={"path": str(value)})
         with self.connect() as db:
             existing = {path_key(row[0]): row[0] for row in db.execute("SELECT path FROM tracked_paths")}
             final = dict(existing)
@@ -1253,7 +1253,7 @@ class Repository:
     def _branch_id_from_db(db: sqlite3.Connection, name: str) -> str:
         row = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
         if row is None:
-            raise SproutError(f"unknown branch: {name}")
+            raise SproutError(f"unknown branch: {name}", code="unknown_branch", details={"name": name})
         return row[0]
 
     def branch_id(self, name: str | None = None) -> str:
@@ -1552,30 +1552,35 @@ class Repository:
         try:
             resolved = source.resolve(strict=True)
         except OSError as exc:
-            raise SproutError(f"thumbnail file does not exist: {source}") from exc
+            raise SproutError(f"thumbnail file does not exist: {source}", code="thumbnail_not_found", details={"path": str(source)}) from exc
         if not resolved.is_file():
-            raise SproutError(f"thumbnail is not a file: {source}")
+            raise SproutError(f"thumbnail is not a file: {source}", code="thumbnail_not_file", details={"path": str(source)})
         before = resolved.stat()
         if before.st_size > THUMBNAIL_MAX_BYTES:
             raise SproutError(
-                f"thumbnail exceeds {THUMBNAIL_MAX_BYTES} byte limit: {before.st_size}"
+                f"thumbnail exceeds {THUMBNAIL_MAX_BYTES} byte limit: {before.st_size}",
+                code="thumbnail_too_large",
+                details={"limit": THUMBNAIL_MAX_BYTES},
             )
         try:
             with Image.open(resolved) as image:
                 media_type = THUMBNAIL_MEDIA_TYPES.get(image.format or "")
                 if media_type is None:
                     raise SproutError(
-                        "unsupported thumbnail format; use PNG, JPEG, or WebP"
+                        "unsupported thumbnail format; use PNG, JPEG, or WebP",
+                        code="unsupported_thumbnail",
                     )
                 width, height = image.size
                 if width > THUMBNAIL_MAX_DIMENSION or height > THUMBNAIL_MAX_DIMENSION:
                     raise SproutError(
                         "thumbnail dimensions exceed "
                         f"{THUMBNAIL_MAX_DIMENSION}x{THUMBNAIL_MAX_DIMENSION}: "
-                        f"{width}x{height}"
+                        f"{width}x{height}",
+                        code="thumbnail_too_large",
+                        details={"max_dimension": THUMBNAIL_MAX_DIMENSION},
                     )
                 if getattr(image, "n_frames", 1) != 1:
-                    raise SproutError("animated images cannot be used as thumbnails")
+                    raise SproutError("animated images cannot be used as thumbnails", code="animated_thumbnail")
                 image.load()
         except SproutError:
             raise
@@ -1586,7 +1591,7 @@ class Repository:
             SyntaxError,
             ValueError,
         ) as exc:
-            raise SproutError(f"invalid thumbnail image: {source}") from exc
+            raise SproutError(f"invalid thumbnail image: {source}", code="invalid_thumbnail", details={"path": str(source)}) from exc
 
         object_hash, size = self._store_object(resolved)
         after = resolved.stat()
@@ -1595,7 +1600,7 @@ class Repository:
             or before.st_mtime_ns != after.st_mtime_ns
             or size != after.st_size
         ):
-            raise SproutError(f"thumbnail changed while reading: {source}")
+            raise SproutError(f"thumbnail changed while reading: {source}", code="file_changed", details={"path": str(source)})
         return original_name, media_type, object_hash, size
 
     @staticmethod
@@ -1782,14 +1787,14 @@ class Repository:
             object_hash, size = self._store_object(path)
             after = path.stat()
             if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
-                raise SproutError(f"file changed while {action}: {relative}")
+                raise SproutError(f"file changed while {action}: {relative}", code="file_changed", details={"path": str(relative)})
             files.append(FileState(relative, object_hash, size, after.st_mtime_ns, identities[relative]))
         return files, missing
 
     @locked
     def commit(self, message: str, thumbnail: Path | None = None) -> CommitResult:
         if not message.strip():
-            raise SproutError("commit message cannot be empty")
+            raise SproutError("commit message cannot be empty", code="empty_message")
         files, missing = self._store_tracked_files("committing")
 
         parent = self.current_commit()
@@ -1799,9 +1804,9 @@ class Repository:
             path: (state.object_hash, state.size, state.file_id) for path, state in manifest.items()
         }
         if parent is not None and content_signature(current) == content_signature(previous):
-            raise SproutError("nothing to commit")
+            raise SproutError("nothing to commit", code="nothing_to_commit")
         if parent is None and not files:
-            raise SproutError("nothing to commit")
+            raise SproutError("nothing to commit", code="nothing_to_commit")
         cover: CoverOutcome | None = None
         if thumbnail is not None:
             prepared_thumbnail = self._prepare_thumbnail(thumbnail)
@@ -1882,23 +1887,23 @@ class Repository:
 
     def resolve_commit(self, value: str) -> str:
         if not value.strip():
-            raise SproutError("commit id required")
+            raise SproutError("commit id required", code="commit_id_required")
         with self.connect() as db:
             branch = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (value,)).fetchone()
             if branch is not None:
                 if branch[0] is None:
-                    raise SproutError(f"branch has no commits: {value}")
+                    raise SproutError(f"branch has no commits: {value}", code="branch_has_no_commits", details={"name": value})
                 return branch[0]
             tag = db.execute("SELECT commit_id FROM tags WHERE name=?", (value,)).fetchone()
             if tag is not None:
                 return tag[0]
             if HEX_COMMIT_REFERENCE.fullmatch(value) is None:
-                raise SproutError(f"unknown commit: {value}")
+                raise SproutError(f"unknown commit: {value}", code="unknown_commit", details={"commit_id": value})
             rows = db.execute("SELECT id FROM commits WHERE id LIKE ?", (value + "%",)).fetchall()
         if not rows:
-            raise SproutError(f"unknown commit: {value}")
+            raise SproutError(f"unknown commit: {value}", code="unknown_commit", details={"commit_id": value})
         if len(rows) > 1:
-            raise SproutError(f"ambiguous commit prefix: {value}")
+            raise SproutError(f"ambiguous commit prefix: {value}", code="ambiguous_commit", details={"commit_id": value})
         return rows[0][0]
 
     def commit_info(self, value: str) -> tuple[sqlite3.Row, list[FileState]]:
@@ -2067,10 +2072,12 @@ class Repository:
     def _normalize_label(label: str) -> str:
         normalized = unicodedata.normalize("NFC", label.strip())
         if not normalized:
-            raise SproutError("label cannot be empty")
+            raise SproutError("label cannot be empty", code="empty_label")
         if len(normalized) > LABEL_MAX_CHARS:
             raise SproutError(
-                f"label exceeds {LABEL_MAX_CHARS} character limit"
+                f"label exceeds {LABEL_MAX_CHARS} character limit",
+                code="label_too_long",
+                details={"limit": LABEL_MAX_CHARS},
             )
         return normalized
 
@@ -2079,7 +2086,7 @@ class Repository:
         commit_id = self.resolve_commit(value)
         normalized = message.strip()
         if not normalized:
-            raise SproutError("commit message cannot be empty")
+            raise SproutError("commit message cannot be empty", code="empty_message")
         with self.connect() as db:
             db.execute(
                 "UPDATE commits SET message=? WHERE id=?",
@@ -2092,7 +2099,7 @@ class Repository:
         commit_id = self.resolve_commit(value)
         normalized = note.strip()
         if len(normalized) > NOTE_MAX_CHARS:
-            raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit")
+            raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit", code="note_too_long", details={"limit": NOTE_MAX_CHARS})
         with self.connect() as db:
             if not normalized:
                 before = {"commit_notes": recovery.rows(db, "commit_notes", "commit_id=?", (commit_id,))}
@@ -2126,7 +2133,9 @@ class Repository:
                 ).fetchone()[0]
                 if count >= LABEL_MAX_COUNT:
                     raise SproutError(
-                        f"commit cannot have more than {LABEL_MAX_COUNT} labels"
+                        f"commit cannot have more than {LABEL_MAX_COUNT} labels",
+                        code="too_many_labels",
+                        details={"limit": LABEL_MAX_COUNT},
                     )
                 db.execute(
                     "INSERT INTO commit_labels(commit_id, label) VALUES(?, ?)",
@@ -2192,7 +2201,7 @@ class Repository:
         commit_id = self.resolve_commit(value)
         existing = self.thumbnail(commit_id)
         if existing is None:
-            raise SproutError(f"commit has no thumbnail: {commit_id}")
+            raise SproutError(f"commit has no thumbnail: {commit_id}", code="no_thumbnail", details={"commit_id": commit_id})
         with self.connect() as db:
             db.execute(
                 "DELETE FROM commit_attachments WHERE commit_id=? AND role=?",
@@ -2205,7 +2214,7 @@ class Repository:
     ) -> Path:
         attachment = self.thumbnail(value)
         if attachment is None:
-            raise SproutError(f"commit has no thumbnail: {self.resolve_commit(value)}")
+            raise SproutError(f"commit has no thumbnail: {self.resolve_commit(value)}", code="no_thumbnail")
         return self._export_attachment(attachment, output, force=force)
 
     def _export_attachment(
@@ -2214,9 +2223,9 @@ class Repository:
         role = attachment.role
         destination = output.resolve(strict=False)
         if destination == self.control or self.control in destination.parents:
-            raise SproutError(f"cannot export {role} into Sprout metadata")
+            raise SproutError(f"cannot export {role} into Sprout metadata", code="export_into_metadata")
         if destination.exists() and not destination.is_file():
-            raise SproutError(f"{role} output is not a file: {output}")
+            raise SproutError(f"{role} output is not a file: {output}", code="export_path_not_file", details={"path": str(output)})
         try:
             relative = destination.relative_to(self.root).as_posix()
         except ValueError:
@@ -2224,9 +2233,9 @@ class Repository:
         if relative is not None and self._path_key(relative) in {
             self._path_key(path) for path in self.tracked()
         }:
-            raise SproutError(f"{role} output would change tracked file: {relative}")
+            raise SproutError(f"{role} output would change tracked file: {relative}", code="export_would_change_tracked", details={"path": str(relative)})
         if destination.exists() and not force:
-            raise SproutError(f"{role} output already exists: {output}")
+            raise SproutError(f"{role} output already exists: {output}", code="export_output_exists", details={"path": str(output)})
 
         item = FileState(
             attachment.original_name,
@@ -2243,7 +2252,7 @@ class Repository:
                     target.flush()
                     os.fsync(target.fileno())
             except FileExistsError as exc:
-                raise SproutError(f"{role} output already exists: {output}") from exc
+                raise SproutError(f"{role} output already exists: {output}", code="export_output_exists", details={"path": str(output)}) from exc
             except Exception:
                 destination.unlink(missing_ok=True)
                 raise
@@ -2269,9 +2278,9 @@ class Repository:
         try:
             resolved = source.resolve(strict=True)
         except OSError as exc:
-            raise SproutError(f"preview file does not exist: {source}") from exc
+            raise SproutError(f"preview file does not exist: {source}", code="preview_file_not_found", details={"path": str(source)}) from exc
         if not resolved.is_file():
-            raise SproutError(f"preview is not a file: {source}")
+            raise SproutError(f"preview is not a file: {source}", code="preview_not_file", details={"path": str(source)})
         return resolved
 
     @staticmethod
@@ -2289,7 +2298,7 @@ class Repository:
     ) -> list[PreviewPlan]:
         """Report the size and storage impact of preview files without storing them."""
         if not sources:
-            raise SproutError("no preview files given")
+            raise SproutError("no preview files given", code="no_preview_files")
         plans: list[PreviewPlan] = []
         with self.connect() as db:
             for source in sources:
@@ -2324,7 +2333,7 @@ class Repository:
     ) -> list[tuple[str, str, str, int]]:
         """Validate every source before storing any, then store their objects."""
         if not sources:
-            raise SproutError("no preview files given")
+            raise SproutError("no preview files given", code="no_preview_files")
         checked: list[tuple[Path, Path, os.stat_result, str]] = []
         for source in sources:
             resolved = self._preview_source(source)
@@ -2351,7 +2360,7 @@ class Repository:
                 or before.st_mtime_ns != after.st_mtime_ns
                 or size != after.st_size
             ):
-                raise SproutError(f"preview changed while reading: {source}")
+                raise SproutError(f"preview changed while reading: {source}", code="file_changed", details={"path": str(source)})
             prepared.append((source.name, kind, object_hash, size))
         return prepared
 
@@ -2433,11 +2442,11 @@ class Repository:
         if display_name is not UNCHANGED:
             display_name = unicodedata.normalize('NFC', display_name).strip()
             if len(display_name)>256 or any(c in display_name for c in ('\n','\r','\x00')):
-                raise SproutError('display name must be at most 256 characters without line breaks', code='invalid_preview_metadata')
+                raise SproutError('display name must be at most 256 characters without line breaks', code='invalid_preview_metadata', details={'field': 'display_name'})
         if description is not UNCHANGED:
             description = unicodedata.normalize('NFC', description)
             if len(description)>20000 or '\x00' in description:
-                raise SproutError('description must be at most 20000 characters', code='invalid_preview_metadata')
+                raise SproutError('description must be at most 20000 characters', code='invalid_preview_metadata', details={'field': 'description'})
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if file_ids is not UNCHANGED:
@@ -2531,7 +2540,7 @@ class Repository:
                 (original_name, kind, object_hash, size, now, target.id, commit_id, PREVIEW_ROLE),
             ).rowcount
             if updated != 1:
-                raise SproutError(f"commit has no preview {target.id}: {commit_id}")
+                raise SproutError(f"commit has no preview {target.id}: {commit_id}", code="unknown_preview", details={"commit_id": commit_id})
             recovery.record(db, before, 'preview_replace', target.original_name, target.id, now,
                             preview_commit=commit_id)
         return self.preview(commit_id, target.id)
@@ -2955,7 +2964,7 @@ class Repository:
                     (commit_id,),
                 ).fetchone()
                 if row is None:
-                    raise SproutError(f"unknown commit: {commit_id}")
+                    raise SproutError(f"unknown commit: {commit_id}", code="unknown_commit", details={"commit_id": commit_id})
                 tags = [
                     tag[0]
                     for tag in db.execute(
@@ -3035,6 +3044,7 @@ class Repository:
             raise SproutError(
                 f"delete-commit failed; repository unchanged: {exc}",
                 code="delete_commit_failed",
+                details={"reason": str(exc)},
             ) from exc
 
     def trash_items(self, item_id: str | None = None) -> list[dict[str, Any]]:
@@ -3081,12 +3091,12 @@ class Repository:
                     self._copy_verified_object(FileState('', obj['object_hash'], obj['size'], 0))
                 recovery.restore(db, item)
                 if db.execute("PRAGMA foreign_key_check").fetchone():
-                    recovery.conflict(item_id, 'a required reference is missing')
+                    recovery.conflict(item_id, 'a required reference is missing', 'missing_reference')
                 if dry_run:
                     db.rollback()
             return result | {'restored': not dry_run, 'dry_run': dry_run}
         except sqlite3.Error as exc:
-            recovery.conflict(item_id, 'a restored record conflicts with an existing name, position or reference')
+            recovery.conflict(item_id, 'a restored record conflicts with an existing name, position or reference', 'record_conflict')
 
     @locked
     def purge_trash(self, item_id: str, *, dry_run: bool = False) -> dict[str, Any]:
@@ -3291,9 +3301,9 @@ class Repository:
     @staticmethod
     def _validate_reference_name(name: str, kind: str) -> None:
         if not name or any(c.isspace() for c in name) or name.startswith("-"):
-            raise SproutError(f"{kind} name must be non-empty and contain no whitespace")
+            raise SproutError(f"{kind} name must be non-empty and contain no whitespace", code="invalid_reference_name", details={"kind": kind})
         if HEX_BRANCH_NAME.fullmatch(name):
-            raise SproutError(f"{kind} name cannot look like a commit id prefix")
+            raise SproutError(f"{kind} name cannot look like a commit id prefix", code="reference_name_like_commit_id", details={"kind": kind})
 
     def _matching_saved_snapshot_commit(
         self, signature: dict[str, tuple[str, int]]
@@ -3389,13 +3399,13 @@ class Repository:
         try:
             with self.connect() as db:
                 if db.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone() is not None:
-                    raise SproutError(f"name already used by tag: {name}")
+                    raise SproutError(f"name already used by tag: {name}", code="name_used_by_tag", details={"name": name})
                 db.execute(
                     "INSERT INTO branches(id, name, commit_id, comment, created_at) VALUES(?,?,?,?,?)",
                     (uuid.uuid4().hex, name, commit_id, comment.strip(), utc_timestamp()),
                 )
         except sqlite3.IntegrityError as exc:
-            raise SproutError(f"branch already exists: {name}") from exc
+            raise SproutError(f"branch already exists: {name}", code="branch_exists", details={"name": name}) from exc
 
     def _forget_unused_branch(self, name: str) -> None:
         with self.connect() as db:
@@ -3433,12 +3443,12 @@ class Repository:
         with self.connect() as db:
             branch = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
             if branch is None:
-                raise SproutError(f"unknown branch: {name}")
+                raise SproutError(f"unknown branch: {name}", code="unknown_branch", details={"name": name})
             current = db.execute(
                 "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
             ).fetchone()[0]
             if name == current:
-                raise SproutError(f"cannot delete current branch: {name}")
+                raise SproutError(f"cannot delete current branch: {name}", code="current_branch_delete", details={"name": name})
             before = {"branches": recovery.rows(db, "branches", "id=?", (branch[0],))}
             deleted_at = utc_timestamp()
             db.execute(
@@ -3455,17 +3465,17 @@ class Repository:
         with self.connect() as db:
             branch = db.execute("SELECT id FROM branches WHERE name=? AND deleted=0", (old_name,)).fetchone()
             if branch is None:
-                raise SproutError(f"unknown branch: {old_name}")
+                raise SproutError(f"unknown branch: {old_name}", code="unknown_branch", details={"name": old_name})
             duplicate = db.execute(
                 "SELECT 1 FROM branches WHERE name=? AND deleted=0", (new_name,)
             ).fetchone()
             if duplicate is not None:
-                raise SproutError(f"branch already exists: {new_name}")
+                raise SproutError(f"branch already exists: {new_name}", code="branch_exists", details={"name": new_name})
             if (
                 db.execute("SELECT 1 FROM tags WHERE name=?", (new_name,)).fetchone()
                 is not None
             ):
-                raise SproutError(f"name already used by tag: {new_name}")
+                raise SproutError(f"name already used by tag: {new_name}", code="name_used_by_tag", details={"name": new_name})
             db.execute("UPDATE branches SET name=? WHERE id=?", (new_name, branch[0]))
         return branch[0]
 
@@ -3484,13 +3494,13 @@ class Repository:
                     db.execute("SELECT 1 FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
                     is not None
                 ):
-                    raise SproutError(f"name already used by branch: {name}")
+                    raise SproutError(f"name already used by branch: {name}", code="name_used_by_branch", details={"name": name})
                 db.execute(
                     "INSERT INTO tags(name, commit_id, comment, created_at) VALUES(?,?,?,?)",
                     (name, commit_id, comment.strip(), created_at),
                 )
         except sqlite3.IntegrityError as exc:
-            raise SproutError(f"tag already exists: {name}") from exc
+            raise SproutError(f"tag already exists: {name}", code="tag_exists", details={"name": name}) from exc
         return commit_id
 
     @locked
@@ -3498,7 +3508,7 @@ class Repository:
         with self.connect() as db:
             before = {"tags": recovery.rows(db, "tags", "name=?", (name,))}
             if not before["tags"]:
-                raise SproutError(f"unknown tag: {name}")
+                raise SproutError(f"unknown tag: {name}", code="unknown_tag", details={"name": name})
             db.execute("DELETE FROM tags WHERE name=?", (name,))
             recovery.record(db, before, "tag_delete", name, before["tags"][0]["commit_id"], utc_timestamp())
 
@@ -3507,7 +3517,7 @@ class Repository:
         with self.connect() as db:
             cursor = db.execute("UPDATE tags SET comment=? WHERE name=?", (comment.strip(), name))
             if cursor.rowcount == 0:
-                raise SproutError(f"unknown tag: {name}")
+                raise SproutError(f"unknown tag: {name}", code="unknown_tag", details={"name": name})
 
     @locked
     def set_branch_comment(self, name: str, comment: str) -> str:
@@ -3955,7 +3965,8 @@ class Repository:
                 raise  # Keep the structured path/conflict error and all backups.
             except Exception as rollback_exc:
                 raise SproutError(
-                    "restore failed and automatic rollback was incomplete; rerun Sprout to recover"
+                    "restore failed and automatic rollback was incomplete; rerun Sprout to recover",
+                    code="restore_rollback_incomplete",
                 ) from rollback_exc
             raise
         finally:
@@ -4069,7 +4080,7 @@ class Repository:
             prefix = path_key(relative.rstrip("/") + "/")
             matches = {path for path in manifest if path_key(path).startswith(prefix)}
             if not matches:
-                raise SproutError(f"path not in commit: {relative}")
+                raise SproutError(f"path not in commit: {relative}", code="path_not_in_commit", details={"path": str(relative)})
             selected.update(matches)
         return selected
 
@@ -4077,17 +4088,17 @@ class Repository:
     def _export_destination(output_root: Path, relative: str) -> Path:
         relative_path = Path(relative)
         if relative_path.is_absolute() or ".." in relative_path.parts:
-            raise SproutError(f"export path escapes output directory: {relative}")
+            raise SproutError(f"export path escapes output directory: {relative}", code="export_unsafe_path", details={"path": str(relative)})
         destination = output_root / relative_path
         current = destination
         while current != output_root:
             if current.is_symlink():
-                raise SproutError(f"symbolic link in export path: {relative}")
+                raise SproutError(f"symbolic link in export path: {relative}", code="export_unsafe_path", details={"path": str(relative)})
             current = current.parent
         try:
             destination.resolve(strict=False).relative_to(output_root)
         except ValueError as exc:
-            raise SproutError(f"export path escapes output directory: {relative}") from exc
+            raise SproutError(f"export path escapes output directory: {relative}", code="export_unsafe_path", details={"path": str(relative)}) from exc
         return destination
 
     def export(
@@ -4108,9 +4119,9 @@ class Repository:
         target = {path: commit_manifest[path] for path in sorted(selected)}
         output_root = output.resolve(strict=False)
         if output_root == self.control or self.control in output_root.parents:
-            raise SproutError("cannot export into Sprout metadata")
+            raise SproutError("cannot export into Sprout metadata", code="export_into_metadata")
         if output_root.exists() and not output_root.is_dir():
-            raise SproutError(f"export output is not a directory: {output}")
+            raise SproutError(f"export output is not a directory: {output}", code="export_output_not_directory", details={"path": str(output)})
 
         tracked_keys = {self._path_key(path) for path in self.tracked()}
         destinations: dict[str, Path] = {}
@@ -4125,13 +4136,15 @@ class Repository:
                 and self._path_key(working_relative) in tracked_keys
             ):
                 raise SproutError(
-                    f"export path would change tracked working file: {working_relative}"
+                    f"export path would change tracked working file: {working_relative}",
+                    code="export_would_change_tracked",
+                    details={"path": str(working_relative)},
                 )
             if destination.exists():
                 if not destination.is_file():
-                    raise SproutError(f"cannot overwrite non-file export path: {relative}")
+                    raise SproutError(f"cannot overwrite non-file export path: {relative}", code="export_path_not_file", details={"path": str(relative)})
                 if not force:
-                    raise SproutError(f"output file already exists: {relative}")
+                    raise SproutError(f"output file already exists: {relative}", code="export_output_exists", details={"path": str(relative)})
             destinations[relative] = destination
 
         self._verify_manifest(target)
@@ -4151,7 +4164,9 @@ class Repository:
                     )
                 except FileExistsError as exc:
                     raise SproutError(
-                        f"output file already exists: {relative}"
+                        f"output file already exists: {relative}",
+                        code="export_output_exists",
+                        details={"path": str(relative)},
                     ) from exc
                 except Exception:
                     destination.unlink(missing_ok=True)
@@ -4180,7 +4195,7 @@ class Repository:
         relative = self._relative_file(path, must_exist=False)
         item = commit_manifest.get(relative)
         if item is None:
-            raise SproutError(f"path not in commit: {relative}")
+            raise SproutError(f"path not in commit: {relative}", code="path_not_in_commit", details={"path": str(relative)})
         self._copy_verified_object(item)
         self._copy_verified_object(item, target)
         return commit_id
@@ -4531,7 +4546,7 @@ class Repository:
         with self.connect() as db:
             row = db.execute("SELECT commit_id FROM branches WHERE name=? AND deleted=0", (name,)).fetchone()
         if row is None:
-            raise SproutError(f"unknown branch: {name}")
+            raise SproutError(f"unknown branch: {name}", code="unknown_branch", details={"name": name})
         target = self.manifest(row[0])
         self._validate_restore_inputs(target)
         dirty = self._has_unsaved_changes()

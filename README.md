@@ -968,7 +968,7 @@ JSONモードで期待されるエラーが起きた場合は、非0で終了し
 
 復元パスの安全性エラーは`unsafe_restore_path`、部分復元の選択範囲との衝突は`restore_scope_conflict`、復旧中に検出したファイルの衝突は`restore_recovery_conflict`を返します。これらの`details`には`path`と`reason`を含めます。
 
-エラーは常に`code`、`message`、`details`を持ちます。代表的な`code`は、一般的な操作エラーの`sprout_error`、他の操作がロック中の`repository_locked`、未コミット変更がある`uncommitted_changes`、OSまたはSQLite操作の`repository_error`、引数指定の`usage_error`です。`repository_locked`の`details.retryable`と`uncommitted_changes`の`details.can_discard`をGUIの再試行・確認フローに利用できます。
+エラーは常に`code`、`message`、`details`を持ちます。代表的な`code`は、一般的な操作エラーの`sprout_error`、他の操作がロック中の`repository_locked`、未コミット変更がある`uncommitted_changes`、OSまたはSQLite操作の`repository_error`、引数指定の`usage_error`です。GUIから実行する操作の主なエラーには`unknown_commit`、`nothing_to_commit`、`not_initialized`のような個別の`code`があり、対象の値を`details`に持ちます。`message`は英語のままです。`repository_locked`の`details.retryable`と`uncommitted_changes`の`details.can_discard`をGUIの再試行・確認フローに利用できます。
 
 GUIとCLIは同じリビジョンの組み合わせで使用してください。
 

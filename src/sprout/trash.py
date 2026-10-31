@@ -136,18 +136,19 @@ def check_annotation_target(db, item, patch):
     before = patch['before']
     commit_id = before.get('commit_id')
     if commit_id is not None and not db.execute('SELECT 1 FROM commits WHERE id=?', (commit_id,)).fetchone():
-        conflict(item['id'], 'the snapshot it belonged to no longer exists')
+        conflict(item['id'], 'the snapshot it belonged to no longer exists', 'commit_missing')
     if item['kind'] == 'note_delete':
         if db.execute('SELECT 1 FROM commit_notes WHERE commit_id=?', (commit_id,)).fetchone():
-            conflict(item['id'], 'the snapshot already has a newer note')
+            conflict(item['id'], 'the snapshot already has a newer note', 'newer_note')
     elif db.execute('SELECT 1 FROM branches WHERE name=? AND deleted=0 UNION ALL SELECT 1 FROM tags WHERE name=?',
                     (before['name'], before['name'])).fetchone():
-        conflict(item['id'], f"the name {before['name']} is already used by a branch or tag")
+        conflict(item['id'], f"the name {before['name']} is already used by a branch or tag", 'name_in_use')
 
 
-def conflict(item_id, reason):
+def conflict(item_id, reason, reason_code):
     raise SproutError(f'cannot restore trash item: {reason}; no changes applied',
-                      code='trash_restore_conflict', details={'trash_id': item_id, 'reason': reason})
+                      code='trash_restore_conflict',
+                      details={'trash_id': item_id, 'reason': reason, 'reason_code': reason_code})
 
 
 def restore(db, item):
@@ -155,24 +156,24 @@ def restore(db, item):
     if 'preview_commit' in payload:
         commit_id = payload['preview_commit']
         if not db.execute('SELECT 1 FROM commits WHERE id=?', (commit_id,)).fetchone():
-            conflict(item['id'], 'the containing commit is missing')
+            conflict(item['id'], 'the containing commit is missing', 'commit_missing')
         actual = capture_preview(db, commit_id)['commit_attachments']
         ordered = lambda values: sorted(values, key=lambda r: r['id'])
         if ordered(actual) != ordered(payload.get('preview_after', [])):
-            conflict(item['id'], 'the preview list changed; undo newer preview operations first')
+            conflict(item['id'], 'the preview list changed; undo newer preview operations first', 'preview_list_changed')
     if 'preview_commit' in payload:
         assets = capture_preview(db, payload['preview_commit'])['preview_assets']
         if sorted(assets, key=lambda r:(r['attachment_id'],r['file_id'])) != sorted(payload.get('assets_after',[]), key=lambda r:(r['attachment_id'],r['file_id'])):
-            conflict(item['id'], 'preview material associations changed')
+            conflict(item['id'], 'preview material associations changed', 'preview_materials_changed')
     for patch in payload['patches']:
         if item['kind'] in ANNOTATION_KINDS:
             check_annotation_target(db, item, patch)
         if item['kind'] in BUD_KINDS and patch['table'] == 'buds':
             base = patch['before']['base_commit_id']
             if base is not None and not db.execute('SELECT 1 FROM commits WHERE id=?', (base,)).fetchone():
-                conflict(item['id'], 'the snapshot this bud was kept on no longer exists')
+                conflict(item['id'], 'the snapshot this bud was kept on no longer exists', 'bud_base_missing')
         if current_row(db, patch['table'], patch['before']) != patch['after']:
-            conflict(item['id'], f"{patch['table']} changed since this operation")
+            conflict(item['id'], f"{patch['table']} changed since this operation", 'changed_since')
     db.execute('PRAGMA defer_foreign_keys=ON')
     # Attachment positions are unique at every statement, so remove all affected
     # rows first, then insert their original versions in the same transaction.

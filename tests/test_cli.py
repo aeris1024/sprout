@@ -928,8 +928,28 @@ def test_maintenance_json_errors_are_structured(
     code, out, err = run_main([*command, "--json"], tmp_path, monkeypatch, capsys)
     assert (code, out) == (1, "")
     payload = json.loads(err)
-    assert payload["code"] == "sprout_error"
+    assert payload["code"] == "not_initialized"
+    assert payload["message"] == "not inside a Sprout project (run 'sprout init')"
     assert set(payload) == {"code", "message", "details"}
+
+
+@pytest.mark.parametrize(
+    ("command", "code", "message", "details"),
+    [
+        (["show", "abc"], "unknown_commit", "unknown commit: abc", {"commit_id": "abc"}),
+        (["commit", "-m", "first"], "nothing_to_commit", "nothing to commit", {}),
+        (["commit", "-m", " "], "empty_message", "commit message cannot be empty", {}),
+        (["branch", "--delete", "nope"], "unknown_branch", "unknown branch: nope", {"name": "nope"}),
+        (["tag", "--delete", "nope"], "unknown_tag", "unknown tag: nope", {"name": "nope"}),
+    ],
+)
+def test_json_errors_keep_the_message_and_add_a_code(
+    tmp_path: Path, monkeypatch, capsys, command: list[str], code: str, message: str, details: dict[str, str]
+) -> None:
+    run_main(["init", "."], tmp_path, monkeypatch, capsys)
+    exit_code, out, err = run_main([*command, "--json"], tmp_path, monkeypatch, capsys)
+    assert (exit_code, out) == (1, "")
+    assert json.loads(err) == {"code": code, "message": message, "details": details}
 
 
 def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:

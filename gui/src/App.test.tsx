@@ -484,7 +484,7 @@ describe("Sprout GUI operations", () => {
     await user.click(await screen.findByRole("button", { name: "ここへ移動" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("untracked path would be overwritten: notes.txt（作業フォルダは変更していません。）");
+    expect(alert.textContent).toContain("未追跡のファイルを上書きしてしまうため中止しました（作業フォルダは変更していません。）");
     expect(alert.textContent).toContain("対象: notes.txt");
   });
 
@@ -563,7 +563,7 @@ describe("Sprout GUI operations", () => {
       mocks.runSprout.mockRejectedValueOnce({ code: "nothing_to_save", message: "no unsaved changes to keep in a bud", details: {} });
       mockWorkspace();
       await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
-      expect((await screen.findByRole("alert")).textContent).toContain("no unsaved changes to keep in a bud（作業フォルダは変更していません。）");
+      expect((await screen.findByRole("alert")).textContent).toContain("つぼみへ移す未保存の変更がありません（作業フォルダは変更していません。）");
       expect(writes()).toEqual([["bud", "--save"]]);
       expect(screen.getByLabelText("保存状態").textContent).not.toContain("未保存の変更 1");
     });
@@ -605,7 +605,7 @@ describe("Sprout GUI operations", () => {
       await openDirty(user, [{ state: "modified", path: "design/main.psd" }]);
       mocks.runSprout.mockRejectedValueOnce({ code: "untracked_conflict", message: "Cannot restore", details: { path: "design/main.psd" } });
       await user.click(screen.getByRole("button", { name: "design/main.psdを元に戻す" }));
-      expect((await screen.findByRole("alert")).textContent).toContain("Cannot restore（作業フォルダは変更していません。）");
+      expect((await screen.findByRole("alert")).textContent).toContain("未追跡のファイルを上書きしてしまうため中止しました（作業フォルダは変更していません。）");
       expect(writes()).toEqual([["restore", commitEntry.id, "design/main.psd", "--discard"]]);
     });
 
@@ -1119,7 +1119,7 @@ describe("Sprout GUI operations", () => {
       const panel = await openPanel(user);
       mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "another Sprout operation is already running", details: {} });
       await user.click(within(panel).getByRole("button", { name: "回収できる容量を確認" }));
-      expect(await screen.findByText("another Sprout operation is already running")).toBeTruthy();
+      expect(await screen.findByText("別のSproutの操作が実行中です。終わってから再試行してください")).toBeTruthy();
       expect(screen.getByRole("region", { name: "保守" })).toBeTruthy();
     });
 
@@ -1153,7 +1153,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "another operation is running", details: { retryable: true } });
     render(<App />);
     await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("another operation is running");
+    expect((await screen.findByRole("alert")).textContent).toContain("別のSproutの操作が実行中です。終わってから再試行してください");
     expect(await screen.findByRole("heading", { name: "このプロジェクトを開けませんでした" })).toBeTruthy();
     mockWorkspace();
     await user.click(screen.getByRole("button", { name: "再試行" }));
@@ -1432,7 +1432,7 @@ describe("Sprout GUI operations", () => {
       await openDetail(user);
       mocks.runSprout.mockRejectedValueOnce({ code: "tagged_commit", message: "commit is tagged", details: {} });
       await user.click(screen.getByRole("button", { name: "この葉を削除" }));
-      expect(await screen.findByText("commit is tagged")).toBeTruthy();
+      expect(await screen.findByText("タグが付いた葉は削除できません。先にタグを削除してください")).toBeTruthy();
       expect(mocks.confirm).not.toHaveBeenCalled();
       expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
     });
@@ -1682,13 +1682,17 @@ describe("Sprout GUI operations", () => {
       : [["restore", commitEntry.id, "assets/a.bin"]]);
   });
 
-  it.each(["unsafe_restore_path", "untracked_conflict", "restore_path_conflict"])("shows %s without bypassing safety", async (code) => {
+  it.each([
+    ["unsafe_restore_path", "安全に書き戻せないパスのため戻せません"],
+    ["untracked_conflict", "未追跡のファイルを上書きしてしまうため中止しました"],
+    ["restore_path_conflict", "Cannot restore"],
+  ])("shows %s without bypassing safety", async (code, shown) => {
     const user = userEvent.setup();
     await openSavedFiles(user);
     await user.click(screen.getByRole("checkbox", { name: /assets\/a.bin/ }));
     mocks.runSprout.mockRejectedValueOnce({ code, message: "Cannot restore", details: { path: "assets/a.bin" } });
     await user.click(screen.getByRole("button", { name: "選択したファイルだけ戻す" }));
-    expect(await screen.findByText(/Cannot restore/)).toBeTruthy();
+    expect(await screen.findByText(new RegExp(shown))).toBeTruthy();
     expect(screen.getByText("対象: assets/a.bin")).toBeTruthy();
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
     expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "restore")).toHaveLength(1);
@@ -1742,7 +1746,7 @@ describe("Sprout GUI operations", () => {
     await user.click(within(form).getByRole("checkbox", { name: "scene.blend" }));
     mocks.runSprout.mockRejectedValueOnce({ code: "invalid_preview_material", message: "material changed", details: {} });
     await user.click(within(form).getByRole("button", { name: "メタ情報を保存" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("material changed");
+    expect((await screen.findByRole("alert")).textContent).toContain("プレビューの対象素材には同じ葉のファイルを選んでください");
     expect((within(form).getByLabelText("表示名") as HTMLInputElement).value).toBe("Review");
     const metadata = { display_name: "Review", description: "Notes", is_primary: true, file_ids: ["asset-1"] };
     mocks.runSprout.mockResolvedValueOnce(metadata);
@@ -1816,7 +1820,7 @@ describe("Sprout GUI operations", () => {
     await openPreviewWorkspace(user);
     mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "Preview locked", details: {} });
     await user.click(screen.getByRole("button", { name: "voice.wavを下へ" }));
-    await screen.findByText("Preview locked");
+    await screen.findByText("別のSproutの操作が実行中です。終わってから再試行してください");
     const list = within(screen.getByRole("region", { name: "プレビュー管理" })).getByRole("list");
     expect(within(list).getAllByRole("listitem")[0].textContent).toContain("voice.wav");
     expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "preview")).toHaveLength(1);

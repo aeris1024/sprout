@@ -6,12 +6,12 @@ describe("normalizeCliError", () => {
   it("preserves structured CLI errors", () => {
     expect(
       normalizeCliError({
-        code: "repository_locked",
+        code: "future_error",
         message: "実行中",
         details: { retryable: true },
       }),
     ).toEqual({
-      code: "repository_locked",
+      code: "future_error",
       message: "実行中",
       details: { retryable: true },
     });

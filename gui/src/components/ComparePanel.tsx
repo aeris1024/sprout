@@ -51,7 +51,7 @@ export default function ComparePanel({ projectDir, program, commits, source, tar
       </select>
     </label>)}
     <button className="button primary" disabled={busy || loading || !valid} onClick={() => void compare()}>{loading ? "比較中…" : "比較する"}</button>
-    {error && <div role="alert"><p>{error.message}</p><code>{error.code}</code>{typeof error.details.path === "string" && <p>{error.details.path}</p>}</div>}
+    {error && <div role="alert"><p>{error.message}</p>{typeof error.details.path === "string" && <p>{error.details.path}</p>}</div>}
     {result && (result.length === 0 ? <p role="status">差分はありません</p> : <ul className="file-list" aria-label="ファイル差分">{result.map((entry) => <li className="file-row" key={entry.path}><span>{labels[entry.state] ?? entry.state}</span><span>{entry.previous_path ? `${entry.previous_path} → ${entry.path}` : entry.path}</span><small>{entry.old_size ?? "—"} → {entry.new_size ?? "—"} B</small></li>)}</ul>)}
   </section>;
 }
