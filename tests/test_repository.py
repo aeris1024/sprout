@@ -2814,6 +2814,97 @@ def test_save_bud_keeps_unsaved_changes_on_current_snapshot(
     assert repo.stats().buds == 1
 
 
+def test_move_changes_to_bud_returns_files_to_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, first, second = bud_repo(tmp_path, monkeypatch)
+    repo.restore(first)
+    asset.write_bytes(b"draft")
+    extra = write(repo.root, "extra.bin", b"extra")
+    repo.track([extra])
+    stray = write(repo.root, "stray.txt", b"untracked")
+    tracked_before = repo.tracked()
+    tip_before = repo.head_position().at_branch_tip
+
+    bud = repo.move_changes_to_bud("案")
+
+    assert bud.name == "案"
+    assert bud.base_commit_id == first
+    assert [(entry.state, entry.path) for entry in bud.changes] == [
+        ("modified", "asset.bin"),
+        ("added", "extra.bin"),
+    ]
+    assert repo.status() == []
+    assert asset.read_bytes() == b"v1"
+    assert not extra.exists()
+    assert stray.read_bytes() == b"untracked"
+    assert repo.current_commit() == first
+    assert repo.head_position().at_branch_tip == tip_before
+
+    assert repo.go(second).bud is None
+    assert [item.id for item in repo.buds()] == [bud.id]
+
+    restored, stashed = repo.restore_bud(bud.id)
+    assert restored.id == bud.id
+    assert stashed is None
+    assert repo.current_commit() == first
+    assert asset.read_bytes() == b"draft"
+    assert extra.read_bytes() == b"extra"
+    assert repo.tracked() == tracked_before
+    assert repo.buds() == []
+
+
+def test_move_changes_to_bud_before_the_first_commit_keeps_the_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = create_repo(tmp_path)
+    monkeypatch.chdir(repo.root)
+    asset = write(repo.root, "asset.bin", b"draft")
+    repo.track([asset])
+
+    bud = repo.move_changes_to_bud()
+
+    assert bud.base_commit_id is None
+    assert not asset.exists()
+    assert repo.status() == []
+    repo.restore_bud(bud.id)
+    assert asset.read_bytes() == b"draft"
+    assert repo.tracked() == {"asset.bin"}
+
+
+def test_move_changes_to_bud_refuses_without_changes_or_a_valid_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+    with pytest.raises(SproutError) as nothing:
+        repo.move_changes_to_bud()
+    assert nothing.value.code == "nothing_to_save"
+
+    asset.write_bytes(b"draft")
+    with pytest.raises(SproutError) as invalid:
+        repo.move_changes_to_bud("x" * 257)
+    assert invalid.value.code == "invalid_bud_name"
+    assert asset.read_bytes() == b"draft"
+    assert repo.buds() == []
+
+
+def test_move_changes_to_bud_leaves_everything_when_the_restore_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, asset, _first, _second = bud_repo(tmp_path, monkeypatch)
+    asset.write_bytes(b"draft")
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise SproutError("restore failed", code="restore_failed")
+
+    monkeypatch.setattr(repo, "_materialize", fail)
+    with pytest.raises(SproutError) as exc:
+        repo.move_changes_to_bud()
+    assert exc.value.code == "restore_failed"
+    assert asset.read_bytes() == b"draft"
+    assert repo.buds() == []
+
+
 def test_save_bud_requires_unsaved_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

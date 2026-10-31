@@ -1673,7 +1673,15 @@ def tag(
 @app.command()
 def bud(
     save: Annotated[
-        bool, typer.Option("--save", help="Keep unsaved tracked changes as a new bud")
+        bool,
+        typer.Option(
+            "--save",
+            help="Move unsaved tracked changes into a new bud and return the files to the current snapshot",
+        ),
+    ] = False,
+    keep_files: Annotated[
+        bool,
+        typer.Option("--keep-files", help="With --save, copy the changes and leave the working files as they are"),
     ] = False,
     name: Annotated[
         str, typer.Option("--name", help="Name for the bud created with --save")
@@ -1701,6 +1709,8 @@ def bud(
         raise SproutError("use only one of --save, --restore, --drop, or --rename")
     if name and not save:
         raise SproutError("--name is only used with --save")
+    if keep_files and not save:
+        raise SproutError("--keep-files is only used with --save")
     repository = repo()
     if rename is not None:
         renamed = repository.rename_bud(*rename)
@@ -1711,11 +1721,14 @@ def bud(
         return
     if save:
         with _show_progress(repository, enabled=not json_output):
-            saved = repository.save_bud(name)
+            saved = repository.save_bud(name) if keep_files else repository.move_changes_to_bud(name)
         if json_output:
             _echo_json(_bud_json(saved))
             return
-        typer.echo(f"Saved bud {_bud_summary(saved)}")
+        if keep_files:
+            typer.echo(f"Saved bud {_bud_summary(saved)}; working files unchanged")
+        else:
+            typer.echo(f"Moved unsaved changes to bud {_bud_summary(saved)}")
         return
     if restore is not None:
         with _show_progress(repository, enabled=not json_output):

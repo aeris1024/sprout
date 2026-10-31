@@ -1659,6 +1659,7 @@ def test_bud_command_saves_lists_restores_and_drops(tmp_path: Path, monkeypatch)
     assert saved["base_commit_id"] == first
     assert saved["changes"] == [{"state": "modified", "path": "asset.bin"}]
     assert [item["path"] for item in saved["files"]] == ["asset.bin"]
+    assert asset.read_bytes() == b"v1"
     listed = json.loads(invoke(["bud", "--json"], project, monkeypatch).stdout)
     assert [item["id"] for item in listed] == [saved["id"]]
     assert invoke(["bud"], project, monkeypatch).stdout == (
@@ -1684,6 +1685,12 @@ def test_bud_command_saves_lists_restores_and_drops(tmp_path: Path, monkeypatch)
     assert invoke(["bud", "--drop", again["id"], "--yes"], project, monkeypatch).exit_code == 0
     assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
     assert invoke(["bud", "--save", "--drop", "x"], project, monkeypatch).exit_code != 0
+    assert invoke(["bud", "--keep-files"], project, monkeypatch).exit_code != 0
+
+    asset.write_bytes(b"draft")
+    kept = invoke(["bud", "--save", "--keep-files", "--json"], project, monkeypatch)
+    assert kept.exit_code == 0
+    assert asset.read_bytes() == b"draft"
 
 
 def test_commit_reports_auto_created_branch(tmp_path: Path, monkeypatch) -> None:

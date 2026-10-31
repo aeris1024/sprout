@@ -472,20 +472,21 @@ describe("Sprout GUI operations", () => {
     }
     const writes = () => mocks.runSprout.mock.calls.map((call) => call[1]).filter((args) => !["status", "tree"].includes(args[0]));
 
-    it("keeps unsaved changes as a bud without moving, and refreshes the map and top bar", async () => {
+    it("moves unsaved changes into a bud without moving, and refreshes the map and top bar", async () => {
       const user = userEvent.setup();
       await openDirty(user, [{ state: "modified", path: "design/main.psd" }]);
       const bud = { id: "e".repeat(32), base_commit_id: commitEntry.id, branch_id: "main", branch_name: "main", created_at: "2026-10-31T00:00:00+00:00", changes: [{ state: "modified", path: "design/main.psd" }], files: [] };
       mocks.runSprout.mockResolvedValueOnce(bud);
-      mockWorkspace(dirty([{ state: "modified", path: "design/main.psd" }]), [commitEntry], mainBranch, {
+      mockWorkspace(cleanStatus, [commitEntry], mainBranch, {
         current_commit: commitEntry.id, at_branch_tip: true, commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [] }],
         branches: mainBranch, tags: [], buds: [bud],
       });
       await user.click(screen.getByRole("button", { name: "つぼみとして残す" }));
-      expect(await screen.findByText(/つぼみとして残しました/)).toBeTruthy();
+      expect(await screen.findByText("未保存の変更をつぼみへ移し、作業フォルダを今の葉の内容に戻しました")).toBeTruthy();
       expect(writes()).toEqual([["bud", "--save"]]);
       expect(screen.getByRole("button", { name: "つぼみ（1件の変更）" })).toBeTruthy();
-      expect(screen.getByLabelText("保存状態").textContent).toBe("未保存の変更 1");
+      expect(screen.getByLabelText("保存状態").textContent).not.toContain("未保存の変更");
+      expect(screen.queryByRole("button", { name: "未保存の芽" })).toBeNull();
     });
 
     it("disables keeping a bud when there are no unsaved changes", async () => {

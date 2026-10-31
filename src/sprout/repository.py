@@ -4642,6 +4642,18 @@ class Repository:
         return self._save_bud(name)
 
     @locked
+    def move_changes_to_bud(self, name: str = "") -> Bud:
+        """Move the unsaved tracked changes into a bud, returning the files to the current snapshot."""
+        if not self._has_unsaved_changes():
+            raise SproutError("no unsaved changes to keep in a bud", code="nothing_to_save")
+        current = self.current_commit()
+        bud = self._materialize_keeping_changes(
+            self.manifest(current), head_branch=None, current_commit=current, name=name
+        )
+        assert bud is not None
+        return bud
+
+    @locked
     def rename_bud(self, value: str, name: str) -> Bud:
         """Set or, with an empty name, clear the name of a bud."""
         bud_id = self.resolve_bud(value)
@@ -4674,13 +4686,14 @@ class Repository:
         *,
         head_branch: str | None,
         current_commit: str | None,
+        name: str = "",
     ) -> Bud | None:
         """Replace the whole working tree, first keeping unsaved changes as a bud."""
         self._validate_restore_inputs(target)
         self._restore_plan(target, partial=False)
         for item in target.values():
             self._check_object_encoding(item.object_hash)
-        stashed = self._save_bud() if self._has_unsaved_changes() else None
+        stashed = self._save_bud(name) if self._has_unsaved_changes() else None
         receipt = _MaterializationReceipt()
         try:
             self._materialize(

@@ -104,7 +104,7 @@ export default function SavePanel({
       <button className="button secondary wide" onClick={onKeepAsBud} disabled={busy || changes.length === 0}>
         つぼみとして残す
       </button>
-      <p className="panel-copy">保存せずに今の変更を取っておきます。作業ファイルは変わりません。</p>
+      <p className="panel-copy">保存せずに今の変更をつぼみへ移し、作業フォルダを今の葉の内容に戻します。</p>
     </section>
   );
 }

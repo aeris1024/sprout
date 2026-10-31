@@ -928,7 +928,7 @@ function App() {
         throw unchangedError(error);
       }
       await fetchWorkspace(projectDir);
-      setNotice({ code: "bud_saved", message: "未保存の変更をつぼみとして残しました。作業ファイルは変わっていません", details: {}, kind: "success" });
+      setNotice({ code: "bud_saved", message: "未保存の変更をつぼみへ移し、作業フォルダを今の葉の内容に戻しました", details: {}, kind: "success" });
     });
   }
 
