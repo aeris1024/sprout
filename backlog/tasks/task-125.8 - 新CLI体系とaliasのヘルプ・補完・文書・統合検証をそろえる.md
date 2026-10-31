@@ -4,7 +4,7 @@ title: 新CLI体系とaliasのヘルプ・補完・文書・統合検証をそ�
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:24'
-updated_date: '2026-10-31 07:37'
+updated_date: '2026-10-31 07:51'
 labels:
   - cli
   - docs
@@ -13,6 +13,7 @@ dependencies:
   - TASK-125.6
   - TASK-125.7
   - TASK-125.13
+  - TASK-125.14
 references:
   - README.md
   - gui/README.md
@@ -33,6 +34,7 @@ ordinal: 132000
 各CLI領域のタスクがその操作の回帰検証を持ち、このタスクでは全体の対応漏れ、利用導線、階層化されたコマンドとaliasの補完、外部連携経路の整合を確認する。既存33トップレベルとpreview下位操作から新構文への対応表を残す。
 通常ヘルプは正規体系を中心とし、手打ちaliasの一覧と使い方に到達できる。Git名のaliasもSproutの挙動であること、trackにステージングがないこと、stash popがつぼみを消費することを明記する。
 追補: go系・log系・message系・thumbnail系の配置変更と操作統合を区別し、最終の正規入口・alias・挙動差を説明する。重複するbranch switch/leaf restore/file history/leaf note/file coverは正規一覧へ戻さない。preview/LabelはTASK-125.13でユーザーと確認した扱いと必要な追補実装を確認してから最終一覧を確定する。
+確定したメディア方針も最終一覧へ反映する。代表プレビューの指定・バッジ・オプションを廃止し、表示順と置き換えを維持する（TASK-125.14）。「代表ファイル」は「サムネイル自動生成元」と表記する。TASK-125.13の残る判断待ち事項と区別し、旧代表指定が文書や補完・サンプルから再び案内されないことを検証する。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -43,4 +45,5 @@ ordinal: 132000
 - [ ] #4 基本の保存から履歴閲覧・分岐・退避・復元・取り出し、添付管理、ゴミ箱、prune、保守まで、正規CLIの対応漏れがないことを統合検証する
 - [ ] #5 CLI・serve・alias・GUIの関連テストと必要なビルドが成功し、既存V1リポジトリとサンプルを正規構文で利用できる
 - [ ] #6 4系統の統合結果を正規CLIとaliasで説明でき、TASK-125.13でpreview/Labelの扱いをユーザーと確認し、決定後に必要な実装・移行タスクの反映と完了を確認してから全体を完了する
+- [ ] #7 ヘルプ・補完・GUI README・サンプル・アーカイブの案内が代表指定廃止・置き換え維持・サムネイル自動生成元への改称に整合し、TASK-125.14の実装と検証完了を確認する
 <!-- AC:END -->
