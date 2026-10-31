@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   runSprout: vi.fn(),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
+  savePanelWidth: vi.fn(),
   dragHandler: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
 }));
 
@@ -37,6 +38,7 @@ vi.mock("./lib/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/settings")>()),
   loadSettings: mocks.loadSettings,
   saveSettings: mocks.saveSettings,
+  savePanelWidth: mocks.savePanelWidth,
 }));
 
 const project = "C:\\work\\sprout-project";
@@ -107,6 +109,7 @@ describe("Sprout GUI operations", () => {
     vi.clearAllMocks();
     mocks.loadSettings.mockResolvedValue({ recentProjects: [], sproutProgram: "" });
     mocks.saveSettings.mockResolvedValue(undefined);
+    mocks.savePanelWidth.mockResolvedValue(undefined);
     mocks.confirm.mockResolvedValue(true);
     mocks.invoke.mockResolvedValue("data:image/png;base64,AQID");
     mocks.dragHandler = undefined;
@@ -395,6 +398,64 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await screen.findByRole("region", { name: "選択中のスナップショット" });
     expect(screen.getByRole("button", { name: "この芽にいます" })).toBeTruthy();
+  });
+
+  it("puts the main actions first and links to each section of the leaf details", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    const panel = await screen.findByRole("region", { name: "選択中のスナップショット" });
+    const links = within(panel).getByRole("navigation", { name: "葉の詳細の移動先" });
+    const follows = (first: Element, second: Element) => Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    const memo = within(panel).getByRole("region", { name: "メモ" });
+    const previews = within(panel).getByRole("region", { name: "プレビュー管理" });
+    const files = within(panel).getByRole("region", { name: "保存済みファイル" });
+    expect(follows(within(panel).getByRole("button", { name: "ここから枝を伸ばす" }), links)).toBe(true);
+    expect(follows(links, memo)).toBe(true);
+    expect(follows(memo, previews)).toBe(true);
+    expect(follows(previews, files)).toBe(true);
+
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      for (const [name, section] of [["メモ・ラベル・タグ", memo], ["プレビュー", previews], ["保存済みファイル", files]] as const) {
+        await user.click(within(links).getByRole("button", { name }));
+        expect(scrolled.mock.contexts[scrolled.mock.contexts.length - 1]).toBe(section.parentElement);
+        expect(document.activeElement).toBe(section.parentElement);
+      }
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
+  it("restores the saved panel width and saves a changed one", async () => {
+    const user = userEvent.setup();
+    mocks.loadSettings.mockResolvedValue({ recentProjects: [], sproutProgram: "", panelWidth: 480 });
+    render(<App />);
+    await openWorkspace(user);
+    const splitter = screen.getByRole("separator", { name: "パネルの幅" });
+    const workspace = splitter.parentElement as HTMLElement;
+    await waitFor(() => expect(workspace.style.getPropertyValue("--panel-width")).toBe("480px"));
+
+    fireEvent.keyDown(splitter, { key: "ArrowLeft" });
+    expect(workspace.style.getPropertyValue("--panel-width")).toBe("504px");
+    expect(mocks.savePanelWidth).toHaveBeenLastCalledWith(504);
+
+    // jsdom has no PointerEvent, so its pointer events would lose clientX.
+    const pointer = (type: string, clientX: number) => fireEvent(splitter, new MouseEvent(type, { bubbles: true, button: 0, clientX }));
+    pointer("pointerdown", 500);
+    pointer("pointermove", 540);
+    expect(workspace.style.getPropertyValue("--panel-width")).toBe("464px");
+    expect(mocks.savePanelWidth).toHaveBeenCalledTimes(1);
+    pointer("pointerup", 540);
+    expect(mocks.savePanelWidth).toHaveBeenLastCalledWith(464);
+
+    fireEvent.doubleClick(splitter);
+    expect(workspace.style.getPropertyValue("--panel-width")).toBe("360px");
+    expect(mocks.savePanelWidth).toHaveBeenLastCalledWith(360);
   });
 
   it("reports untracked conflicts with the path when moving", async () => {

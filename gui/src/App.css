@@ -181,9 +181,13 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .eyebrow { margin: 0 0 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .14em; }
 .muted { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
 
-.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+/* The clamp keeps 360px for the map while the window shrinks; see lib/panelWidth.ts. */
+.workspace { --panel-width: 360px; flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 6px clamp(280px, var(--panel-width), calc(100% - 366px)); }
 .map-area { min-width: 0; }
-.detail-panel { border-left: 1px solid var(--line); background: var(--panel); padding: 16px; overflow: auto; }
+.panel-splitter { border-left: 1px solid var(--line); background: var(--panel); cursor: col-resize; touch-action: none; }
+.panel-splitter:hover, .panel-splitter:focus-visible { background: var(--current); }
+.panel-splitter:focus-visible { outline-offset: -2px; }
+.detail-panel { min-width: 0; background: var(--panel); padding: 16px; overflow: auto; }
 .panel-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .panel-section h3 { margin: 0; font-size: 17px; }
 .panel-heading { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
@@ -278,6 +282,19 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .detail-list dd { margin: 0; word-break: break-all; }
 .mono { font-family: ui-monospace, "Cascadia Mono", monospace; }
 .panel-actions { display: grid; gap: 8px; }
+.commit-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.commit-actions .button { padding-inline: 8px; }
+.span-all { grid-column: 1 / -1; }
+/* A flex column: a sticky grid item could not leave its own row. */
+.commit-panel { display: flex; flex-direction: column; }
+.commit-panel > * { min-width: 0; }
+/* Sticky offsets start inside the panel's padding, so -16px reaches its top edge. */
+.section-nav { position: sticky; top: -16px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 -16px; padding: 6px 16px; border-block: 1px solid var(--line); background: var(--panel); }
+.section-nav button { border: 1px solid transparent; border-radius: var(--radius); background: transparent; color: var(--current); font-size: 12px; font-weight: 600; padding: 3px 8px; white-space: nowrap; }
+.section-nav button:hover { background: var(--chip-bg); }
+.section-target { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; scroll-margin-top: 48px; }
+.section-target:focus { outline: none; }
+.section-target > .preview-panel, .section-target > .snapshot-files { margin-top: 0; }
 .button.small { padding: 4px 10px; font-size: 12px; }
 .text-button.danger { color: var(--danger); }
 .text-button.inline { padding: 0; text-align: left; font-size: inherit; }
@@ -302,9 +319,13 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .tag-form .button { justify-self: start; }
 
 @media (max-width: 760px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .detail-panel { border-left: 0; border-top: 1px solid var(--line); max-height: 50vh; }
   .settings-panel { grid-template-columns: 1fr; }
+}
+/* Below the width of the map and panel side by side; the window scrolls before either gets too short. */
+@media (max-width: 660px) {
+  .workspace { min-height: 480px; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(240px, 1fr) minmax(220px, 40vh); }
+  .panel-splitter { display: none; }
+  .detail-panel { border-top: 1px solid var(--line); }
 }
 /* Snapshot comparison keeps long paths and commit names inside the side panel. */
 .field select { min-width: 0; width: 100%; padding: 8px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }

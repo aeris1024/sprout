@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type RefObject } from "react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
@@ -11,6 +11,12 @@ const roleLabels: Record<string, string> = {
 
 function attachmentLabel(attachment: CommitAttachment): string {
   return `${roleLabels[attachment.role] ?? attachment.role}: ${attachment.original_name}（${attachment.media_type}・${formatBytes(attachment.size)}）`;
+}
+
+/** Bring a section under the sticky links and put the keyboard there. */
+function jumpTo(section: RefObject<HTMLDivElement | null>) {
+  section.current?.scrollIntoView?.({ block: "start" });
+  section.current?.focus({ preventScroll: true });
 }
 
 interface CommitPanelProps {
@@ -65,6 +71,9 @@ export default function CommitPanel({
   const tips = branches.filter((branch) => branch.commit_id === detail.id);
   const commitTags = tags.filter((tag) => tag.commit_id === detail.id);
   const deletedBranch = deletedBranches.find((branch) => branch.id === detail.branch_id);
+  const annotationSection = useRef<HTMLDivElement>(null);
+  const previewSection = useRef<HTMLDivElement>(null);
+  const fileSection = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setEditingMessage(false);
@@ -74,7 +83,7 @@ export default function CommitPanel({
   }, [detail.id, detail.message]);
 
   return (
-    <section className="panel-section" aria-label="選択中のスナップショット">
+    <section className="panel-section commit-panel" aria-label="選択中のスナップショット">
       <div className="panel-heading">
         <p className="eyebrow">{current ? "いまここ" : "SNAPSHOT"}</p>
         <button className="icon-button" onClick={onClose} aria-label="詳細を閉じる">×</button>
@@ -102,6 +111,52 @@ export default function CommitPanel({
           <button className="text-button" onClick={() => setEditingMessage(true)} disabled={busy}>メッセージを編集</button>
         </div>
       )}
+      <div className="panel-actions commit-actions">
+        <button className="button primary span-all" onClick={() => onGo(detail.id)} disabled={busy || current}>
+          {current ? "この芽にいます" : "ここへ移動"}
+        </button>
+        {!current && unsavedCount > 0 && (
+          <p className="panel-copy span-all">{`移動すると、未保存の変更 ${unsavedCount}件は今の芽につぼみとして残ります。`}</p>
+        )}
+        {growing ? (
+          <form
+            className="grow-form span-all"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (branchName.trim()) onGrow(detail.id, branchName.trim());
+            }}
+          >
+            <label className="field">
+              新しい枝の名前
+              <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} placeholder="例: rethink" disabled={busy} />
+            </label>
+            <div className="action-row">
+              <button className="button primary" type="submit" disabled={busy || !branchName.trim()}>枝を作って移動</button>
+              <button className="button secondary" type="button" onClick={() => setGrowing(false)} disabled={busy}>キャンセル</button>
+            </div>
+          </form>
+        ) : (
+          <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy}>ここから枝を伸ばす</button>
+        )}
+        <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
+        <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy} title="Ctrl+Vでクリップボードの画像も登録できます">
+          {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
+        </button>
+        <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
+        <button
+          className="button danger span-all"
+          onClick={() => onDelete(detail.id)}
+          disabled={busy || commitTags.length > 0}
+          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、枝先・いまここ・子の芽は親へ移します"}
+        >
+          この葉を削除
+        </button>
+      </div>
+      <nav className="section-nav" aria-label="葉の詳細の移動先">
+        <button type="button" onClick={() => jumpTo(annotationSection)}>メモ・ラベル・タグ</button>
+        <button type="button" onClick={() => jumpTo(previewSection)}>プレビュー</button>
+        <button type="button" onClick={() => jumpTo(fileSection)}>保存済みファイル</button>
+      </nav>
       <dl className="detail-list">
         <div><dt>日時</dt><dd>{new Date(detail.created_at).toLocaleString("ja-JP")}</dd></div>
         <div><dt>ブランチ</dt><dd>{branchIdentityLabel(branchIdentity(detail.branch_id, detail.branch_name, branches))}</dd></div>
@@ -120,50 +175,15 @@ export default function CommitPanel({
         <div><dt>ファイル</dt><dd>{detail.files.length}件</dd></div>
         <div><dt>ID</dt><dd className="mono">{detail.id.slice(0, 12)}</dd></div>
       </dl>
-      <div className="panel-actions">
-        <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
-        <button className="button primary" onClick={() => onGo(detail.id)} disabled={busy || current}>
-          {current ? "この芽にいます" : "ここへ移動"}
-        </button>
-        {growing ? (
-          <form
-            className="grow-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (branchName.trim()) onGrow(detail.id, branchName.trim());
-            }}
-          >
-            <label className="field">
-              新しい枝の名前
-              <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} placeholder="例: rethink" disabled={busy} />
-            </label>
-            <div className="action-row">
-              <button className="button primary" type="submit" disabled={busy || !branchName.trim()}>枝を作って移動</button>
-              <button className="button secondary" type="button" onClick={() => setGrowing(false)} disabled={busy}>キャンセル</button>
-            </div>
-          </form>
-        ) : (
-          <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy}>ここから枝を伸ばす</button>
-        )}
-        <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy} title="Ctrl+Vでクリップボードの画像も登録できます">
-          {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
-        </button>
-        <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
-        <button
-          className="button danger"
-          onClick={() => onDelete(detail.id)}
-          disabled={busy || commitTags.length > 0}
-          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、枝先・いまここ・子の芽は親へ移します"}
-        >
-          この葉を削除
-        </button>
+      <div className="section-target" ref={annotationSection} tabIndex={-1}>
+        <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       </div>
-      <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} files={detail.files} busy={busy} actions={previews} />
-      <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />
-      <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
-      {!current && unsavedCount > 0 && (
-        <p className="panel-copy">{`移動すると、未保存の変更 ${unsavedCount}件は今の芽につぼみとして残ります。`}</p>
-      )}
+      <div className="section-target" ref={previewSection} tabIndex={-1}>
+        <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} files={detail.files} busy={busy} actions={previews} />
+      </div>
+      <div className="section-target" ref={fileSection} tabIndex={-1}>
+        <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />
+      </div>
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { confirm as confirmDialog, open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
@@ -10,6 +10,7 @@ import FilePanel from "./components/FilePanel";
 import ProjectMenu, { RecentProjectList, projectName } from "./components/ProjectMenu";
 import TrashPanel from "./components/TrashPanel";
 import MaintenancePanel from "./components/MaintenancePanel";
+import PanelSplitter from "./components/PanelSplitter";
 import SavePanel from "./components/SavePanel";
 import SproutMap, { type MapSelection } from "./components/SproutMap";
 import "./App.css";
@@ -35,7 +36,8 @@ import {
   type SproutCliError,
   type SproutStatus,
 } from "./lib/sprout";
-import { loadSettings, nextRecentProjects, removeRecentProject, saveSettings } from "./lib/settings";
+import { PANEL_WIDTH, savedPanelWidth } from "./lib/panelWidth";
+import { loadSettings, nextRecentProjects, removeRecentProject, savePanelWidth, saveSettings } from "./lib/settings";
 import { clipboardImage, discardPastedThumbnail, savePastedPreview, readClipboardFiles, savePastedThumbnail, thumbnailImageProblem } from "./lib/clipboard";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
@@ -108,6 +110,7 @@ function App() {
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [sproutProgram, setSproutProgram] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH.default);
   const [initCandidate, setInitCandidate] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -127,6 +130,7 @@ function App() {
       .then((settings) => {
         setRecentProjects(settings.recentProjects);
         setSproutProgram(settings.sproutProgram);
+        setPanelWidth(savedPanelWidth(settings.panelWidth));
       })
       .catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }));
   }, []);
@@ -1238,11 +1242,16 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       )}
 
       {projectDir && status && !initCandidate && (
-        <main className="workspace">
+        <main className="workspace" style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
           <section className="map-area" aria-label="スナップショット">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
             <SproutMap graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
           </section>
+          <PanelSplitter
+            width={panelWidth}
+            onResize={setPanelWidth}
+            onCommit={(width) => void savePanelWidth(width).catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }))}
+          />
           <aside className="detail-panel">{sidePanel()}</aside>
         </main>
       )}

@@ -8,6 +8,7 @@ const BROWSER_SETTINGS_KEY = "sprout.settings";
 export interface AppSettings {
   recentProjects: string[];
   sproutProgram: string;
+  panelWidth?: number;
 }
 
 const defaultSettings: AppSettings = {
@@ -40,12 +41,14 @@ export function removeRecentProject(current: string[], project: string): string[
   return current.filter((item) => item !== project);
 }
 
+function browserSettings(): AppSettings {
+  const saved = window.localStorage.getItem(BROWSER_SETTINGS_KEY);
+  if (!saved) return defaultSettings;
+  return { ...defaultSettings, ...JSON.parse(saved) } as AppSettings;
+}
+
 export async function loadSettings(): Promise<AppSettings> {
-  if (!isTauri()) {
-    const saved = window.localStorage.getItem(BROWSER_SETTINGS_KEY);
-    if (!saved) return defaultSettings;
-    return { ...defaultSettings, ...JSON.parse(saved) } as AppSettings;
-  }
+  if (!isTauri()) return browserSettings();
   const store = await appStore();
   return {
     recentProjects:
@@ -54,16 +57,28 @@ export async function loadSettings(): Promise<AppSettings> {
     sproutProgram:
       (await store.get<string>("sproutProgram")) ??
       defaultSettings.sproutProgram,
+    panelWidth: await store.get<number>("panelWidth"),
   };
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (!isTauri()) {
-    window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify(settings));
+    window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify({ ...browserSettings(), ...settings }));
     return;
   }
   const store = await appStore();
   await store.set("recentProjects", settings.recentProjects);
   await store.set("sproutProgram", settings.sproutProgram);
+  await store.save();
+}
+
+/** Saved apart from the other settings, which are written from state that does not hold the width. */
+export async function savePanelWidth(panelWidth: number): Promise<void> {
+  if (!isTauri()) {
+    window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify({ ...browserSettings(), panelWidth }));
+    return;
+  }
+  const store = await appStore();
+  await store.set("panelWidth", panelWidth);
   await store.save();
 }
