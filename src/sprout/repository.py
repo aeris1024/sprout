@@ -526,7 +526,7 @@ class Bud:
 
 @dataclass(frozen=True)
 class GoResult:
-    commit_id: str
+    commit_id: str | None
     branch: str
     branch_id: str
     at_branch_tip: bool
@@ -3450,22 +3450,31 @@ class Repository:
 
     @locked
     def grow_branch(
-        self, name: str, comment: str = "", *, start_point: str | None = None
+        self, name: str, comment: str = "", *, start_point: str | None = None,
+        reject_changes: bool = False, discard: bool = False, from_tip: bool = False,
     ) -> tuple[str, Bud | None]:
         """Create a branch and move to it, keeping unsaved changes as a bud.
 
         The name is checked before anything moves, so a refused branch changes nothing.
         """
         self._validate_reference_name(name, "branch")
-        commit_id = self.resolve_commit(start_point) if start_point is not None else self.current_commit()
+        self._validate_navigation_policy(reject_changes, discard)
+        commit_id = self.resolve_commit(start_point) if start_point is not None else (
+            self.head_commit() if from_tip else self.current_commit()
+        )
         if commit_id is None:
             raise SproutError("cannot create branch before first commit")
+        if from_tip and start_point is None:
+            self._reject_omitted_start_point_on_restored_snapshot(commit_id)
         target = self.manifest(commit_id)
         self._validate_restore_inputs(target)
         self._insert_branch(name, commit_id, comment)
         try:
-            stashed = self._materialize_keeping_changes(target, head_branch=name, current_commit=commit_id)
-        except Exception:
+            stashed = self._navigate_worktree(
+                target, head_branch=name, current_commit=commit_id,
+                reject_changes=reject_changes, discard=discard,
+            )
+        except BaseException:
             self._forget_unused_branch(name)
             raise
         return commit_id, stashed
@@ -4795,32 +4804,80 @@ class Repository:
         summary = f"{paths[0]} +{len(paths) - 1}" if len(paths) > 1 else (paths[0] if paths else bud.id[:12])
         return recovery.record(db, before, kind, bud.name or summary, bud.id, utc_timestamp())
 
+    @staticmethod
+    def _validate_navigation_policy(reject_changes: bool, discard: bool) -> None:
+        if reject_changes and discard:
+            raise SproutError(
+                "--reject-changes and --discard cannot be combined", code="invalid_navigation_options",
+            )
+
+    def _navigate_worktree(
+        self, target: dict[str, FileState], *, head_branch: str | None,
+        current_commit: str | None, reject_changes: bool = False, discard: bool = False,
+    ) -> Bud | None:
+        self._validate_navigation_policy(reject_changes, discard)
+        if reject_changes or discard:
+            self._validate_restore_inputs(target)
+            dirty = self._has_unsaved_changes()
+            if dirty and reject_changes:
+                raise SproutError(
+                    "working tree has uncommitted changes", code="uncommitted_changes",
+                    details={"can_discard": True},
+                )
+            self._materialize_keeping_discarded(
+                target, dirty, head_branch=head_branch, current_commit=current_commit,
+            )
+            return None
+        return self._materialize_keeping_changes(
+            target, head_branch=head_branch, current_commit=current_commit,
+        )
+
     @locked
-    def go(self, value: str) -> GoResult:
-        """Move to a snapshot, keeping unsaved changes as a bud on the current one."""
-        commit_id = self.resolve_commit(value)
+    def go(
+        self, value: str | None = None, *, branch_name: str | None = None,
+        keep_branch: bool = False, reject_changes: bool = False, discard: bool = False,
+    ) -> GoResult:
+        """Move to a leaf or explicit branch, preserving unfinished work by default."""
+        self._validate_navigation_policy(reject_changes, discard)
+        if (value is None) == (branch_name is None) or (keep_branch and branch_name is not None):
+            raise SproutError(
+                "specify TARGET or --branch NAME; --keep-branch requires TARGET",
+                code="invalid_navigation_options",
+            )
         with self.connect() as db:
             current_branch = db.execute(
                 "SELECT b.name FROM branches b JOIN repository_state s ON s.head_branch_id=b.id WHERE s.id=1"
             ).fetchone()[0]
+            explicit = db.execute(
+                "SELECT name,commit_id FROM branches WHERE deleted=0 AND name=?",
+                (branch_name if branch_name is not None else value,),
+            ).fetchone()
+        if branch_name is not None and explicit is None:
+            raise SproutError(f"unknown branch: {branch_name}", code="unknown_branch", details={"name": branch_name})
+        if explicit is not None and not keep_branch:
+            branch = explicit['name']
+            commit_id = explicit['commit_id']
+        else:
+            assert value is not None
+            commit_id = self.resolve_commit(value)
+            branch = current_branch
+        with self.connect() as db:
             tips = [
                 row[0]
                 for row in db.execute(
                     "SELECT name FROM branches WHERE deleted=0 AND commit_id=? ORDER BY name", (commit_id,)
                 )
             ]
-        if current_branch in tips:
-            branch = current_branch
-        elif value in tips:
-            branch = value
-        elif tips:
-            branch = tips[0]
-        else:
-            branch = current_branch
-        stashed = self._materialize_keeping_changes(
+        if explicit is None and not keep_branch:
+            if current_branch in tips:
+                branch = current_branch
+            elif tips:
+                branch = tips[0]
+        stashed = self._navigate_worktree(
             self.manifest(commit_id),
             head_branch=branch if branch != current_branch else None,
             current_commit=commit_id,
+            reject_changes=reject_changes, discard=discard,
         )
         head = self.head_position()
         # The tracked files now match the target exactly, so there is nothing to re-hash.

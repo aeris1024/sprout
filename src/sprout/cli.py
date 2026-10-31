@@ -2113,10 +2113,34 @@ def branch_create(
     comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the branch")] = "",
     switch: Annotated[bool, typer.Option("--switch", help="Move to the new branch after creating it")] = False,
     keep_changes: Annotated[bool, typer.Option("--keep-changes", help="With --switch, save unfinished changes in a bud")] = False,
+    reject_changes: Annotated[bool, typer.Option("--reject-changes", help="With --switch, refuse if tracked changes are unsaved")] = False,
+    discard: Annotated[bool, typer.Option("--discard", help="With --switch, keep discarded tracked changes in the trash")] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """Create a branch, optionally restoring its starting leaf."""
-    branch(name=name, start_point=leaf, comment=comment, switch=switch, keep_changes=keep_changes, json_output=json_output)
+    if not switch:
+        if reject_changes or discard:
+            raise SproutError("--reject-changes and --discard require --switch", code="invalid_navigation_options")
+        branch(name=name, start_point=leaf, comment=comment, keep_changes=keep_changes, json_output=json_output)
+        return
+    if keep_changes and (reject_changes or discard):
+        raise SproutError("--keep-changes cannot be combined with --reject-changes or --discard", code="invalid_navigation_options")
+    repository = repo()
+    with _show_progress(repository, enabled=not json_output):
+        commit_id, saved = repository.grow_branch(
+            name, comment, start_point=leaf, from_tip=True,
+            reject_changes=reject_changes, discard=discard,
+        )
+    if json_output:
+        _echo_json({
+            "id": repository.branch_id(name), "name": name, "commit_id": commit_id,
+            "comment": comment.strip(), "current": True,
+            "bud": _bud_json(saved) if saved is not None else None,
+        })
+        return
+    if saved is not None:
+        typer.echo(f"Saved bud {_bud_summary(saved)}")
+    typer.echo(f"Created and switched to branch {name}")
 
 
 @branch_app.command(name="rename")
@@ -2151,12 +2175,16 @@ def branch_delete(
 @app.command()
 def go(
     target: Annotated[
-        str,
+        str | None,
         typer.Argument(
             help="Commit ID, prefix, branch, or tag to move to",
             autocompletion=_complete_references,
         ),
-    ],
+    ] = None,
+    branch_name: Annotated[str | None, typer.Option("--branch", help="Select this live branch explicitly, including an empty branch", autocompletion=_complete_branches)] = None,
+    keep_branch: Annotated[bool, typer.Option("--keep-branch", help="Restore TARGET while keeping the current branch and its tip")] = False,
+    reject_changes: Annotated[bool, typer.Option("--reject-changes", help="Refuse instead of saving unsaved tracked changes in a bud")] = False,
+    discard: Annotated[bool, typer.Option("--discard", help="Keep discarded tracked changes in the trash instead of a live bud")] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
     ] = False,
@@ -2164,7 +2192,10 @@ def go(
     """Move to a snapshot, keeping unsaved changes as a bud."""
     repository = repo()
     with _show_progress(repository, enabled=not json_output):
-        result = repository.go(target)
+        result = repository.go(
+            target, branch_name=branch_name, keep_branch=keep_branch,
+            reject_changes=reject_changes, discard=discard,
+        )
     if json_output:
         _echo_json(
             {
@@ -2180,7 +2211,8 @@ def go(
     if result.bud is not None:
         typer.echo(f"Saved bud {_bud_summary(result.bud)}")
     where = "branch tip" if result.at_branch_tip else "saved snapshot"
-    typer.echo(f"Moved to {where} {result.commit_id[:12]} on {result.branch}")
+    destination = result.commit_id[:12] if result.commit_id is not None else "(no leaves yet)"
+    typer.echo(f"Moved to {where} {destination} on {result.branch}")
 
 
 @app.command(name="switch")
@@ -2195,24 +2227,13 @@ def switch_command(
             help="Discard all tracked changes, keeping them in the trash; leave untracked files untouched",
         ),
     ] = False,
+    reject_changes: Annotated[bool, typer.Option("--reject-changes", help="Refuse if tracked changes are unsaved")] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
     ] = False,
 ) -> None:
-    """Switch to a branch and restore its tip."""
-    repository = repo()
-    with _show_progress(repository, enabled=not json_output):
-        commit_id = repository.switch(branch_name, discard=discard)
-    if json_output:
-        _echo_json(
-            {
-                "branch": branch_name,
-                "branch_id": repository.branch_id(),
-                "commit_id": commit_id,
-            }
-        )
-        return
-    typer.echo(f"Switched to branch {branch_name}")
+    """Alias for go --branch NAME; unfinished work is saved as a bud by default."""
+    go(branch_name=branch_name, reject_changes=reject_changes, discard=discard, json_output=json_output)
 
 
 @app.command()

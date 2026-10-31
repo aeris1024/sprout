@@ -167,7 +167,7 @@ export interface CommitGraph {
 }
 
 export interface GoResult {
-  current_commit: string;
+  current_commit: string | null;
   branch: string;
   branch_id: string;
   at_branch_tip: boolean;

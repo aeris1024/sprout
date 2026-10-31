@@ -459,14 +459,14 @@ def test_main_reports_real_command_errors_as_json(
     assert invoke(["branch", "ideas"], project, monkeypatch).exit_code == 0
     asset.write_bytes(b"changed")
     monkeypatch.chdir(project)
-    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "ideas", "--json"])
+    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "ideas", "--reject-changes", "--json"])
 
     assert cli.main() == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert json.loads(captured.err) == {
         "code": "uncommitted_changes",
-        "message": "working tree has uncommitted changes (use --discard to replace them)",
+        "message": "working tree has uncommitted changes",
         "details": {"can_discard": True},
     }
 
@@ -1588,7 +1588,10 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     assert json.loads(switched.stdout) == {
         "branch": "案",
         "branch_id": idea_id,
-        "commit_id": commit_id,
+        "current_commit": commit_id,
+        "at_branch_tip": True,
+        "bud": None,
+        "changes": [],
     }
 
     restored = invoke(["restore", commit_id, "--json"], project, monkeypatch)

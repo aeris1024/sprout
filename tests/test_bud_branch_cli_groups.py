@@ -83,10 +83,10 @@ def test_branch_explicit_operations_handle_reserved_names_and_recovery(tmp_path,
     assert repo.resolve_commit(leaf) == leaf and asset.read_bytes() == b'base'
 
 
-def test_branch_creation_keeps_current_switch_safety_until_move_integration(tmp_path, monkeypatch):
+def test_branch_creation_can_explicitly_refuse_unsaved_changes(tmp_path, monkeypatch):
     repo, asset, leaf = project(tmp_path, monkeypatch)
     asset.write_bytes(b'draft')
-    refused = run_command(app, ['branch', 'create', 'refused', leaf, '--switch', '--json'])
+    refused = run_command(app, ['branch', 'create', 'refused', leaf, '--switch', '--reject-changes', '--json'])
     assert not refused['ok'] and asset.read_bytes() == b'draft'
     assert 'refused' not in {name for name, _, _ in repo.branches()}
     created = call('branch', 'create', 'new-work', leaf, '--switch', '--keep-changes')
