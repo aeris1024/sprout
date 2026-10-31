@@ -100,6 +100,24 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Offline snapshot version control for local files.",
 )
+leaf_app = typer.Typer(no_args_is_help=True, help="Create and manage saved leaves.")
+file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
+maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
+app.add_typer(leaf_app, name="leaf")
+app.add_typer(file_app, name="file")
+app.add_typer(maintenance_app, name="maintenance")
+
+
+@file_app.callback()
+def file_group() -> None:
+    """Manage tracked files and their contents."""
+
+
+@maintenance_app.callback()
+def maintenance_group() -> None:
+    """Inspect and maintain project storage."""
+
+
 PROGRESS_THRESHOLD = 8 * 1024 * 1024
 
 
@@ -684,6 +702,7 @@ def status(
             typer.echo(f"  {path}")
 
 
+@leaf_app.command(name="create")
 @app.command(name="commit")
 def commit_command(
     message: Annotated[str, typer.Option("--message", "-m")],
@@ -848,6 +867,7 @@ def log_command(
         typer.echo(f"\n    {row['message']}\n")
 
 
+@leaf_app.command(name="tree")
 @app.command()
 def tree(
     json_output: Annotated[
@@ -916,6 +936,7 @@ def diff(
             typer.echo(f"{entry.state:<8} {entry.path}")
 
 
+@leaf_app.command(name="show")
 @app.command()
 def show(
     commit: Annotated[
@@ -1935,6 +1956,7 @@ def _archive_plan_json(plan: ArchivePlan, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
+@leaf_app.command(name="archive")
 @app.command(name="archive")
 def archive_command(
     output: Annotated[
@@ -1996,6 +2018,7 @@ def cat_command(
         repository.cat(commit, path, sys.stdout.buffer)
 
 
+@leaf_app.command(name="prune")
 @app.command()
 def prune(
     start_tag: Annotated[
@@ -2100,6 +2123,7 @@ def trash(
                    "Permanently discarded recovery; run gc to reclaim unreferenced objects")
 
 
+@leaf_app.command(name="delete")
 @app.command(name="delete-commit")
 def delete_commit(
     commit: Annotated[

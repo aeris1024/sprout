@@ -1,10 +1,11 @@
 ---
 id: TASK-125
 title: CLIをleaf・bud・branch・file中心の構成と手打ち用aliasへ整理する
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:21'
-updated_date: '2026-10-31 09:32'
+updated_date: '2026-10-31 11:09'
 labels:
   - cli
   - usability
@@ -80,3 +81,9 @@ GUIの新機能追加を対象外とする条件はTASK-125.7の呼び出し移�
 - [ ] #3 V1方針とprune、確定したメディア方針・ラベル維持と一覧/候補を反映し、プレビューは葉全体の確認資料として素材関連付け・代表指定を廃止して表示名・説明・順序・置き換えを維持する
 - [ ] #4 GUI・serve・文書を正規体系へそろえ、素材関連付け廃止とメタ情報維持はTASK-125.13、ラベル一覧・候補はTASK-125.15/125.16で実装・検証を追跡できる
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Implement125.1 while GUI119 then107 proceed separately. 2. Migrate125.2-5 then125.9-12, confirming go behavior before implementation. 3. Implement125.14 then125.13 preserving V1 attachments. 4. Implement125.15 then125.16. 5. Finish125.6 and125.7 then125.8 with help/completion/docs/temporary-entry cleanup and integration tests. Verify and commit each task, ff-only merge into main, push, and delete work branches.
+<!-- SECTION:PLAN:END -->

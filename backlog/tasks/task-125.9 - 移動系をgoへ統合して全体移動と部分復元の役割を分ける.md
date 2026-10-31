@@ -4,6 +4,7 @@ title: 移動系をgoへ統合して全体移動と部分復元の役割を分�
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:33'
+updated_date: '2026-10-31 11:11'
 labels:
   - cli
   - usability
@@ -39,3 +40,9 @@ ordinal: 133000
 - [ ] #5 file restoreは選択外の作業ファイル・現在位置・ブランチ先端を変更しない。branch createの作成後移動も同じ移動方針と失敗時の整合を保つ
 - [ ] #6 正規CLI、switch alias、serve、GUIの移動操作で決定した方針が一致し、V1保存形式を変更しない
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+User approved go consolidation: go TARGET preserves unsaved changes as a bud by default; a live branch name selects that branch explicitly even when tips coincide. go --branch NAME also supports empty branches; switch NAME aliases this explicit mode. go LEAF --keep-branch preserves current branch and tip while changing worktree/current position. --reject-changes refuses dirty worktrees; --discard keeps discarded changes in trash; those flags are mutually exclusive. branch create movement defaults to bud preservation. Intermediate-leaf saves create a new branch. All failures must leave files, position, branches and buds unchanged. Partial restoration requires file restore LEAF PATH...
+<!-- SECTION:NOTES:END -->

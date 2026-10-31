@@ -1,10 +1,11 @@
 ---
 id: TASK-125.1
 title: 正規CLIグループとleafの基本操作を導入する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:22'
-updated_date: '2026-10-31 09:08'
+updated_date: '2026-10-31 11:13'
 labels:
   - cli
   - usability
@@ -30,9 +31,27 @@ init/status/go/serveをトップレベルとし、bud/branch/file/trash/maintena
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 leaf create/tree/show/delete/prune/archiveの基本操作と正規グループを提供し、各操作の対応する既存オプション・JSON・確認要件を維持する
-- [ ] #2 履歴検索・説明編集・移動・サムネイルはTASK-125.10・TASK-125.11・TASK-125.9・TASK-125.12で統合する範囲と重複せず、統合前の別入口を新たに確定しない
-- [ ] #3 leaf deleteのゴミ箱復旧、参照の移動、タグによる保護と、leaf pruneの保護対象・取り消し不可・作業ファイルを変更しない挙動が維持される
-- [ ] #4 現在のV1リポジトリをそのまま利用でき、既存JSONキー・構造、終了コード、エラーcode、標準出力の契約を不要に変更しない
-- [ ] #5 基本操作・危険操作のdry-runと拒否時の無変更を新構文で検証し、段階的な移行中も既存のGUI呼び出しが利用できる
+- [x] #1 leaf create/tree/show/delete/prune/archiveの基本操作と正規グループを提供し、各操作の対応する既存オプション・JSON・確認要件を維持する
+- [x] #2 履歴検索・説明編集・移動・サムネイルはTASK-125.10・TASK-125.11・TASK-125.9・TASK-125.12で統合する範囲と重複せず、統合前の別入口を新たに確定しない
+- [x] #3 leaf deleteのゴミ箱復旧、参照の移動、タグによる保護と、leaf pruneの保護対象・取り消し不可・作業ファイルを変更しない挙動が維持される
+- [x] #4 現在のV1リポジトリをそのまま利用でき、既存JSONキー・構造、終了コード、エラーcode、標準出力の契約を不要に変更しない
+- [x] #5 基本操作・危険操作のdry-runと拒否時の無変更を新構文で検証し、段階的な移行中も既存のGUI呼び出しが利用できる
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Register canonical leaf commands using existing implementations; preserve legacy calls and V1; verify workflow, safety, archive and serve parity.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Registered leaf create/tree/show/delete/prune/archive using the original callbacks, preserving options, JSON and safeguards. Added file/maintenance scaffolding; bud/branch/trash transitions remain with their assigned tasks. Legacy callers remain available during migration. Verified tests/test_cli_groups.py tests/test_cli.py tests/test_serve.py: 80 passed; repeated the 7 canonical tests after improving the V1 schema assertion: 7 passed. Tests exercise archive dry-run/refusal, delete confirmation/tag protection/reference movement/trash recovery, irreversible prune with working files unchanged, legacy parity and nested serve errors. git diff --check passed.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added canonical leaf basic operations and CLI group scaffolding while preserving legacy GUI calls and V1 storage. Verified 80 CLI/serve tests plus 7 canonical tests after the final schema assertion update; all passed.
+<!-- SECTION:FINAL_SUMMARY:END -->
