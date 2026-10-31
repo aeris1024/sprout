@@ -4,7 +4,7 @@ title: 正規CLIグループとleafの基本操作を導入する
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:22'
-updated_date: '2026-10-31 08:58'
+updated_date: '2026-10-31 09:08'
 labels:
   - cli
   - usability
@@ -25,7 +25,7 @@ ordinal: 125000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 親タスクの正規10入口の基盤とleafの基本操作を整える。対応はcommit -> leaf create -m TEXT、tree -> leaf tree、show -> leaf show LEAF、delete-commit -> leaf delete LEAF、prune -> leaf prune（タグ間と--all）、archive -> leaf archive --output DIR。V1保存形式とこれらの既存機能を維持する。
 log/素材履歴はTASK-125.10、message/noteはTASK-125.11、go/switch/全体restoreはTASK-125.9、thumbnail/coverはTASK-125.12の操作統合を担当する。このタスクでleaf restore、file history、leaf note、file cover、branch switchを旧案どおり追加しない。
-init/status/go/serveをトップレベルとし、bud/branch/file/trash/maintenanceへ領域を分ける。段階的な作業中の既存GUI動作を保持し、未決定のプレビュー仕様はTASK-125.13で確認する。ラベル維持・全体一覧・GUI入力候補はTASK-125.15・TASK-125.16で確定済み。
+init/status/go/serveをトップレベルとし、bud/branch/file/trash/maintenanceへ領域を分ける。段階的な作業中の既存GUI動作を保持し、プレビューはTASK-125.13で葉全体の確認資料へ整理し、素材関連付け廃止と表示名・説明・順序の維持を実装する。ラベル維持・全体一覧・GUI入力候補はTASK-125.15・TASK-125.16で確定済み。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
