@@ -586,11 +586,11 @@ function App() {
   }
 
   function addLabel(commitId: string, label: string) {
-    return editCommit(commitId, ["label", commitId, label], `ラベル「${label.trim()}」を追加しました`);
+    return editCommit(commitId, ["leaf", "label", "add", commitId, label], `ラベル「${label.trim()}」を追加しました`);
   }
 
   function removeLabel(commitId: string, label: string) {
-    return editCommit(commitId, ["label", commitId, "--delete", label], `ラベル「${label}」を外しました`);
+    return editCommit(commitId, ["leaf", "label", "remove", commitId, label], `ラベル「${label}」を外しました`);
   }
 
   function createTag(commitId: string, name: string, comment: string) {

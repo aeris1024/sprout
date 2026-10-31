@@ -376,3 +376,9 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .trash-item dl { margin: 0; font-size: 12px; }
 .trash-item dd { margin-left: 12px; }
 .trash-item dd p { white-space: pre-wrap; }
+.label-input { min-width: 0; }
+.label-candidates { margin-top: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.label-candidates [role="listbox"] { display: grid; gap: 4px; max-height: 220px; overflow: auto; }
+.label-candidates [role="option"] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; padding: 6px 8px; text-align: left; overflow-wrap: anywhere; border: 1px solid transparent; background: transparent; color: var(--ink); }
+.label-candidates [role="option"] span { color: var(--muted); font-size: 11px; }
+.label-candidates [role="option"][aria-selected="true"], .label-candidates [role="option"]:hover { background: var(--chip-bg); border-color: var(--line); }

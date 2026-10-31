@@ -55,6 +55,11 @@ export interface CommitResult {
   cover?: { applied: boolean; reason: string | null };
 }
 
+export interface ProjectLabel {
+  name: string;
+  leaf_count: number;
+}
+
 export interface CommitLogEntry {
   id: string;
   parent_id: string | null;

@@ -1427,30 +1427,47 @@ describe("Sprout GUI operations", () => {
       expect(memo.getByText("メモはありません")).toBeTruthy();
     });
 
+    it("fetches project label candidates and adds the selected label through the canonical CLI", async () => {
+      const user = userEvent.setup();
+      await openDetail(user);
+      mocks.runSprout.mockResolvedValueOnce([{ name: "承認済み", leaf_count: 4 }]);
+      await user.click(screen.getByRole("combobox", { name: "追加するラベル" }));
+      const candidate = await screen.findByRole("option", { name: "承認済み 4件の葉" });
+      expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "label", "list"], "");
+      expect(sentArgs().some((args) => args[2] === "add")).toBe(false);
+      mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: ["承認済み"] }, { labels: ["承認済み"] });
+      await user.click(candidate);
+      expect(await screen.findByText("ラベル「承認済み」を追加しました")).toBeTruthy();
+      expect(sentArgs()).toContainEqual(["leaf", "label", "add", id, "承認済み"]);
+      expect(screen.queryByRole("listbox", { name: "既存のラベル候補" })).toBeNull();
+    });
+
     it("adds and removes labels and keeps a refused label in the input", async () => {
       const user = userEvent.setup();
       await openDetail(user);
       const labels = within(screen.getByRole("region", { name: "ラベル" }));
       expect(labels.getByRole("button", { name: "追加" }).hasAttribute("disabled")).toBe(true);
 
-      await user.type(labels.getByRole("textbox", { name: "追加するラベル" }), "a".repeat(65));
+      mocks.runSprout.mockResolvedValueOnce([]);
+      await user.type(labels.getByRole("combobox", { name: "追加するラベル" }), "a".repeat(65));
       mocks.runSprout.mockRejectedValueOnce({ code: "sprout_error", message: "label exceeds 64 character limit", details: {} });
       await user.click(labels.getByRole("button", { name: "追加" }));
       expect(await screen.findByText("label exceeds 64 character limit")).toBeTruthy();
-      expect((labels.getByRole("textbox", { name: "追加するラベル" }) as HTMLInputElement).value).toHaveLength(65);
+      expect((labels.getByRole("combobox", { name: "追加するラベル" }) as HTMLInputElement).value).toHaveLength(65);
 
-      await user.clear(labels.getByRole("textbox", { name: "追加するラベル" }));
-      await user.type(labels.getByRole("textbox", { name: "追加するラベル" }), "承認済み");
+      mocks.runSprout.mockResolvedValueOnce([]);
+      await user.clear(labels.getByRole("combobox", { name: "追加するラベル" }));
+      await user.type(labels.getByRole("combobox", { name: "追加するラベル" }), "承認済み");
       mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: ["承認済み"] }, { labels: ["承認済み"] });
       await user.click(labels.getByRole("button", { name: "追加" }));
       expect(await screen.findByText("ラベル「承認済み」を追加しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["label", id, "承認済み"]);
-      expect((labels.getByRole("textbox", { name: "追加するラベル" }) as HTMLInputElement).value).toBe("");
+      expect(sentArgs()).toContainEqual(["leaf", "label", "add", id, "承認済み"]);
+      expect((labels.getByRole("combobox", { name: "追加するラベル" }) as HTMLInputElement).value).toBe("");
 
       mockEdit({ commit_id: id, note: null, note_updated_at: null, labels: [] }, {});
       await user.click(labels.getByRole("button", { name: "ラベル「承認済み」を外す" }));
       expect(await screen.findByText("ラベル「承認済み」を外しました")).toBeTruthy();
-      expect(sentArgs()).toContainEqual(["label", id, "--delete", "承認済み"]);
+      expect(sentArgs()).toContainEqual(["leaf", "label", "remove", id, "承認済み"]);
       expect(labels.getByText("ラベルはありません")).toBeTruthy();
     });
 

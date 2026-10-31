@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import type { CommitDetail, GraphTag } from "../lib/sprout";
+import LabelInput from "./LabelInput";
 
 /** Resolves true when the edit was saved, so drafts survive a refused edit. */
 type Edit = Promise<boolean>;
 
 interface CommitAnnotationsProps {
+  projectDir: string;
+  program: string;
   detail: CommitDetail;
   tags: GraphTag[];
   busy: boolean;
@@ -51,17 +54,15 @@ function TagRow({ tag, busy, onSetTagComment, onDeleteTag }: { tag: GraphTag; bu
   );
 }
 
-export default function CommitAnnotations({ detail, tags, busy, onSaveNote, onAddLabel, onRemoveLabel, onCreateTag, onSetTagComment, onDeleteTag }: CommitAnnotationsProps) {
+export default function CommitAnnotations({ projectDir, program, detail, tags, busy, onSaveNote, onAddLabel, onRemoveLabel, onCreateTag, onSetTagComment, onDeleteTag }: CommitAnnotationsProps) {
   const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState(detail.note ?? "");
-  const [labelDraft, setLabelDraft] = useState("");
   const [tagName, setTagName] = useState("");
   const [tagComment, setTagComment] = useState("");
 
   useEffect(() => {
     setEditingNote(false);
     setNoteDraft(detail.note ?? "");
-    setLabelDraft("");
     setTagName("");
     setTagComment("");
   }, [detail.id]);
@@ -113,16 +114,7 @@ export default function CommitAnnotations({ detail, tags, busy, onSaveNote, onAd
         ) : (
           <p className="muted">ラベルはありません</p>
         )}
-        <form
-          className="inline-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (labelDraft.trim()) void onAddLabel(detail.id, labelDraft).then((saved) => saved && setLabelDraft(""));
-          }}
-        >
-          <input aria-label="追加するラベル" placeholder="例: 承認済み" value={labelDraft} onChange={(event) => setLabelDraft(event.currentTarget.value)} disabled={busy} />
-          <button className="button secondary small" type="submit" disabled={busy || !labelDraft.trim()}>追加</button>
-        </form>
+        <LabelInput key={`${projectDir}:${detail.id}:${program}`} projectDir={projectDir} program={program} leafId={detail.id} labels={detail.labels} busy={busy} onAdd={onAddLabel} />
       </section>
 
       <section className="annotation-section" aria-label="タグ">

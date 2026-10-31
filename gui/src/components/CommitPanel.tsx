@@ -227,7 +227,7 @@ export default function CommitPanel({
         <div><dt>ID</dt><dd className="mono">{detail.id.slice(0, 12)}</dd></div>
       </dl>
       <div className="section-target" ref={annotationSection} tabIndex={-1}>
-        <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
+        <CommitAnnotations projectDir={projectDir} program={program} detail={detail} tags={commitTags} busy={busy} {...annotations} />
       </div>
       <div className="section-target" ref={previewSection} tabIndex={-1}>
         <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} busy={busy} actions={previews} />
