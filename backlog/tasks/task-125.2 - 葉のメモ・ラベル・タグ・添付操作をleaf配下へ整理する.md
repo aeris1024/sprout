@@ -1,9 +1,10 @@
 ---
 id: TASK-125.2
-title: 葉のメモ・ラベル・タグ・添付操作をleaf配下へ整理する
+title: 葉のタグ操作をleaf配下へ整理する
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:23'
+updated_date: '2026-10-31 07:36'
 labels:
   - cli
   - usability
@@ -24,20 +25,14 @@ ordinal: 126000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-leafに属する補足情報の入口を統一する。機能の削減は行わず、現行操作を次の構文へ整理する。
-note -> leaf note show LEAF / set LEAF TEXT / delete LEAF
-label -> leaf label list LEAF / add LEAF LABEL / delete LEAF LABEL
-tag -> leaf tag list / create NAME [LEAF] / comment NAME TEXT / delete NAME
-thumbnail -> leaf thumbnail show LEAF / set LEAF IMAGE / delete LEAF / export LEAF --output FILE
-preview -> leaf preview list|add|replace|delete|export|order|edit|image。現在のpreview metadataはleaf preview editへ対応。
-プレビューの表示名・説明・代表指定・素材関連付け・順序・不変添付IDを保持する。代表プレビューとサムネイル、file coverを同じ機能へ変更しない。既存GUI機能の追加やプレビュー機能削減は含めない。
+タグ操作をleaf tag list / create NAME [LEAF] / comment NAME TEXT / delete NAMEへ整理する。タグの現在の参照・コメント・保護・削除復旧の意味を維持する。
+旧タスクのメモはTASK-125.11のleaf edit統合へ、サムネイルはTASK-125.12の個別操作と生成元の統合へ切り出した。プレビューとLabelはTASK-125.13の判断待ちであり、このタスクで新構文・機能維持/削減を確定または実装しない。決定までは既存の機能と呼び出しを保持する。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 メモ・ラベル・タグを正規のshow/set/list/add/create/comment/delete構文で管理でき、タグ作成の対象省略時は現在のブランチ先端を使う既存動作と作成コメント指定を保持する
-- [ ] #2 サムネイルの確認・登録・変更・削除・取り出しと既存画像制約、上書き確認・JSONを利用できる
-- [ ] #3 previewの8操作を新構文で利用でき、editで表示名・説明・代表指定・複数素材の関連を設定・解除できる
-- [ ] #4 添付置き換え時のID・メタ情報保持、表示順、100 MiB超の確認、失敗時の無変更、ゴミ箱復旧と競合拒否を保持する
-- [ ] #5 GUI向けimageの表示用データとJSON契約を維持し、関連する正規構文と拒否条件を自動テストで検証する
+- [ ] #1 leaf tag list/create/comment/deleteで現在のタグ機能を利用でき、対象省略時の現在ブランチ先端、作成コメント・コメントの解除を保持する
+- [ ] #2 タグ付き葉の保護、タグだけを削除する動作、ゴミ箱からの復旧と名前衝突時の拒否を保持する
+- [ ] #3 タグの成功・不正入力・衝突・JSON・serveを正規構文で検証し、list/create等の文字列もタグ名として扱える
+- [ ] #4 メモ・サムネイルは対応する統合タスクへ委ね、preview/LabelについてはTASK-125.13でのユーザー確認前にCLI・GUI・データを変更しない
 <!-- AC:END -->
