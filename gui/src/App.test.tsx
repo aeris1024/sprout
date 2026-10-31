@@ -976,6 +976,7 @@ describe("Sprout GUI operations", () => {
     const callsDuringWrite = mocks.runSprout.mock.calls.length;
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
     expect(screen.getByRole("region", { name })).toBe(region);
+    expect(screen.getByText("操作の実行中は葉を選べません。完了してから選んでください。")).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledTimes(callsDuringWrite);
     await act(async () => { finishWrite(panel === "trash" ? item : { ...preview, dry_run: false }); });
     await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
@@ -984,6 +985,95 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
     expect(screen.queryByRole("region", { name })).toBeNull();
     expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["show", commitEntry.id], "");
+  });
+
+  describe("concurrent leaf detail reads", () => {
+    const second = { ...commitEntry, id: "b".repeat(64), message: "Another design" };
+    const detail = (entry: typeof commitEntry) => ({ ...entry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+
+    async function openTwoLeaves(user: ReturnType<typeof userEvent.setup>) {
+      render(<App />);
+      mocks.open.mockResolvedValueOnce(project);
+      mockWorkspace(cleanStatus, [commitEntry, second]);
+      await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+      await screen.findByRole("heading", { name: "sprout-project" });
+    }
+
+    it.each(["success", "failure"])("keeps the latest detail when the previous request finishes with %s", async (result) => {
+      const user = userEvent.setup();
+      await openTwoLeaves(user);
+      let complete!: (value: unknown) => void;
+      let fail!: (error: unknown) => void;
+      mocks.runSprout.mockImplementationOnce(() => new Promise((resolve, reject) => { complete = resolve; fail = reject; }));
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      expect(screen.getByRole("region", { name: "葉の詳細を読み込み中" })).toBeTruthy();
+      expect(screen.queryByLabelText("操作中")).toBeNull();
+      for (const name of ["更新", "ファイル", "ゴミ箱", "保守", "保存", "設定"]) {
+        expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+      }
+      mocks.runSprout.mockResolvedValueOnce(detail(second));
+      await user.click(screen.getByRole("button", { name: "Another design" }));
+      expect(await within(screen.getByRole("region", { name: "選択中の葉" })).findByRole("heading", { name: "Another design" })).toBeTruthy();
+      await act(async () => { if (result === "success") complete(detail(commitEntry)); else fail({ code: "old_error", message: "stale failure", details: {} }); });
+      expect(within(screen.getByRole("region", { name: "選択中の葉" })).getByRole("heading", { name: "Another design" })).toBeTruthy();
+      expect(screen.queryByText("stale failure")).toBeNull();
+    });
+
+    it("ignores an earlier response even while the latest request is still pending", async () => {
+      const user = userEvent.setup();
+      await openTwoLeaves(user);
+      let first!: (value: unknown) => void;
+      let last!: (value: unknown) => void;
+      mocks.runSprout.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { last = resolve; }));
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      await user.click(screen.getByRole("button", { name: "Another design" }));
+      await act(async () => { first(detail(commitEntry)); });
+      expect(screen.queryByRole("region", { name: "選択中の葉" })).toBeNull();
+      expect(screen.getByRole("region", { name: "葉の詳細を読み込み中" })).toBeTruthy();
+      await act(async () => { last(detail(second)); });
+      expect(within(screen.getByRole("region", { name: "選択中の葉" })).getByRole("heading", { name: "Another design" })).toBeTruthy();
+    });
+
+    it("restarts a pending detail read after a toolbar refresh and ignores its previous response", async () => {
+      const user = userEvent.setup();
+      await openTwoLeaves(user);
+      let first!: (value: unknown) => void;
+      mocks.runSprout.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }));
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      mockWorkspace(cleanStatus, [commitEntry, second]);
+      mocks.runSprout.mockResolvedValueOnce({ ...detail(commitEntry), message: "Updated design" });
+      await user.click(screen.getByRole("button", { name: "更新" }));
+      expect(await within(await screen.findByRole("region", { name: "選択中の葉" })).findByRole("heading", { name: "Updated design" })).toBeTruthy();
+      await act(async () => { first(detail(commitEntry)); });
+      expect(within(screen.getByRole("region", { name: "選択中の葉" })).getByRole("heading", { name: "Updated design" })).toBeTruthy();
+    });
+
+    it.each(["close", "file", "project"])("discards a late error after changing the %s context", async (context) => {
+      const user = userEvent.setup();
+      await openTwoLeaves(user);
+      let fail!: (error: unknown) => void;
+      mocks.runSprout.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      if (context === "close") await user.click(screen.getByRole("button", { name: "詳細を閉じる" }));
+      else if (context === "file") await user.click(screen.getByRole("button", { name: "ファイル" }));
+      else {
+        mocks.open.mockResolvedValueOnce("C:\\work\\other-project");
+        mockWorkspace();
+        await user.click(screen.getByRole("button", { name: "プロジェクトを切り替え" }));
+        await user.click(screen.getByRole("button", { name: "フォルダを開く…" }));
+        await screen.findByRole("heading", { name: "other-project" });
+      }
+      await act(async () => { fail({ code: "old_error", message: "stale failure", details: {} }); });
+      expect(screen.queryByText("stale failure")).toBeNull();
+      expect(screen.queryByRole("region", { name: "葉の読み込みエラー" })).toBeNull();
+      expect(screen.queryByRole("region", { name: "葉の詳細を読み込み中" })).toBeNull();
+      if (context === "file") {
+        mocks.runSprout.mockResolvedValueOnce(detail(commitEntry));
+        await user.click(screen.getByRole("button", { name: "ファイル" }));
+        expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
+      }
+    });
   });
 
   describe("leaf detail load failure", () => {

@@ -121,9 +121,23 @@ function App() {
   const dragDropHandler = useRef<(payload: DragDropEvent) => void>(() => {});
   const [dragging, setDragging] = useState(false);
   const operationActive = useRef(false);
+  const detailRead = useRef<{ path: string; id: string; program: string } | null>(null);
   const operationsStarted = useRef(0);
   const focusHandler = useRef<() => void>(() => {});
   const focusRefresh = useRef({ running: false, startedAt: 0, failed: false, timer: undefined as ReturnType<typeof setTimeout> | undefined });
+
+  useEffect(() => {
+    const read = detailRead.current;
+    const leafVisible = selection?.kind === "commit" && !filesOpen && !trashOpen && !maintenanceOpen && !comparison;
+    if (read && (read.path !== projectDir || read.program !== sproutProgram || !leafVisible || selection?.id !== read.id || busy)) {
+      detailRead.current = null;
+    }
+    // A panel switch or operation can cancel a pending read. Fetch again if that leaf becomes visible.
+    if (!detailRead.current && !busy && projectDir && leafVisible && commitDetail?.id !== selection.id && commitLoadError?.id !== selection.id) {
+      selectCommit(selection.id);
+    }
+  }, [projectDir, sproutProgram, selection, filesOpen, trashOpen, maintenanceOpen, comparison, busy]);
+  useEffect(() => () => { detailRead.current = null; }, []);
 
   useEffect(() => {
     void loadSettings()
@@ -138,6 +152,7 @@ function App() {
   /** Run one operation at a time; resolves true only when it completed without an error. */
   async function execute(operation: () => Promise<void>): Promise<boolean> {
     if (operationActive.current) return false;
+    detailRead.current = null;
     operationActive.current = true;
     operationsStarted.current += 1;
     setBusy(true);
@@ -188,6 +203,7 @@ function App() {
   }
 
   async function loadProject(path: string) {
+    detailRead.current = null;
     setComparison(null);
     setInitCandidate("");
     setCommitDetail(null);
@@ -453,23 +469,29 @@ function App() {
   }
 
   function selectCommit(commitId: string) {
-    if (!projectDir || operationActive.current) return;
+    if (!projectDir) return;
+    if (operationActive.current) {
+      setNotice({ code: "operation_in_progress", message: "操作の実行中は葉を選べません。完了してから選んでください。", details: {}, kind: "warning" });
+      return;
+    }
     setTrashOpen(false);
     setMaintenanceOpen(false);
     if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
     setSelection({ kind: "commit", id: commitId });
     setFilesOpen(false);
     setCommitLoadError(null);
-    void execute(async () => {
-      try {
-        setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
-      } catch (error) {
-        // Stays in the panel: the notice alone would vanish and leave it looking as if it were loading.
+    const read = { path: projectDir, id: commitId, program: sproutProgram };
+    detailRead.current = read;
+    void runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram)
+      .then((detail) => {
+        if (detailRead.current === read) setCommitDetail(detail);
+      })
+      .catch((error) => {
+        if (detailRead.current !== read) return;
         const cliError = normalizeCliError(error);
         setCommitLoadError({ id: commitId, error: cliError });
-        throw cliError;
-      }
-    });
+        setNotice({ ...cliError, kind: "error" });
+      });
   }
 
   function selectBud(budId: string) {
@@ -537,6 +559,7 @@ function App() {
   }
 
   function closeSelection() {
+    detailRead.current = null;
     setSelection(null);
     setCommitDetail(null);
     setCommitLoadError(null);
@@ -1106,7 +1129,14 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) {
-        if (commitLoadError?.id !== selection.id) return <p className="muted">読み込み中…</p>;
+        if (commitLoadError?.id !== selection.id) return (
+          <section className="panel-section" aria-label="葉の詳細を読み込み中" aria-busy="true">
+            <div className="panel-heading">
+              <p className="muted">読み込み中…</p>
+              <button className="icon-button" onClick={closeSelection} aria-label="詳細を閉じる">×</button>
+            </div>
+          </section>
+        );
         return (
           <section className="panel-section" aria-label="葉の読み込みエラー">
             <div className="panel-heading">
