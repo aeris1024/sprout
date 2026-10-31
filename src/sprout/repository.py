@@ -1620,6 +1620,10 @@ class Repository:
                         return None, "cover_animated"
                     image.load()
                     oriented = ImageOps.exif_transpose(image)
+                    if oriented.mode in {"I", "I;16", "I;16L", "I;16B"}:
+                        # PNG integer grayscale samples use the full 16-bit range.
+                        # Direct RGB conversion clips everything above 255 to white.
+                        oriented = oriented.convert("I").point(lambda value: value / 257 + 0.5).convert("L")
                     oriented.thumbnail((COVER_SIDE, COVER_SIDE), Image.Resampling.LANCZOS)
                     if oriented.mode in {"RGBA", "LA", "PA"} or "transparency" in oriented.info:
                         output = directory / "cover.png"

@@ -58,6 +58,100 @@ def test_transparent_cover_stays_transparent(tmp_path):
     assert image.convert('RGBA').getpixel((0, 0))[3] == 0
 
 
+@pytest.mark.parametrize('value', [0, 1, 255, 256, 30000, 32768, 65535])
+@pytest.mark.parametrize('size', [(64, 64), (1024, 768)])
+def test_16_bit_grayscale_cover_preserves_brightness(tmp_path, value, size):
+    repo, poster, _ = project(tmp_path)
+    png(poster, size, value, 'I;16')
+    assert repo.set_cover(poster)[2] is None
+
+    result = repo.commit('16-bit grayscale')
+
+    assert result.cover.applied and result.cover.reason is None
+    attachment, image = thumbnail_image(repo, result.commit_id)
+    expected = round(value * 255 / 65535)
+    assert attachment.media_type == 'image/jpeg'
+    assert image.convert('RGB').getpixel((0, 0)) == pytest.approx((expected,) * 3, abs=1)
+    assert max(image.size) == min(max(size), COVER_SIDE)
+
+
+def test_16_bit_cover_preserves_tonal_range_when_resized(tmp_path):
+    repo, poster, _ = project(tmp_path)
+    source = Image.new('I;16', (1200, 800))
+    for index, value in enumerate([0, 30000, 65535]):
+        source.paste(Image.new('I;16', (400, 800), value), (index * 400, 0))
+    source.save(poster, format='PNG')
+    repo.set_cover(poster)
+
+    _, image = thumbnail_image(repo, repo.commit('tonal range').commit_id)
+
+    for fraction, expected in [(1 / 6, 0), (1 / 2, 117), (5 / 6, 255)]:
+        assert image.convert('RGB').getpixel((int(image.width * fraction), image.height // 2)) == pytest.approx(
+            (expected,) * 3, abs=1,
+        )
+
+
+def test_apply_16_bit_cover_uses_each_leafs_original_brightness(tmp_path):
+    repo, poster, _ = project(tmp_path)
+    png(poster, (800, 600), 30000, 'I;16')
+    middle = repo.commit('middle gray').commit_id
+    png(poster, (64, 64), 65535, 'I;16')
+    white = repo.commit('white').commit_id
+    png(poster, (64, 64), 0, 'I;16')
+    repo.set_cover(poster)
+
+    assert repo.apply_cover(dry_run=True)['applied'] == [middle, white]
+    assert repo.thumbnail(middle) is None
+    assert repo.apply_cover()['applied'] == [middle, white]
+    for commit, expected in [(middle, 117), (white, 255)]:
+        _, image = thumbnail_image(repo, commit)
+        assert image.convert('RGB').getpixel((0, 0)) == pytest.approx((expected,) * 3, abs=1)
+    assert repo.doctor().ok
+
+
+@pytest.mark.parametrize('mode,format,color,expected', [
+    ('RGB', 'PNG', (10, 120, 200), (10, 120, 200, 255)),
+    ('RGBA', 'PNG', (10, 120, 200, 123), (10, 120, 200, 123)),
+    ('LA', 'PNG', (120, 123), (120, 120, 120, 123)),
+    ('P', 'PNG', 1, (10, 120, 200, 255)),
+    ('L', 'PNG', 120, (120, 120, 120, 255)),
+    ('1', 'PNG', 1, (255, 255, 255, 255)),
+    ('CMYK', 'JPEG', (0, 128, 255, 0), (255, 127, 0, 255)),
+    ('RGB', 'WEBP', (10, 120, 200), (10, 120, 200, 255)),
+    ('RGB', 'BMP', (10, 120, 200), (10, 120, 200, 255)),
+])
+def test_cover_keeps_supported_formats_colors(tmp_path, mode, format, color, expected):
+    repo, poster, _ = project(tmp_path)
+    source = Image.new(mode, (64, 64), color)
+    if mode == 'P':
+        source.putpalette([0, 0, 0, 10, 120, 200] + [0] * (256 * 3 - 6))
+    source.save(poster, format=format, **({'lossless': True} if format == 'WEBP' else {}))
+    assert repo.set_cover(poster)[2] is None
+
+    result = repo.commit('supported image')
+
+    assert result.cover.applied
+    _, image = thumbnail_image(repo, result.commit_id)
+    assert image.convert('RGBA').getpixel((0, 0)) == pytest.approx(expected, abs=2)
+
+
+def test_cover_conversion_failure_is_reported_without_a_thumbnail(tmp_path, monkeypatch):
+    repo, poster, _ = project(tmp_path)
+    png(poster, (64, 64), 30000, 'I;16')
+    repo.set_cover(poster)
+    convert = Image.Image.convert
+
+    def fail_integer_conversion(image, *args, **kwargs):
+        if image.mode == 'I;16':
+            raise ValueError('cannot convert this image')
+        return convert(image, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, 'convert', fail_integer_conversion)
+    result = repo.commit('saved without thumbnail')
+    assert (result.cover.applied, result.cover.reason) == (False, 'cover_unreadable')
+    assert repo.thumbnail(result.commit_id) is None
+
+
 def test_explicit_thumbnail_wins(tmp_path):
     repo, poster, _ = project(tmp_path)
     repo.set_cover(poster)
