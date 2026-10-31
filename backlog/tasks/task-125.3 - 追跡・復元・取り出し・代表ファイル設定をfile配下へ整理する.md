@@ -1,10 +1,11 @@
 ---
 id: TASK-125.3
 title: 追跡・差分・部分復元・取り出しをfile配下へ整理する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:23'
-updated_date: '2026-10-31 09:33'
+updated_date: '2026-10-31 11:21'
 labels:
   - cli
   - usability
@@ -38,9 +39,27 @@ file moveの構造化JSON対応は現在の旧moveに不足しているため、
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 track/untrack/list/moveで追跡対象を管理でき、untrackは作業ファイルを削除せずmoveは素材IDを保持する。file move --jsonは移動前後のパスを返し、失敗は共通形式の構造化エラーにする
-- [ ] #2 file diffの引数なし・1件・2件の比較対象を維持する。素材ID履歴はleaf listへの統合タスク、自動生成元はleaf thumbnailへの統合タスクへ委ね、file history/file coverを別の正規入口にしない
-- [ ] #3 file restoreは必須のPATHに限る部分復元となり、選択外のファイル・現在位置・ブランチ先端を変更せず、既存のdiscard時のゴミ箱保存を保持する
-- [ ] #4 file exportとcatで原本・相対構造・更新日時・バイナリ標準出力の既存動作、出力先の安全検査、force指定を保持する
-- [ ] #5 パス省略・オプションに見えるパス・衝突・上書き拒否・JSONを含め新構文を検証し、V1の保存データを変更する移行を必要としない
+- [x] #1 track/untrack/list/moveで追跡対象を管理でき、untrackは作業ファイルを削除せずmoveは素材IDを保持する。file move --jsonは移動前後のパスを返し、失敗は共通形式の構造化エラーにする
+- [x] #2 file diffの引数なし・1件・2件の比較対象を維持する。素材ID履歴はleaf listへの統合タスク、自動生成元はleaf thumbnailへの統合タスクへ委ね、file history/file coverを別の正規入口にしない
+- [x] #3 file restoreは必須のPATHに限る部分復元となり、選択外のファイル・現在位置・ブランチ先端を変更せず、既存のdiscard時のゴミ箱保存を保持する
+- [x] #4 file exportとcatで原本・相対構造・更新日時・バイナリ標準出力の既存動作、出力先の安全検査、force指定を保持する
+- [x] #5 パス省略・オプションに見えるパス・衝突・上書き拒否・JSONを含め新構文を検証し、V1の保存データを変更する移行を必要としない
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Register file track/untrack/diff/export/cat with existing callbacks; add file list using tracking status and move JSON with old/new paths; make file restore require at least one path. Verify identity, option-like paths, comparisons, partial discard recovery, export/cat bytes and timestamps, rejection safety and structured serve errors while retaining temporary legacy calls.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added canonical file track/untrack/list/move/diff/restore/export/cat. file list defaults to tracked and untracked arrays and allows either filter; file move JSON returns old_path/new_path. file restore requires one or more paths and retains existing partial restore safeguards and discard recovery. Verified identity across moves, collision rejection, option-like paths with --, all diff arities, untouched unselected files/current position, archive-independent export bytes/timestamps/force and binary cat. tests/test_file_cli_groups.py tests/test_cli_groups.py tests/test_cli.py tests/test_serve.py: 88 passed; git diff --check passed. No repository/schema changes.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Organized file operations under file with structured move output and required-path partial restore. Verified 88 CLI/serve regression tests, preserving file identities, recovery, timestamps, raw bytes and refusal safety.
+<!-- SECTION:FINAL_SUMMARY:END -->

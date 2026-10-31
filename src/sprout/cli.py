@@ -575,6 +575,7 @@ def init(
     typer.echo(f"Initialized Sprout project in {created.root}")
 
 
+@file_app.command(name="track")
 @app.command()
 def track(
     paths: Annotated[list[Path], typer.Argument(help="Files or directories to track")],
@@ -594,6 +595,7 @@ def track(
         typer.echo(f"track  {path}")
 
 
+@file_app.command(name="untrack")
 @app.command()
 def untrack(
     paths: Annotated[list[Path], typer.Argument(help="Files or directories to stop tracking")],
@@ -613,14 +615,45 @@ def untrack(
         typer.echo(f"untrack  {path}")
 
 
+@file_app.command(name="move")
 @app.command()
 def move(
     source: Annotated[Path, typer.Argument(help="Tracked file to move")],
     destination: Annotated[Path, typer.Argument(help="New path for the tracked file")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
     """Move a tracked file and update its tracked path."""
     old, new = repo().move(source, destination)
+    if json_output:
+        _echo_json({"old_path": old, "new_path": new})
+        return
     typer.echo(f"move  {old} -> {new}")
+
+
+@file_app.command(name="list")
+def file_list(
+    tracked: Annotated[bool, typer.Option("--tracked", help="List tracked files")] = False,
+    untracked: Annotated[bool, typer.Option("--untracked", help="List untracked files")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List tracked and untracked files; show both when no filter is given."""
+    repository = repo()
+    if not tracked and not untracked:
+        tracked = untracked = True
+    result = {}
+    if tracked:
+        result['tracked'] = sorted(repository.tracked())
+    if untracked:
+        result['untracked'] = repository.untracked_files()
+    if json_output:
+        _echo_json(result)
+        return
+    for kind, paths in result.items():
+        typer.echo(f"{kind.capitalize()} files:")
+        for path in paths:
+            typer.echo(f"  {path}")
+        if not paths:
+            typer.echo("  (none)")
 
 
 def _echo_branch_position(
@@ -892,6 +925,7 @@ def tree(
         typer.echo(line)
 
 
+@file_app.command(name="diff")
 @app.command()
 def diff(
     commit_a: Annotated[
@@ -1940,6 +1974,20 @@ def restore(
         typer.echo(f"Restored {commit_id[:12]} (branch tip unchanged)")
 
 
+@file_app.command(name="restore")
+def file_restore(
+    commit: Annotated[str, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)],
+    paths: Annotated[list[Path], typer.Argument(help="Files or directories to restore; at least one path is required")],
+    discard: Annotated[
+        bool, typer.Option("--discard", help="Discard changes on these paths, keeping them in the trash; leave other files untouched"),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Restore selected paths without moving the current position or branch tip."""
+    restore(commit=commit, paths=paths, discard=discard, json_output=json_output)
+
+
+@file_app.command(name="export")
 @app.command(name="export")
 def export_command(
     commit: Annotated[
@@ -2044,6 +2092,7 @@ def archive_command(
     typer.echo(f"Archived {plan.commits} commit(s) to {plan.output}")
 
 
+@file_app.command(name="cat")
 @app.command(name="cat")
 def cat_command(
     commit: Annotated[
