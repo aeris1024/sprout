@@ -130,6 +130,13 @@ export function badgeWidth(text: string, measure: TextMeasure = estimateChipText
   return Math.ceil(measure(text)) + CHIP_FONT.padding;
 }
 
+/** Top-left corner of the 「いまここ」 badge: at the leaf's corner, or above the first tag chip when they would touch. */
+export function hereBadgePosition(leafX: number, leafY: number, firstTag: string | undefined, measure: TextMeasure = estimateChipText): { x: number; y: number } {
+  const x = leafX + MAP.leafWidth + 6 - badgeWidth("いまここ", measure);
+  const tagRight = firstTag === undefined ? -Infinity : leafX - 6 + tagChip(firstTag, measure).width;
+  return { x, y: leafY - (tagRight + 4 > x ? 30 : 10) };
+}
+
 /** Label and width of a leaf's tag chip; names that do not fit the leaf end with an ellipsis. */
 export function tagChip(tag: string, measure: TextMeasure = estimateChipText): { text: string; width: number } {
   const maxWidth = MAP.leafWidth - 12;

@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { BRANCH_LABEL, LABEL_LINE, MAP, branchLabelText, estimateChipText, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip } from "./sproutMap";
+import { BRANCH_LABEL, LABEL_LINE, MAP, badgeWidth, branchLabelText, estimateChipText, hereBadgePosition, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip } from "./sproutMap";
+
+describe("here badge", () => {
+  const leafX = 100;
+  const leafY = 200;
+  /** The first chip is 18px tall at leafY - 9 and starts at leafX - 6. */
+  function overlapsChip(tag: string): boolean {
+    const badge = hereBadgePosition(leafX, leafY, tag);
+    const chipRight = leafX - 6 + tagChip(tag).width;
+    const apart = badge.x >= chipRight || badge.x + badgeWidth("いまここ") <= leafX - 6 || badge.y + 18 <= leafY - 9 || badge.y >= leafY + 9;
+    return !apart;
+  }
+
+  it("stays on the leaf corner when nothing is in the way", () => {
+    expect(hereBadgePosition(leafX, leafY, undefined).y).toBe(leafY - 10);
+    expect(hereBadgePosition(leafX, leafY, "v1").y).toBe(leafY - 10);
+  });
+
+  it.each(["v1", "submitted", "very-long-submitted-tag-name", "提出版の最終確認用タグ"])("does not overlap the tag chip %s", (tag) => {
+    expect(overlapsChip(tag)).toBe(false);
+  });
+
+  it("stays inside the room above the stem", () => {
+    const stalkAndLeaf = MAP.stalk + MAP.leafHeight + MAP.caption;
+    expect(leafY - hereBadgePosition(leafX, leafY, "very-long-submitted-tag-name").y + stalkAndLeaf).toBeLessThanOrEqual(MAP.above);
+  });
+});
 import type { BranchInfo, CommitGraph, GraphCommit, GraphTag } from "./sprout";
 
 function commit(id: string, parent: string | null, branch: string, minute: number): GraphCommit {

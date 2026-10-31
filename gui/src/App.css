@@ -20,6 +20,7 @@
   --empty-leaf: #eef2f5;
   --danger: #a32d2d;
   --danger-bg: #fcebeb;
+  --on-danger: #ffffff;
   --success: #2c7564;
   --success-bg: #e3f3ee;
   --warning: #8a5a0b;
@@ -77,6 +78,7 @@
     --empty-leaf: #263240;
     --danger: #f09595;
     --danger-bg: #3a1717;
+    --on-danger: #2a0f0f;
     --success: #7fd3bd;
     --success-bg: #16302a;
     --warning: #e9a94e;
@@ -123,7 +125,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .chip { font-size: 12px; padding: 2px 10px; border-radius: var(--radius); background: var(--chip-bg); color: var(--chip-ink); }
 .chip.unsaved { background: var(--bud-bg); color: var(--bud); }
 
-.button { border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 14px; font-weight: 600; background: var(--surface); }
+.button { border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 14px; font-weight: 600; background: var(--surface); white-space: nowrap; }
 .button:hover:not(:disabled) { border-color: var(--ink-2); }
 .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .button.secondary { background: var(--surface); }
@@ -132,7 +134,10 @@ button:disabled { cursor: wait; opacity: .55; }
 .button.large { padding: 11px 22px; }
 .button.wide { width: 100%; }
 .button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+/* Filled: for what cannot be undone. Outlined danger can still be restored from the trash. */
+.button.destructive { color: var(--on-danger); border-color: var(--danger); background: var(--danger); }
 .icon-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: transparent; }
+.icon-button.small { width: 26px; height: 26px; padding: 0; font-size: 12px; }
 .text-button { border: 0; background: transparent; color: var(--current); padding: 4px 6px; }
 .action-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -283,7 +288,7 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .mono { font-family: ui-monospace, "Cascadia Mono", monospace; }
 .panel-actions { display: grid; gap: 8px; }
 .commit-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.commit-actions .button { padding-inline: 8px; }
+.commit-actions .button { padding-inline: 8px; white-space: normal; }
 .span-all { grid-column: 1 / -1; }
 /* A flex column: a sticky grid item could not leave its own row. */
 .commit-panel { display: flex; flex-direction: column; }
@@ -329,11 +334,11 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 }
 /* Snapshot comparison keeps long paths and commit names inside the side panel. */
 .field select { min-width: 0; width: 100%; padding: 8px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
-.panel-section[aria-label="スナップショットの比較"] { display: grid; gap: 12px; }
-.panel-section[aria-label="スナップショットの比較"] .file-list { margin: 0; padding: 0; list-style: none; }
-.panel-section[aria-label="スナップショットの比較"] .file-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; }
-.panel-section[aria-label="スナップショットの比較"] .file-row span { overflow-wrap: anywhere; }
-.panel-section[aria-label="スナップショットの比較"] .file-row small { grid-column: 2; color: var(--muted); }
+.panel-section[aria-label="葉の比較"] { display: grid; gap: 12px; }
+.panel-section[aria-label="葉の比較"] .file-list { margin: 0; padding: 0; list-style: none; }
+.panel-section[aria-label="葉の比較"] .file-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; }
+.panel-section[aria-label="葉の比較"] .file-row span { overflow-wrap: anywhere; }
+.panel-section[aria-label="葉の比較"] .file-row small { grid-column: 2; color: var(--muted); }
 .snapshot-files { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
 .snapshot-file-list { list-style: none; padding: 0; max-height: 280px; overflow: auto; }
 .snapshot-file { display: flex; align-items: baseline; gap: 8px; margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
@@ -343,14 +348,27 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .preview-panel { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
 .preview-paste { margin: 12px 0; padding: 12px; border: 1px dashed var(--line); border-radius: 6px; font-size: 12px; color: var(--muted); }
 .preview-paste:focus { outline: 2px solid var(--selected); }
-.preview-list { padding-left: 20px; }
-.preview-list li { margin: 12px 0; overflow-wrap: anywhere; }
-.preview-name { margin: 4px 0; font-size: 13px; }
+.preview-add { margin-top: 2px; }
+.preview-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.preview-list li { display: grid; gap: 6px; padding: 10px; border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
+.preview-head { display: flex; align-items: flex-start; gap: 8px; }
+.preview-name { flex: 1; min-width: 0; margin: 2px 0; font-size: 13px; font-weight: 600; }
+.preview-order { flex: none; display: flex; gap: 4px; }
+.panel-details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.panel-details > :not(summary) { margin-top: 6px; }
+.preview-metadata { display: grid; gap: 8px; }
+.preview-metadata .snapshot-file { margin: 0; }
+.preview-metadata .button { justify-self: start; }
+.preview-metadata input:not([type="checkbox"]) { color: var(--ink); }
+.preview-metadata fieldset { min-width: 0; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
+.preview-metadata legend { padding: 0 4px; color: var(--muted); }
 .preview-image { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .preview-image h4 { margin: 4px 0; overflow-wrap: anywhere; }
 .preview-image img { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; object-fit: contain; background: repeating-conic-gradient(#eee 0% 25%, white 0% 50%) 0 / 16px 16px; }
 
-.trash-item { border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
-.trash-item h4 { margin: 4px 0; }
+.trash-item { display: grid; gap: 6px; border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
+.trash-item h4 { margin: 0; }
+.trash-kind { margin: 0; font-size: 12px; }
+.trash-item dl { margin: 0; font-size: 12px; }
 .trash-item dd { margin-left: 12px; }
 .trash-item dd p { white-space: pre-wrap; }

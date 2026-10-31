@@ -41,8 +41,8 @@ export default function ComparePanel({ projectDir, program, commits, source, tar
     }
   }
   const valid = commits.some((c) => c.id === source) && commits.some((c) => c.id === target);
-  return <section className="panel-section" aria-label="スナップショットの比較">
-    <div className="panel-heading"><h3>スナップショットの比較</h3><button className="icon-button" aria-label="比較を閉じる" onClick={onClose}>×</button></div>
+  return <section className="panel-section" aria-label="葉の比較">
+    <div className="panel-heading"><h3>葉の比較</h3><button className="icon-button" aria-label="比較を閉じる" onClick={onClose}>×</button></div>
     <p className="panel-copy">比較元 → 比較先のファイルの変化を表示します。マップの葉を選ぶと比較先を変更できます。</p>
     {(["比較元", "比較先"] as const).map((label, index) => <label className="field" key={label}>{label}
       <select aria-label={label} value={index === 0 ? source : target} disabled={busy || loading} onChange={(event) => onChange(index === 0 ? event.target.value : source, index === 1 ? event.target.value : target)}>

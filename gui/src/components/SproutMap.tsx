@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
-import { BRANCH_LABEL, LABEL_LINE, MAP, badgeWidth, budX, branchLabelText, estimateChipText, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
+import { BRANCH_LABEL, LABEL_LINE, MAP, badgeWidth, budX, branchLabelText, estimateChipText, hereBadgePosition, laneColor, lanePath, layoutSproutMap, leafCaption, pendingPath, tagChip, type MapLeaf, type TextMeasure } from "../lib/sproutMap";
 import { loadThumbnailDataUrl, thumbnailCacheKey } from "../lib/thumbnails";
 import { formatLocalTime, type Bud, type CommitAttachment, type CommitGraph } from "../lib/sprout";
 
@@ -287,7 +287,7 @@ export default function SproutMap({
   if (layout.leaves.length === 0) {
     return (
       <div className="map-empty">
-        <p className="eyebrow">NO SNAPSHOTS YET</p>
+        <p className="eyebrow">まだ葉がありません</p>
         <p>最初の保存をすると、ここに芽が出ます。</p>
         {layout.rootBuds.length > 0 && (
           <div className="root-bud-list" aria-label="最初の保存前のつぼみ">
@@ -480,7 +480,7 @@ export default function SproutMap({
                   );
                 })}
                 {leafMarks(leaf) && <Badge className="marks-badge" x={leaf.leafX + MAP.leafWidth - 4 - badgeWidth(leafMarks(leaf), measureChip)} y={top + MAP.leafHeight - 22} text={leafMarks(leaf)} measure={measureChip} />}
-                {here && <Badge className="here-badge" x={leaf.leafX + MAP.leafWidth + 6 - badgeWidth("いまここ", measureChip)} y={top - 10} text="いまここ" measure={measureChip} />}
+                {here && <Badge className="here-badge" {...hereBadgePosition(leaf.leafX, top, leaf.tags[0], measureChip)} text="いまここ" measure={measureChip} />}
                 {selected && <Badge className="selected-badge" x={leaf.leafX - 6} y={top + MAP.leafHeight + MAP.caption - 2} text="選択中" measure={measureChip} />}
               </g>
             );
@@ -509,7 +509,7 @@ export default function SproutMap({
               </text>
               {pending.fork && (
                 <text className="unsaved-note" x={pending.x} y={pending.leafY + BAND_HEIGHT + (MAP.leafHeight + MAP.caption - BAND_HEIGHT) / 2 + 14} textAnchor="middle">
-                  保存すると新しい枝
+                  保存で新ブランチ
                 </text>
               )}
               {unsavedSelected && <Badge className="selected-badge" x={pending.leafX - 6} y={pending.leafY + MAP.leafHeight + MAP.caption - 2} text="選択中" measure={measureChip} />}

@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import TrashPanel from "./TrashPanel";
-import type { TrashItem } from "../lib/sprout";
+import { formatLocalTime, type TrashItem } from "../lib/sprout";
 
 afterEach(cleanup);
 
@@ -26,6 +26,25 @@ it("names deleted notes, tags and branches", () => {
   expect(screen.getByText("メモの削除")).toBeTruthy();
   expect(screen.getByText("タグの削除")).toBeTruthy();
   expect(screen.getByText("ブランチの削除")).toBeTruthy();
+});
+
+it("shows local times and keeps internal IDs folded away", () => {
+  panel([item("commit", "葉", [{ table: "commits", before: { updated_at: "2026-10-30T01:00:00+00:00", parent_id: "p".repeat(32) }, after: null }])]);
+  const article = screen.getByRole("article");
+  expect(screen.getByText(`ゴミ箱へ移動: ${formatLocalTime("2026-10-30T00:00:00.000000+00:00")}`)).toBeTruthy();
+  expect(screen.getByText(`更新日時: ${formatLocalTime("2026-10-30T01:00:00+00:00")}`)).toBeTruthy();
+  expect(screen.getByText(`親の葉: ${"p".repeat(12)}`)).toBeTruthy();
+  expect(article.textContent).not.toContain("+00:00");
+
+  const ids = screen.getByText(/復旧ID: commit-id/).closest("details") as HTMLDetailsElement;
+  expect(ids.open).toBe(false);
+  expect(ids.textContent).toContain("対象: target");
+});
+
+it("sets the irreversible purge apart from the other actions", () => {
+  panel([item("commit", "葉")]);
+  expect(screen.getByRole("button", { name: "葉を完全削除" }).className).toContain("destructive");
+  expect(screen.getByRole("button", { name: "葉を復旧" }).className).not.toContain("destructive");
 });
 
 it("describes the files kept with a bud", () => {

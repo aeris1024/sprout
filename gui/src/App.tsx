@@ -66,14 +66,14 @@ function isTextField(target: EventTarget | null): boolean {
 
 /** Describe a delete-commit dry run so the confirmation lists every reference it moves. */
 function deletionSummary(preview: CommitDeletion): string {
-  const parent = preview.parent_id ? `親の芽（${shortId(preview.parent_id)}）` : "コミットなし";
-  const lines = [`スナップショット「${preview.commit.message}」（${shortId(preview.commit.id)}）をゴミ箱へ移します。参照が変更される前ならゴミ箱から復旧できます。`];
+  const parent = preview.parent_id ? `親の葉（${shortId(preview.parent_id)}）` : "葉のない状態";
+  const lines = [`葉「${preview.commit.message}」（${shortId(preview.commit.id)}）をゴミ箱へ移します。参照が変更される前ならゴミ箱から復旧できます。`];
   if (preview.moved_branches.length > 0) {
     lines.push(`ブランチ ${preview.moved_branches.map((branch) => branch.name).join(", ")} は${parent}へ移ります。`);
   }
   if (preview.moved_current) lines.push(`いまここも${parent}へ移ります。作業ファイルは変わらず、未保存の変更として残ります。`);
   if (preview.reconnected_children.length > 0) {
-    lines.push(`子の芽 ${preview.reconnected_children.length}件は${preview.parent_id ? "親の芽へつなぎ直されます" : "根になります"}。`);
+    lines.push(`子の葉 ${preview.reconnected_children.length}件は${preview.parent_id ? "親の葉へつなぎ直されます" : "根になります"}。`);
   }
   if (preview.rebased_buds.length > 0) lines.push(`つぼみ ${preview.rebased_buds.length}件の起点は${parent}へ付け替わります。`);
   if (preview.reclaimable_objects.length > 0) {
@@ -417,7 +417,7 @@ function App() {
     if (operationActive.current) return;
     void open({
       multiple: false,
-      title: "コミットのサムネイルを選択",
+      title: "葉のサムネイルを選択",
       filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
     }).then((selected) => {
       if (typeof selected === "string") replaceThumbnailPath(selected);
@@ -428,7 +428,7 @@ function App() {
     if (!projectDir) return;
     const message = commitMessage.trim();
     if (!message) {
-      setNotice({ code: "message_required", message: "コミットメッセージを入力してください", details: {}, kind: "warning" });
+      setNotice({ code: "message_required", message: "メッセージを入力してください", details: {}, kind: "warning" });
       return;
     }
     void execute(async () => {
@@ -440,8 +440,8 @@ function App() {
       await fetchWorkspace(projectDir);
       setSelection(null);
       const saved = result.created_branch
-        ? `新しい枝 ${result.branch} を作り、${shortId(result.id)} を保存しました`
-        : `コミット ${shortId(result.id)} を作成しました`;
+        ? `新しいブランチ ${result.branch} を作り、${shortId(result.id)} を保存しました`
+        : `葉 ${shortId(result.id)} を保存しました`;
       const noCover = result.cover && !result.cover.applied;
       setNotice({
         code: "committed",
@@ -511,7 +511,7 @@ function App() {
   function deleteBranch(branchId: string) {
     const branch = graph.branches.find((item) => item.id === branchId);
     if (!projectDir || !branch || operationActive.current) return;
-    void confirmDialog(`ブランチ ${branch.name} を削除します。この枝のスナップショットは削除されず、「削除済みブランチ由来」として残ります。ブランチはゴミ箱から戻せます。続行しますか？`, {
+    void confirmDialog(`ブランチ ${branch.name} を削除します。このブランチの葉は削除されず、「削除済みブランチ由来」として残ります。ブランチはゴミ箱から戻せます。続行しますか？`, {
       title: "ブランチを削除",
       kind: "warning",
       okLabel: "削除",
@@ -583,7 +583,7 @@ function App() {
 
   function deleteTag(commitId: string, name: string) {
     if (!projectDir || operationActive.current) return;
-    void confirmDialog(`タグ ${name} を削除します。スナップショットは削除されません。タグはゴミ箱から戻せます。続行しますか？`, {
+    void confirmDialog(`タグ ${name} を削除します。葉は削除されません。タグはゴミ箱から戻せます。続行しますか？`, {
       title: "タグを削除",
       kind: "warning",
       okLabel: "削除",
@@ -597,7 +597,7 @@ function App() {
     if (!projectDir || operationActive.current) return;
     void open({
       multiple: false,
-      title: "コミットのサムネイルを選択",
+      title: "葉のサムネイルを選択",
       filters: [{ name: "画像", extensions: ["png", "jpg", "jpeg", "webp"] }],
     }).then((selected) => {
       if (typeof selected !== "string") return;
@@ -688,14 +688,14 @@ function App() {
     if (!projectDir) return;
     const normalized = message.trim();
     if (!normalized) {
-      setNotice({ code: "message_required", message: "コミットメッセージを入力してください", details: {}, kind: "warning" });
+      setNotice({ code: "message_required", message: "メッセージを入力してください", details: {}, kind: "warning" });
       return;
     }
     void execute(async () => {
       await runSprout(projectDir, ["message", commitId, normalized], sproutProgram);
       await fetchWorkspace(projectDir);
       setCommitDetail(await runSprout<CommitDetail>(projectDir, ["show", commitId], sproutProgram));
-      setNotice({ code: "message_updated", message: `${shortId(commitId)} のコミットメッセージを変更しました`, details: { commit_id: commitId }, kind: "success" });
+      setNotice({ code: "message_updated", message: `${shortId(commitId)} のメッセージを変更しました`, details: { commit_id: commitId }, kind: "success" });
     });
   }
 
@@ -754,8 +754,8 @@ function App() {
       setNotice({
         code: "branch_created",
         message: result.bud
-          ? `未保存の変更をつぼみに残して ${shortId(commitId)} から枝 ${name} を伸ばしました`
-          : `${shortId(commitId)} から枝 ${name} を伸ばしました`,
+          ? `未保存の変更をつぼみに残して ${shortId(commitId)} からブランチ ${name} を作りました`
+          : `${shortId(commitId)} からブランチ ${name} を作りました`,
         details: { name },
         kind: "success",
       });
@@ -1003,7 +1003,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       await runSprout<CommitDeletion>(projectDir, ["delete-commit", commitId, "--yes"], sproutProgram);
       await fetchWorkspace(projectDir);
       closeSelection();
-      setNotice({ code: "commit_deleted", message: `スナップショット ${shortId(commitId)} を削除しました`, details: { commit_id: commitId }, kind: "success" });
+      setNotice({ code: "commit_deleted", message: `葉 ${shortId(commitId)} を削除しました`, details: { commit_id: commitId }, kind: "success" });
     });
   }
 
@@ -1199,9 +1199,9 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       {!projectDir && (
         <main className="welcome">
           <div className="welcome-card">
-            <p className="eyebrow">WELCOME TO SPROUT</p>
+            <p className="eyebrow">はじめに</p>
             <h2>制作データの芽を、静かに育てる。</h2>
-            <p>フォルダを選ぶと、スナップショットを芽のように並べて行き来できます。</p>
+            <p>フォルダを選ぶと、保存した状態を葉として並べ、行き来できます。</p>
             <button className="button primary large" onClick={chooseProject} disabled={busy}>プロジェクトを選択</button>
             <h3>最近使ったプロジェクト</h3>
             <RecentProjectList projects={recentProjects} current={projectDir} busy={busy} onOpen={openProject} onForget={forgetRecentProject} />
@@ -1212,7 +1212,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       {projectDir && initCandidate && (
         <main className="welcome">
           <div className="welcome-card">
-            <p className="eyebrow">NOT INITIALIZED</p>
+            <p className="eyebrow">未初期化</p>
             <h2>このフォルダはまだSproutプロジェクトではありません</h2>
             <p className="path-label">{initCandidate}</p>
             <p>.sprout管理情報を作成します。既存ファイルの内容は変更しません。</p>
@@ -1227,7 +1227,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       {projectDir && !status && !initCandidate && !busy && (
         <main className="welcome">
           <div className="welcome-card">
-            <p className="eyebrow">COULD NOT OPEN</p>
+            <p className="eyebrow">開けませんでした</p>
             <h2>このプロジェクトを開けませんでした</h2>
             <p className="path-label">{projectDir}</p>
             <p>上の通知で理由を確認し、CLI設定を見直すか、別のフォルダを選んでください。</p>
@@ -1243,7 +1243,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
       {projectDir && status && !initCandidate && (
         <main className="workspace" style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
-          <section className="map-area" aria-label="スナップショット">
+          <section className="map-area" aria-label="マップ">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
             <SproutMap graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
           </section>

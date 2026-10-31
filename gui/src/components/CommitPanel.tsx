@@ -83,9 +83,9 @@ export default function CommitPanel({
   }, [detail.id, detail.message]);
 
   return (
-    <section className="panel-section commit-panel" aria-label="選択中のスナップショット">
+    <section className="panel-section commit-panel" aria-label="選択中の葉">
       <div className="panel-heading">
-        <p className="eyebrow">{current ? "いまここ" : "SNAPSHOT"}</p>
+        <p className="eyebrow">{current ? "いまここ" : "葉"}</p>
         <button className="icon-button" onClick={onClose} aria-label="詳細を閉じる">×</button>
       </div>
       {editingMessage ? (
@@ -97,8 +97,8 @@ export default function CommitPanel({
           }}
         >
           <label className="field">
-            コミットメッセージ
-            <textarea aria-label="コミットメッセージを編集" value={messageDraft} onChange={(event) => setMessageDraft(event.currentTarget.value)} disabled={busy} />
+            メッセージ
+            <textarea aria-label="メッセージを編集" value={messageDraft} onChange={(event) => setMessageDraft(event.currentTarget.value)} disabled={busy} />
           </label>
           <div className="action-row">
             <button className="button primary" type="submit" disabled={busy || !messageDraft.trim()}>保存</button>
@@ -113,10 +113,10 @@ export default function CommitPanel({
       )}
       <div className="panel-actions commit-actions">
         <button className="button primary span-all" onClick={() => onGo(detail.id)} disabled={busy || current}>
-          {current ? "この芽にいます" : "ここへ移動"}
+          {current ? "この葉にいます" : "ここへ移動"}
         </button>
         {!current && unsavedCount > 0 && (
-          <p className="panel-copy span-all">{`移動すると、未保存の変更 ${unsavedCount}件は今の芽につぼみとして残ります。`}</p>
+          <p className="panel-copy span-all">{`移動すると、未保存の変更 ${unsavedCount}件は今の葉につぼみとして残ります。`}</p>
         )}
         {growing ? (
           <form
@@ -127,16 +127,16 @@ export default function CommitPanel({
             }}
           >
             <label className="field">
-              新しい枝の名前
+              新しいブランチの名前
               <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} placeholder="例: rethink" disabled={busy} />
             </label>
             <div className="action-row">
-              <button className="button primary" type="submit" disabled={busy || !branchName.trim()}>枝を作って移動</button>
+              <button className="button primary" type="submit" disabled={busy || !branchName.trim()}>ブランチを作って移動</button>
               <button className="button secondary" type="button" onClick={() => setGrowing(false)} disabled={busy}>キャンセル</button>
             </div>
           </form>
         ) : (
-          <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy}>ここから枝を伸ばす</button>
+          <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy} title="この葉から新しいブランチを作って移動します">ブランチを作る</button>
         )}
         <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
         <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy} title="Ctrl+Vでクリップボードの画像も登録できます">
@@ -147,7 +147,7 @@ export default function CommitPanel({
           className="button danger span-all"
           onClick={() => onDelete(detail.id)}
           disabled={busy || commitTags.length > 0}
-          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、枝先・いまここ・子の芽は親へ移します"}
+          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、先端にしているブランチ・いまここ・子の葉は親へ移します"}
         >
           この葉を削除
         </button>
@@ -160,8 +160,8 @@ export default function CommitPanel({
       <dl className="detail-list">
         <div><dt>日時</dt><dd>{new Date(detail.created_at).toLocaleString("ja-JP")}</dd></div>
         <div><dt>ブランチ</dt><dd>{branchIdentityLabel(branchIdentity(detail.branch_id, detail.branch_name, branches))}</dd></div>
-        {deletedBranch && <div><dt>枝の削除</dt><dd>{formatLocalTime(deletedBranch.deleted_at)}</dd></div>}
-        {tips.length > 0 && <div><dt>枝先</dt><dd>{tips.map((branch) => branch.name).join(", ")}</dd></div>}
+        {deletedBranch && <div><dt>ブランチの削除</dt><dd>{formatLocalTime(deletedBranch.deleted_at)}</dd></div>}
+        {tips.length > 0 && <div><dt>先端のブランチ</dt><dd>{tips.map((branch) => branch.name).join(", ")}</dd></div>}
         <div>
           <dt>添付</dt>
           <dd>

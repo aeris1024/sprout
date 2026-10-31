@@ -37,7 +37,7 @@ export default function BudPanel({ bud, baseMessage, branches, deletedBranches =
   return (
     <section className="panel-section" aria-label="つぼみ">
       <div className="panel-heading">
-        <p className="eyebrow">BUD</p>
+        <p className="eyebrow">つぼみ</p>
         <button className="icon-button" onClick={onClose} aria-label="詳細を閉じる">×</button>
       </div>
       {bud.name ? <h3>{bud.name}</h3> : <h3>{summary}</h3>}

@@ -327,7 +327,7 @@ fn read_sprout_thumbnail(
     if commit_id.trim().is_empty() {
         return Err(SproutCliError::new(
             "invalid_request",
-            "コミットIDが指定されていません",
+            "葉のIDが指定されていません",
             json!({}),
         ));
     }

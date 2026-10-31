@@ -33,7 +33,6 @@ export default function MaintenancePanel({ stats, gcResult, doctor, busy, onColl
     <section className="panel-section" aria-label="保守">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">MAINTENANCE</p>
           <h3>保守</h3>
         </div>
         <button className="icon-button" onClick={onClose} aria-label="保守を閉じる">×</button>
@@ -43,7 +42,7 @@ export default function MaintenancePanel({ stats, gcResult, doctor, busy, onColl
         <h4>容量と件数</h4>
         {stats ? (
           <dl className="detail-list">
-            <div><dt>コミット</dt><dd>{stats.commits.toLocaleString()}件</dd></div>
+            <div><dt>葉</dt><dd>{stats.commits.toLocaleString()}件</dd></div>
             <div><dt>ブランチ</dt><dd>{stats.branches.toLocaleString()}件</dd></div>
             <div><dt>追跡パス</dt><dd>{stats.tracked_paths.toLocaleString()}件</dd></div>
             <div><dt>つぼみ</dt><dd>{stats.buds.toLocaleString()}件</dd></div>

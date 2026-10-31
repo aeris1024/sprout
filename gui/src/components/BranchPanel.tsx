@@ -31,7 +31,7 @@ export default function BranchPanel({ branch, tip, busy, onRename, onSetComment,
   return (
     <section className="panel-section" aria-label="選択中のブランチ">
       <div className="panel-heading">
-        <p className="eyebrow">{branch.current ? "現在のブランチ" : "BRANCH"}</p>
+        <p className="eyebrow">{branch.current ? "現在のブランチ" : "ブランチ"}</p>
         <button className="icon-button" onClick={onClose} aria-label="詳細を閉じる">×</button>
       </div>
 
@@ -61,7 +61,7 @@ export default function BranchPanel({ branch, tip, busy, onRename, onSetComment,
 
       <dl className="detail-list">
         <div>
-          <dt>枝先</dt>
+          <dt>先端の葉</dt>
           <dd>
             {tip ? (
               <button className="text-button inline" onClick={() => onOpenTip(tip.id)} disabled={busy}>{`${tip.message}（${tip.id.slice(0, 12)}）`}</button>

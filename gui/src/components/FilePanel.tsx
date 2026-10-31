@@ -31,7 +31,6 @@ export default function FilePanel({
     <section className="panel-section" aria-label="追跡ファイル">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">FILES</p>
           <h3>追跡ファイル</h3>
         </div>
         <button className="icon-button" onClick={onClose} aria-label="ファイルパネルを閉じる">

@@ -72,7 +72,7 @@ export default function SavePanel({
         <textarea
           value={message}
           onChange={(event) => onMessageChange(event.currentTarget.value)}
-          placeholder="このスナップショットで行ったこと"
+          placeholder="この保存で行ったこと"
           disabled={busy}
         />
       </label>
@@ -96,7 +96,7 @@ export default function SavePanel({
       </label>
       {coverPath && !thumbnailPath && <p className="panel-copy">{`サムネイルは代表ファイル ${coverPath} から作ります。`}</p>}
       {growsBranch && changes.length > 0 && (
-        <p className="panel-copy grow-note">途中の芽から保存するため、新しい枝が自動で作られます。</p>
+        <p className="panel-copy grow-note">途中の葉から保存するため、新しいブランチが自動で作られます。</p>
       )}
       <button className="button primary wide" onClick={onSave} disabled={busy || !message.trim()}>
         保存して葉にする
