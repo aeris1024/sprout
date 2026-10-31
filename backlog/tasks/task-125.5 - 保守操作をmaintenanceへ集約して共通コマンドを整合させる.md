@@ -1,10 +1,11 @@
 ---
 id: TASK-125.5
 title: 保守操作をmaintenanceへ集約して共通コマンドを整合させる
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:24'
-updated_date: '2026-10-31 09:33'
+updated_date: '2026-10-31 11:17'
 labels:
   - cli
   - usability
@@ -33,9 +34,27 @@ init [PATH]、status [PATH...]、go TARGET、serveはトップレベルに維持
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 maintenance stats/doctor/gcが現在の件数・容量、整合性検査、未参照オブジェクト回収を提供し、reportとdry-runの既存動作を保持する
-- [ ] #2 gcは通常履歴・つぼみ・ゴミ箱に保護された実体を回収せず、検査や容量表示は作業ファイルを変更しない
-- [ ] #3 trash list/show/restore/purgeで競合検査、dry-run、完全削除の確認、完全IDの指定とJSON契約を維持する
-- [ ] #4 init/statusの既存機能とトップレベルgoの現行の呼び出しを維持し、goの動作統合はTASK-125.9へ委ねる
-- [ ] #5 serveのプロトコルを変更せず階層化された正規コマンドを実行でき、成功・失敗・JSON・終了コードが都度起動と一致する
+- [x] #1 maintenance stats/doctor/gcが現在の件数・容量、整合性検査、未参照オブジェクト回収を提供し、reportとdry-runの既存動作を保持する
+- [x] #2 gcは通常履歴・つぼみ・ゴミ箱に保護された実体を回収せず、検査や容量表示は作業ファイルを変更しない
+- [x] #3 trash list/show/restore/purgeで競合検査、dry-run、完全削除の確認、完全IDの指定とJSON契約を維持する
+- [x] #4 init/statusの既存機能とトップレベルgoの現行の呼び出しを維持し、goの動作統合はTASK-125.9へ委ねる
+- [x] #5 serveのプロトコルを変更せず階層化された正規コマンドを実行でき、成功・失敗・JSON・終了コードが都度起動と一致する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Register maintenance stats/doctor/gc on existing callbacks; expose trash list/show/restore/purge as explicit subcommands retaining transitional trash --json listing. Reuse existing safety and repository operations. Verify canonical and temporary calls, serve equivalence, gc protection, doctor report and trash conflict/confirmation behavior without changing V1.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Canonical maintenance/trash regression and existing trash/annotation/work/serve suites: 59 passed in29.71s. Tests cover matching JSON/CLI/serve results and protocol1, doctor report exitcode, gc protection of commits/buds/trash, orphan collection, exact trash IDs, dry-runs, purge confirmation and restore conflicts. Existing repository safety callbacks reused; V1 unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added maintenance stats/doctor/gc and explicit trash list/show/restore/purge subcommands using existing operations. Transitional old calls remain available. Verified59 backend tests including unchanged serve protocol and recovery/gc safeguards.
+<!-- SECTION:FINAL_SUMMARY:END -->

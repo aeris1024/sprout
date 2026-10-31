@@ -104,10 +104,12 @@ leaf_app = typer.Typer(no_args_is_help=True, help="Create and manage saved leave
 tag_app = typer.Typer(no_args_is_help=True, help="Name and protect saved leaves with tags.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
+trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery items.")
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
 app.add_typer(file_app, name="file")
 app.add_typer(maintenance_app, name="maintenance")
+app.add_typer(trash_app, name="trash")
 
 
 @file_app.callback()
@@ -2164,6 +2166,54 @@ def trash(
                    "Permanently discarded recovery; run gc to reclaim unreferenced objects")
 
 
+@trash_app.callback(invoke_without_command=True)
+def trash_group(
+    context: typer.Context,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Manage recovery items; omitting the operation temporarily lists them."""
+    if context.invoked_subcommand is None:
+        trash(json_output=json_output)
+
+
+@trash_app.command(name="list")
+def trash_list(
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List recovery items."""
+    trash(json_output=json_output)
+
+
+@trash_app.command(name="show")
+def trash_show(
+    item_id: Annotated[str, typer.Argument(help="Exact trash item ID")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Show recovery details and protected storage."""
+    trash("show", item_id, json_output=json_output)
+
+
+@trash_app.command(name="restore")
+def trash_restore(
+    item_id: Annotated[str, typer.Argument(help="Exact trash item ID")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Inspect without applying changes")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Restore a recovery item after checking conflicts."""
+    trash("restore", item_id, dry_run=dry_run, json_output=json_output)
+
+
+@trash_app.command(name="purge")
+def trash_purge(
+    item_id: Annotated[str, typer.Argument(help="Exact trash item ID")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Inspect without applying changes")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm permanent deletion")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Permanently discard a recovery item after confirmation."""
+    trash("purge", item_id, dry_run=dry_run, yes=yes, json_output=json_output)
+
+
 @leaf_app.command(name="delete")
 @app.command(name="delete-commit")
 def delete_commit(
@@ -2217,6 +2267,7 @@ def delete_commit(
         typer.echo("Use 'sprout trash' to inspect recovery data; gc keeps it until permanent deletion")
 
 
+@maintenance_app.command(name="gc")
 @app.command()
 def gc(
     dry_run: Annotated[
@@ -2265,6 +2316,7 @@ def serve() -> None:
     serve_requests(app, __version__)
 
 
+@maintenance_app.command(name="doctor")
 @app.command()
 def doctor(
     report: Annotated[
@@ -2301,6 +2353,7 @@ def doctor(
     raise typer.Exit(failure_code)
 
 
+@maintenance_app.command(name="stats")
 @app.command()
 def stats(
     json_output: Annotated[
