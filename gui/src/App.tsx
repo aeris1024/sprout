@@ -453,10 +453,9 @@ function App() {
   }
 
   function selectCommit(commitId: string) {
+    if (!projectDir || operationActive.current) return;
     setTrashOpen(false);
     setMaintenanceOpen(false);
-    if (!projectDir) return;
-    if (operationActive.current) return;
     if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
     setSelection({ kind: "commit", id: commitId });
     setFilesOpen(false);

@@ -955,6 +955,37 @@ describe("Sprout GUI operations", () => {
     expect(screen.queryByRole("region", { name: "ゴミ箱" })).toBeNull();
   });
 
+  it.each(["trash", "maintenance"])("keeps the %s panel while a write is pending and selects a leaf after it finishes", async (panel) => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    const item = { id: "trash-1", kind: "commit", title: "Removed leaf", target_id: commitEntry.id,
+      created_at: commitEntry.created_at, protected_bytes: 120, reclaimable_bytes: 40, objects: [] };
+    const stats = { commits: 3, branches: 2, tracked_paths: 4, buds: 1, objects: 5, objects_bytes: 2048, logical_bytes: 4096, unique_bytes: 3072, dedup_saved_bytes: 1024 };
+    const preview = { dry_run: true, removed_objects: 2, removed_temps: 1, freed_bytes: 2048, objects: ["a", "b"], temps: ["t"] };
+    const name = panel === "trash" ? "ゴミ箱" : "保守";
+    mocks.runSprout.mockResolvedValueOnce(panel === "trash" ? [item] : stats);
+    await user.click(screen.getByRole("button", { name }));
+    const region = await screen.findByRole("region", { name });
+    let finishWrite!: (result: unknown) => void;
+    mocks.runSprout.mockResolvedValueOnce(panel === "trash" ? item : preview)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishWrite = resolve; }))
+      .mockResolvedValueOnce(panel === "trash" ? [] : stats);
+    await user.click(within(region).getByRole("button", { name: panel === "trash" ? "Removed leafを完全削除" : "回収できる容量を確認" }));
+    await waitFor(() => expect(finishWrite).toBeTypeOf("function"));
+    const callsDuringWrite = mocks.runSprout.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: /Initial design/ }));
+    expect(screen.getByRole("region", { name })).toBe(region);
+    expect(mocks.runSprout).toHaveBeenCalledTimes(callsDuringWrite);
+    await act(async () => { finishWrite(panel === "trash" ? item : { ...preview, dry_run: false }); });
+    await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(false));
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    await user.click(screen.getByRole("button", { name: /Initial design/ }));
+    expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name })).toBeNull();
+    expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["show", commitEntry.id], "");
+  });
+
   describe("leaf detail load failure", () => {
     const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
 
