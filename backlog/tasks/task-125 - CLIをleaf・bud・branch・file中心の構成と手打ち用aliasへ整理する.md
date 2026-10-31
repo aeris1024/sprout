@@ -4,7 +4,7 @@ title: CLIをleaf・bud・branch・file中心の構成と手打ち用aliasへ整
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:21'
-updated_date: '2026-10-31 09:07'
+updated_date: '2026-10-31 09:32'
 labels:
   - cli
   - usability
@@ -30,6 +30,7 @@ CLIをleaf・bud・branch・file中心の正規体系と手打ちaliasへ整理�
 決定済みの正規構成:
 - leaf create -m TEXT / list [PATH]（素材ID履歴も--file-idで同じ入口へ統合）/ tree / show LEAF / edit LEAF（メッセージ・メモの編集）/ delete LEAF / prune START_TAG END_TAG または --all / archive --output DIR
 - leaf tag list / create NAME [LEAF] / comment NAME TEXT / delete NAME
+- ラベルの全体一覧・葉ごとの確認/追加/解除はleaf配下でTASK-125.15が具体的な構文を整える。ラベル維持とGUI候補は確定済み。
 - leaf preview list/add/replace/delete/export/order/edit/image。表示名・説明・順序を維持し、editで表示名・説明を編集する。素材関連付け・代表指定は廃止する。
 - leaf thumbnailは個別のshow/set/delete/exportと、プロジェクト単位の「サムネイル自動生成元」の確認・指定・解除・既存葉への適用をまとめる。生成元の下位構文は実装前に整える。
 - bud save [--name NAME] [--keep-files] / list / restore BUD / rename BUD NAME / delete BUD
@@ -66,6 +67,10 @@ tag NAME [LEAF] -> leaf tag create NAME [LEAF]
 - 保存形式は現行V1のまま。CLI統合自体でschema変更、データ移行、保存形式の旧版互換処理を追加しない。
 - aliasはGitのステージングやstash applyを追加するものではない。全旧構文の恒久互換維持を要件にはしないが、段階的な移行中は既存GUIが利用できる状態を維持する。
 - GUIではTASK-125.16のラベル候補表示・全体一覧の確認を追加対象とし、その他の新機能や画面全体の再設計は対象外。正規構文への呼び出し移行と文書・統合検証を整合させる。
+
+段階的な取り込みの整合: 各領域タスクの完了時点では、その時点のGUI・サンプル・serveが動作するために必要な旧呼び出しを一時的に受け付ける。これは恒久aliasの追加ではない。TASK-125.7で利用箇所を正規構文へ移行した後、TASK-125.8が仮の旧入口/フラグを整理し、正規体系と合意済みaliasのみを最終の公開契約とする。
+既存JSON/動作の維持条件は、意味を変えずに配置を変える操作に適用する。代表プレビュー・素材関連付けの廃止に伴う公開項目や復旧記録の整理はTASK-125.14/125.13の明示的な変更範囲とし、他の葉・ファイル・添付原本のデータを失わない。
+GUIの新機能追加を対象外とする条件はTASK-125.7の呼び出し移行に対するもの。TASK-125.16のラベル候補やTASK-126等の別GUI改善を禁止するものではない。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

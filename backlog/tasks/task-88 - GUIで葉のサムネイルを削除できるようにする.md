@@ -4,9 +4,12 @@ title: GUIで葉のサムネイルを削除できるようにする
 status: To Do
 assignee: []
 created_date: '2026-10-30 17:34'
+updated_date: '2026-10-31 09:28'
 labels:
   - gui
-dependencies: []
+dependencies:
+  - TASK-125.12
+  - TASK-126
 references:
   - src/sprout/cli.py
   - gui/src/App.tsx
@@ -20,7 +23,8 @@ ordinal: 87000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-GUIではサムネイルの登録と置き換えはできるが、削除はできない。`sprout thumbnail <commit> --delete`はCLIにのみ存在するため、誤って登録したサムネイルを外すにはCLIが必要になる。葉の詳細から削除できるようにする。
+既存の葉サムネイル削除機能をGUIから使えるようにする。CLI再編後はTASK-125.12のleaf thumbnail deleteを正規の呼び出し先とする。
+TASK-126の補助メニューと整合する入口から削除できるようにし、同じ操作のために詳細上部へ常時ボタンを増やさない。サムネイルがある場合だけ表示し、削除確認・キャンセル・失敗通知・表示更新を扱う。サムネイルの削除と葉そのものの削除を区別し、葉の削除に固有のタグ保護制限をサムネイル削除へ流用しない。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

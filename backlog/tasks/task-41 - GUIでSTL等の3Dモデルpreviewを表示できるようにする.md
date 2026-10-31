@@ -4,11 +4,10 @@ title: GUIでSTL等の3Dモデルpreviewを表示できるようにする
 status: To Do
 assignee: []
 created_date: '2026-07-29 19:47'
-updated_date: '2026-10-28 16:20'
+updated_date: '2026-10-31 09:28'
 labels: []
 dependencies:
-  - TASK-38
-  - TASK-59
+  - TASK-125.13
 priority: low
 type: feature
 ordinal: 41000
@@ -28,6 +27,10 @@ role=previewへ3Dモデルを保存できても、初期GUIは静止画像サム
 モデルは、ユーザーが詳細パネルで対象のpreviewを選択した後だけ読み込む。極端に大きいモデル、破損モデル、未対応形式ではGUI全体を失敗させず、ファイル情報と取り出し手段を表示する。
 
 TASK-38で保存された複数previewの表示順を利用し、添付IDで選択対象を識別する。同じコミット内で別のpreviewへ切り替えたときも、以前の再生・表示リソースを解放する。
+
+整合条件: プレビューはTASK-125.13で確定した葉全体の確認資料として扱う。表示名・説明・保存順・添付IDを利用し、廃止する代表指定や素材関連付けに依存しない。正規leaf previewの契約を使い、選択前の自動取得を行わない。現在の静止画像表示は実装済みであり、このタスクは対応メディアの再生/表示だけを追加する。
+
+完了済みの基盤: TASK-38・TASK-59は完了/アーカイブ済み。実行待ちの依存には含めず、この本文から経緯を参照する。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

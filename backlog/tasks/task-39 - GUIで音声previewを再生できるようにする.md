@@ -4,11 +4,10 @@ title: GUIで音声previewを再生できるようにする
 status: To Do
 assignee: []
 created_date: '2026-07-29 19:47'
-updated_date: '2026-10-28 16:20'
+updated_date: '2026-10-31 09:27'
 labels: []
 dependencies:
-  - TASK-38
-  - TASK-59
+  - TASK-125.13
 priority: low
 type: feature
 ordinal: 39000
@@ -28,6 +27,10 @@ role=previewへ音声ファイルを保存できても、初期GUIは画像サ�
 芽のマップの葉では自動再生せず、ユーザーが対象のpreviewを選択した後だけ読み込む。未対応コーデックや破損ファイルではGUI全体を失敗させず、ファイル情報と取り出し手段を残す。
 
 TASK-38で保存された複数previewの表示順を利用し、添付IDで選択対象を識別する。同じコミット内で別のpreviewへ切り替えたときも、以前の再生・表示リソースを解放する。
+
+整合条件: プレビューはTASK-125.13で確定した葉全体の確認資料として扱う。表示名・説明・保存順・添付IDを利用し、廃止する代表指定や素材関連付けに依存しない。正規leaf previewの契約を使い、選択前の自動取得を行わない。現在の静止画像表示は実装済みであり、このタスクは対応メディアの再生/表示だけを追加する。
+
+完了済みの基盤: TASK-38・TASK-59は完了/アーカイブ済み。実行待ちの依存には含めず、この本文から経緯を参照する。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
