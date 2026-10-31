@@ -4,7 +4,7 @@ title: Gitで馴染みのある手打ちaliasを正規CLIへ対応させる
 status: To Do
 assignee: []
 created_date: '2026-10-31 07:24'
-updated_date: '2026-10-31 07:37'
+updated_date: '2026-10-31 08:59'
 labels:
   - cli
   - usability
@@ -49,7 +49,7 @@ stash drop BUD -> bud delete BUD
 tag -> leaf tag list
 tag NAME [LEAF] -> leaf tag create NAME [LEAF]
 通常ヘルプは正規10入口を中心とし、aliasの一覧と対応先も確認できるようにする。add/reset/checkout/rm/stash apply、Git式の省略スタック指定等は追加対象にしない。alias表外の旧トップレベル・旧フラグ構文すべてを恒久互換として残す要件ではない。
-追補: 名前の配置変更だけでなく4系統の操作統合が完了した正規構文にaliasを対応させる。preview/Labelのaliasや旧互換を判断前に追加しない。
+追補: 名前の配置変更だけでなく4系統の操作統合が完了した正規構文にaliasを対応させる。追加のpreview/ラベルaliasや旧互換はこのタスクでは新設しない。ラベル機能の維持・一覧・候補表示はTASK-125.15・TASK-125.16で確定済み。
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
