@@ -867,11 +867,12 @@ def file_history(
             typer.echo(f"{row['commit_id']}  {row['path']}  {row['message']}")
 
 
+@leaf_app.command(name="list")
 @app.command(name="log")
 def log_command(
     path: Annotated[
         Path | None,
-        typer.Argument(help="Show only commits that changed this path"),
+        typer.Argument(help="Current-branch content changes at this path; cannot combine with --file-id"),
     ] = None,
     max_count: Annotated[
         int | None,
@@ -889,13 +890,45 @@ def log_command(
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
     label: Annotated[
         str | None,
-        typer.Option("--label", help="Show commits with this exact label"),
+        typer.Option("--label", help="Show current-branch commits with this exact label; unavailable with --file-id"),
+    ] = None,
+    file_id: Annotated[
+        str | None,
+        typer.Option("--file-id", help="All branches: every saved record of this immutable file ID, including unchanged content and renames"),
     ] = None,
 ) -> None:
-    """Show history of the current branch."""
+    """List current-branch history, or all-branch saved records of one file ID.
+
+    PATH selects content changes at that path on the current branch. --file-id
+    selects every saved occurrence across all branches, including unchanged
+    content and renames. Both modes support --max-count, --oneline and --json;
+    --label is available only for current-branch history.
+    """
     if json_output and oneline:
         raise SproutError("--json and --oneline cannot be used together")
+    if file_id is not None and (path is not None or label is not None):
+        raise SproutError(
+            "--file-id cannot be combined with PATH or --label",
+            code="invalid_history_options",
+            details={"file_id": file_id, "path": str(path) if path is not None else None,
+                     "label": label},
+        )
     repository = repo()
+    if file_id is not None:
+        records = repository.file_history(file_id)
+        if max_count is not None:
+            records = records[:max_count]
+        if json_output:
+            _echo_json(records)
+            return
+        if not oneline:
+            typer.echo(f"All branches: saved records for file ID {file_id} (including unchanged content and renames)")
+        if not records:
+            typer.echo(f"No saved records for file ID: {file_id}")
+        for record in records:
+            reference = record['commit_id'][:12] if oneline else record['commit_id']
+            typer.echo(f"{reference}  {record['path']}  {record['message']}")
+        return
     rows = repository.log(path, limit=max_count, label=label)
     annotations = repository.annotations_many([row["id"] for row in rows])
     if json_output:

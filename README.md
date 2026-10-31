@@ -125,23 +125,26 @@ sprout commit -m "色を調整" --thumbnail preview.png
 保存した履歴は、次のコマンドで確認できます。
 
 ```powershell
-sprout log
-sprout log scene.blend
+sprout leaf list
+sprout leaf list scene.blend
 sprout show <commit-id>
 sprout tree
 ```
 
-`sprout log` にパスを指定すると、そのファイル内容が変わったコミットだけを表示します。内容が同じままのコミットは省かれます。一度も登場していないパスでは `No history for path:` と表示されます。
+`sprout leaf list`は現在のブランチの履歴を表示します。パスを指定すると、そのパスの内容が変わった葉だけを表示し、内容が同じままの葉は省きます。一度も登場していないパスでは`No history for path:`と表示されます。
 表示件数は`-n/--max-count`で制限でき、`--oneline`を指定すると各コミットを1行で表示できます。
 
 ```powershell
-sprout log -n 5
-sprout log --oneline
-sprout log scene.blend -n 5 --oneline
-sprout log --label submitted
+sprout leaf list -n 5
+sprout leaf list --oneline
+sprout leaf list scene.blend -n 5 --oneline
+sprout leaf list --label submitted
+sprout leaf list --file-id <file-id> --json
 ```
 
 `--label`は前後の空白とUnicode表現を正規化したうえで、ラベルの大文字小文字を区別して完全一致検索します。パス、件数、表示形式の指定とも併用できます。
+
+`--file-id`では全ブランチの同一素材の保存記録を表示します。内容不変の保存、改名・移動、削除済みブランチ由来の葉も含み、各時点のパス・内容・更新日時を新しい順に返します。`-n/--max-count`、`--oneline`、`--json`を利用できます。検索範囲が異なるため、PATHや`--label`との同時指定は拒否します。JSONは既存の素材履歴と同じ`commit_id`・`path`・`file_id`等を持つ配列で、通常モードの`id`・メモ・ラベルを持つ配列とは区別します。`log`は同じ処理への手打ち用aliasです。
 
 `sprout show`のコミット日時とファイル更新日時は、既定ではUTCで表示されます。ローカルタイム、またはIANAタイムゾーン名を指定することもできます。
 
@@ -675,7 +678,7 @@ sprout commit -m "ファイルを移動"
 | `status [--json]` | 現在の変更や追跡状態を確認する |
 | `commit -m MESSAGE [--thumbnail IMAGE] [--json]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
 | `message COMMIT TEXT [--json]` | コミットIDや保存内容を変えずにコミットメッセージを変更する |
-| `log [PATH] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在のブランチの履歴を表示する。パス、ラベル、件数、表示形式を指定できる |
+| `leaf list [PATH] [--file-id ID] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在ブランチの履歴・パスの内容変更履歴、または全ブランチの素材ID保存記録を表示する。素材IDとPATH/ラベルは併用不可 |
 | `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
 | `diff [COMMIT_A] [COMMIT_B] [--json]` | コミット間、または作業ツリーとのファイル差分を表示する |
 | `show COMMIT [--json]` | コミットの詳細を表示する |
@@ -1012,7 +1015,7 @@ Sproutは[MIT License](LICENSE)のもとで公開されています。
 
 ### 素材IDと改名をまたぐ履歴
 
-追跡ファイルには内容のハッシュとは独立した不変の`file_id`を割り当てます。`show --json`とつぼみのJSON、archiveに各時点のIDを含めます。`sprout file-history <file-id> --json`は全ブランチの同じ素材について、各コミットのパス・内容・更新日時を新しい順に返します。従来の`log PATH`はパスの内容履歴です。
+追跡ファイルには内容のハッシュとは独立した不変の`file_id`を割り当てます。`show --json`とつぼみのJSON、archiveに各時点のIDを含めます。`sprout leaf list --file-id <file-id> --json`は全ブランチの同じ素材について、各葉のパス・内容・更新日時を新しい順に返します。内容が同じ保存記録や改名も含みます。`leaf list PATH`は現在ブランチのそのパスの内容変更履歴です。
 
 パスは、NFC正規化と大文字小文字の同一視を行った`path_key`で識別します。追跡パス・コミット・つぼみのそれぞれで同じ`path_key`のパスを保存できず、OSを問わず`path_case_conflict`で拒否します（`a`と`A/b`のようなファイルとフォルダの衝突も同様です）。保存時の表記は表示と復元で維持します。`doctor`は`path_key`の不整合を`invalid_path_key`、衝突を`path_conflict`として報告します。
 
