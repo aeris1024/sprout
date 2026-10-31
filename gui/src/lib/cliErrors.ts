@@ -82,8 +82,8 @@ export const cliErrorTranslations: Record<string, Translation> = {
   animated_thumbnail: "アニメーション画像はサムネイルに使えません",
   invalid_thumbnail: "サムネイルの画像を読み取れませんでした",
   no_thumbnail: "この葉にはサムネイルがありません",
-  cover_not_tracked: "追跡中のファイルだけを代表ファイルにできます",
-  cover_not_set: "代表ファイルが指定されていません",
+  cover_not_tracked: "追跡中のファイルだけをサムネイル自動生成元にできます",
+  cover_not_set: "サムネイル自動生成元が指定されていません",
 
   preview_file_not_found: "プレビューのファイルが見つかりません",
   preview_not_file: "プレビューにはファイルを指定してください",

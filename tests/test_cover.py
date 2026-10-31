@@ -286,7 +286,7 @@ def test_cli_and_json(tmp_path, monkeypatch):
     repo, poster, _ = project(tmp_path)
     monkeypatch.chdir(repo.root)
     runner = CliRunner()
-    assert 'No cover file' in runner.invoke(app, ['cover']).stdout
+    assert 'No thumbnail source' in runner.invoke(app, ['cover']).stdout
     status = json.loads(runner.invoke(app, ['status', '--tracked', '--json']).stdout)
     assert 'cover' not in status
 

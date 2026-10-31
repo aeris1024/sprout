@@ -112,6 +112,8 @@ app = typer.Typer(
 leaf_app = typer.Typer(no_args_is_help=True, help="Create and manage saved leaves.")
 tag_app = typer.Typer(no_args_is_help=True, help="Name and protect saved leaves with tags.")
 label_app = typer.Typer(no_args_is_help=True, help="List project labels or manage labels on a leaf.")
+thumbnail_app = typer.Typer(no_args_is_help=True, help="Manage a leaf thumbnail or the project's automatic thumbnail source.")
+thumbnail_source_app = typer.Typer(no_args_is_help=True, help="Choose a tracked project file as the automatic thumbnail source.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
 bud_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Save and restore buds of unfinished work.")
@@ -120,6 +122,8 @@ trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery 
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
 leaf_app.add_typer(label_app, name="label")
+leaf_app.add_typer(thumbnail_app, name="thumbnail")
+thumbnail_app.add_typer(thumbnail_source_app, name="source")
 app.add_typer(file_app, name="file")
 app.add_typer(maintenance_app, name="maintenance")
 app.add_typer(bud_app, name="bud")
@@ -789,7 +793,7 @@ def commit_command(
     for path in result.removed_paths:
         typer.echo(f"deleted  {path}")
     if result.cover is not None and not result.cover.applied:
-        typer.echo(f"Warning: no thumbnail from the cover file: {result.cover.reason}", err=True)
+        typer.echo(f"Warning: no thumbnail from the thumbnail source: {result.cover.reason}", err=True)
     if result.created_branch:
         typer.echo(f"Created branch {result.branch} from a snapshot that is not a branch tip")
     typer.echo(f"[{result.branch} {result.commit_id[:12]}] {message.strip()}")
@@ -800,7 +804,7 @@ def cover_command(
     path: Annotated[
         Path | None, typer.Argument(help="Tracked image to make thumbnails from; omit to inspect")
     ] = None,
-    clear: Annotated[bool, typer.Option("--clear", help="Stop making thumbnails from a cover file")] = False,
+    clear: Annotated[bool, typer.Option("--clear", help="Stop making thumbnails from a thumbnail source")] = False,
     apply: Annotated[
         bool, typer.Option("--apply", help="Give existing leaves without a thumbnail one from the cover")
     ] = False,
@@ -828,14 +832,14 @@ def cover_command(
         if json_output:
             _echo_json({"file_id": None, "path": None})
             return
-        typer.echo("Cleared the cover file")
+        typer.echo("Cleared the thumbnail source")
         return
     if path is not None:
         file_id, relative, problem = repository.set_cover(path)
         if json_output:
             _echo_json({"file_id": file_id, "path": relative, "problem": problem})
             return
-        typer.echo(f"Set the cover file to {relative}")
+        typer.echo(f"Set the thumbnail source to {relative}")
         if problem is not None:
             typer.echo(f"Warning: it cannot make a thumbnail now: {problem}", err=True)
         return
@@ -844,7 +848,7 @@ def cover_command(
         _echo_json({"file_id": file_id, "path": relative})
         return
     if file_id is None:
-        typer.echo("No cover file")
+        typer.echo("No thumbnail source")
     else:
         typer.echo(relative if relative is not None else f"{file_id} (no longer tracked)")
 
@@ -1177,6 +1181,73 @@ def thumbnail(
     typer.echo(f"Size:    {attachment.size}")
     typer.echo(f"Created: {attachment.created_at}")
     typer.echo(f"Updated: {attachment.updated_at}")
+
+
+ThumbnailLeafArgument = Annotated[str, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)]
+ThumbnailJsonOption = Annotated[bool, typer.Option("--json", help="Output structured JSON")]
+
+
+@thumbnail_app.command(name="show")
+def thumbnail_show(leaf: ThumbnailLeafArgument, json_output: ThumbnailJsonOption = False) -> None:
+    """Inspect the registered thumbnail for one leaf."""
+    thumbnail(leaf, json_output=json_output)
+
+
+@thumbnail_app.command(name="set")
+def thumbnail_set(
+    leaf: ThumbnailLeafArgument,
+    image: Annotated[Path, typer.Argument(help="PNG, JPEG or WebP; may be untracked or outside the project")],
+    json_output: ThumbnailJsonOption = False,
+) -> None:
+    """Register or replace one leaf's thumbnail without changing the source image."""
+    thumbnail(leaf, image=image, json_output=json_output)
+
+
+@thumbnail_app.command(name="delete")
+def thumbnail_delete(leaf: ThumbnailLeafArgument, json_output: ThumbnailJsonOption = False) -> None:
+    """Delete one leaf's thumbnail, keeping the leaf and preview attachments."""
+    thumbnail(leaf, delete=True, json_output=json_output)
+
+
+@thumbnail_app.command(name="export")
+def thumbnail_export(
+    leaf: ThumbnailLeafArgument,
+    output: Annotated[Path, typer.Option("--output", "-o", help="Destination image file")],
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing destination")] = False,
+    json_output: ThumbnailJsonOption = False,
+) -> None:
+    """Export one leaf's thumbnail; existing files require --force."""
+    thumbnail(leaf, output=output, force=force, json_output=json_output)
+
+
+@thumbnail_source_app.command(name="show")
+def thumbnail_source_show(json_output: ThumbnailJsonOption = False) -> None:
+    """Inspect the project's automatic thumbnail source, independently of a leaf."""
+    cover_command(json_output=json_output)
+
+
+@thumbnail_source_app.command(name="set")
+def thumbnail_source_set(
+    path: Annotated[Path, typer.Argument(help="Tracked image used for automatic generation")],
+    json_output: ThumbnailJsonOption = False,
+) -> None:
+    """Choose a tracked file; its immutable identity survives moves and renames."""
+    cover_command(path=path, json_output=json_output)
+
+
+@thumbnail_source_app.command(name="clear")
+def thumbnail_source_clear(json_output: ThumbnailJsonOption = False) -> None:
+    """Stop automatic thumbnail generation without deleting registered thumbnails."""
+    cover_command(clear=True, json_output=json_output)
+
+
+@thumbnail_source_app.command(name="apply")
+def thumbnail_source_apply(
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Inspect without creating thumbnails")] = False,
+    json_output: ThumbnailJsonOption = False,
+) -> None:
+    """Fill only missing thumbnails on existing leaves from their saved source files."""
+    cover_command(apply=True, dry_run=dry_run, json_output=json_output)
 
 
 preview_app = typer.Typer(

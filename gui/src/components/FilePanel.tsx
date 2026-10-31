@@ -47,8 +47,8 @@ export default function FilePanel({
         </button>
       </div>
       {onSetCover && (
-        <section className="annotation-section" aria-label="代表ファイル">
-          <h4>代表ファイル</h4>
+        <section className="annotation-section" aria-label="サムネイル自動生成元">
+          <h4>サムネイル自動生成元</h4>
           {cover ? (
             <>
               <p className="panel-copy">{cover.path ?? "追跡を解除したファイルが指定されています。別のファイルを選んでください。"}</p>
@@ -58,7 +58,7 @@ export default function FilePanel({
                 <button className="button secondary small" onClick={onClearCover} disabled={busy}>解除</button>
               </div>
             </>
-          ) : <p className="panel-copy">追跡中の画像を「代表にする」と、保存のたびにサムネイルを自動で作ります。</p>}
+          ) : <p className="panel-copy">追跡中の画像を自動生成元に設定すると、保存のたびにサムネイルを自動で作ります。</p>}
         </section>
       )}
       <h4 className="list-title">追跡中（{tracked.length}件）</h4>
@@ -70,8 +70,8 @@ export default function FilePanel({
             <div className="file-row" key={path}>
               <span title={path}>{path}</span>
               {onSetCover && (cover?.path === path
-                ? <strong className="file-row-mark">代表</strong>
-                : <button onClick={() => onSetCover(path)} disabled={busy} aria-label={`${path}を代表にする`}>代表にする</button>)}
+                ? <strong className="file-row-mark">生成元</strong>
+                : <button onClick={() => onSetCover(path)} disabled={busy} aria-label={`${path}をサムネイル自動生成元に設定`}>自動生成元に設定</button>)}
               <button onClick={() => onUntrack(path)} disabled={busy}>
                 追跡解除
               </button>

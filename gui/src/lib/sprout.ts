@@ -29,15 +29,15 @@ export interface CoverApplyResult {
 }
 
 const coverReasons: Record<string, string> = {
-  cover_missing: "代表ファイルが追跡されていません",
-  cover_not_image: "代表ファイルが対応する画像ではありません",
+  cover_missing: "サムネイル自動生成元が追跡されていません",
+  cover_not_image: "サムネイル自動生成元が対応する画像ではありません",
   cover_animated: "アニメーション画像は使えません",
-  cover_too_large: "代表ファイルの画像が大きすぎます",
-  cover_unreadable: "代表ファイルを読み取れませんでした",
+  cover_too_large: "サムネイル自動生成元の画像が大きすぎます",
+  cover_unreadable: "サムネイル自動生成元を読み取れませんでした",
 };
 
 export function coverReasonLabel(reason: string | null | undefined): string {
-  return (reason && coverReasons[reason]) || "代表ファイルから作れませんでした";
+  return (reason && coverReasons[reason]) || "サムネイル自動生成元から作れませんでした";
 }
 
 export interface PathOperationResult {

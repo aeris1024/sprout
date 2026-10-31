@@ -17,9 +17,9 @@ describe("FilePanel", () => {
     const onApplyCover = vi.fn();
     render(<FilePanel {...props} tracked={["poster.png", "notes.md"]} cover={{ file_id: "f", path: "poster.png" }} onSetCover={onSetCover} onClearCover={onClearCover} onApplyCover={onApplyCover} />);
 
-    expect(screen.queryByRole("button", { name: "poster.pngを代表にする" })).toBeNull();
-    expect(screen.getByText("代表")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "notes.mdを代表にする" }));
+    expect(screen.queryByRole("button", { name: "poster.pngをサムネイル自動生成元に設定" })).toBeNull();
+    expect(screen.getByText("生成元")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "notes.mdをサムネイル自動生成元に設定" }));
     fireEvent.click(screen.getByRole("button", { name: "既存の葉へ適用" }));
     fireEvent.click(screen.getByRole("button", { name: "解除" }));
     expect(onSetCover).toHaveBeenCalledWith("notes.md");

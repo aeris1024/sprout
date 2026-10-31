@@ -365,8 +365,8 @@ function App() {
       const result = await runSprout<{ path: string; problem: string | null }>(projectDir, ["cover", ...fileArguments([path])], sproutProgram);
       await fetchWorkspace(projectDir);
       setNotice(result.problem
-        ? { code: "cover_set", message: `${result.path} を代表ファイルにしました。ただし今はサムネイルを作れません: ${coverReasonLabel(result.problem)}`, details: {}, kind: "warning" }
-        : { code: "cover_set", message: `${result.path} を代表ファイルにしました`, details: {}, kind: "success" });
+        ? { code: "cover_set", message: `${result.path} をサムネイル自動生成元にしました。ただし今はサムネイルを作れません: ${coverReasonLabel(result.problem)}`, details: {}, kind: "warning" }
+        : { code: "cover_set", message: `${result.path} をサムネイル自動生成元にしました`, details: {}, kind: "success" });
     });
   }
 
@@ -374,7 +374,7 @@ function App() {
     void execute(async () => {
       await runSprout(projectDir, ["cover", "--clear"], sproutProgram);
       await fetchWorkspace(projectDir);
-      setNotice({ code: "cover_cleared", message: "代表ファイルを解除しました", details: {}, kind: "success" });
+      setNotice({ code: "cover_cleared", message: "サムネイル自動生成元を解除しました", details: {}, kind: "success" });
     });
   }
 
@@ -385,7 +385,7 @@ function App() {
         setNotice({ code: "cover_nothing", message: `サムネイルを作れる葉はありません（登録済み ${plan.kept}件・対象外 ${plan.skipped.length}件）`, details: {}, kind: "success" });
         return;
       }
-      if (!await confirmDialog(`サムネイルのない ${plan.applied.length}件の葉に、代表ファイルからサムネイルを作ります。登録済みのサムネイルは変更しません。続行しますか？`, {
+      if (!await confirmDialog(`サムネイルのない ${plan.applied.length}件の葉に、サムネイル自動生成元からサムネイルを作ります。登録済みのサムネイルは変更しません。続行しますか？`, {
         title: "既存の葉へ適用", kind: "warning", okLabel: "適用", cancelLabel: "キャンセル",
       })) return;
       const result = await runSprout<CoverApplyResult>(projectDir, ["cover", "--apply"], sproutProgram);

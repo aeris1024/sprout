@@ -1139,7 +1139,7 @@ describe("Sprout GUI operations", () => {
       mocks.runSprout.mockResolvedValueOnce({ id: "bbbbbbbbbbbbbbbb", branch: "main", branch_id: "main", message: "Saved", removed_paths: [], cover: { applied: false, reason: "cover_not_image" } });
       mockWorkspace();
       await user.click(screen.getByRole("button", { name: "保存して葉にする" }));
-      expect(await screen.findByText(/bbbbbbbbbbbb を保存しました。サムネイルは作れませんでした: 代表ファイルが対応する画像ではありません/)).toBeTruthy();
+      expect(await screen.findByText(/bbbbbbbbbbbb を保存しました。サムネイルは作れませんでした: サムネイル自動生成元が対応する画像ではありません/)).toBeTruthy();
     });
 
     it("sets a cover from the file panel and reports a file that cannot make one", async () => {
@@ -1150,8 +1150,8 @@ describe("Sprout GUI operations", () => {
       const tracked = (cleanStatus.tracked ?? [])[0];
       mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: tracked, problem: "cover_not_image" });
       mockWorkspace();
-      await user.click(screen.getByRole("button", { name: `${tracked}を代表にする` }));
-      expect(await screen.findByText(new RegExp(`今はサムネイルを作れません: 代表ファイルが対応する画像ではありません`))).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: `${tracked}をサムネイル自動生成元に設定` }));
+      expect(await screen.findByText(new RegExp(`今はサムネイルを作れません: サムネイル自動生成元が対応する画像ではありません`))).toBeTruthy();
       expect(mocks.runSprout).toHaveBeenCalledWith(project, ["cover", tracked], "");
     });
 

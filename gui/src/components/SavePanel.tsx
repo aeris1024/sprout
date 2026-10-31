@@ -94,7 +94,7 @@ export default function SavePanel({
           )}
         </div>
       </label>
-      {coverPath && !thumbnailPath && <p className="panel-copy">{`サムネイルは代表ファイル ${coverPath} から作ります。`}</p>}
+      {coverPath && !thumbnailPath && <p className="panel-copy">{`サムネイルはサムネイル自動生成元 ${coverPath} から作ります。`}</p>}
       {growsBranch && changes.length > 0 && (
         <p className="panel-copy grow-note">途中の葉から保存するため、新しいブランチが自動で作られます。</p>
       )}

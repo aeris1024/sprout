@@ -520,19 +520,19 @@ sprout thumbnail <commit-id> --delete
 
 サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
-### 代表ファイルからサムネイルを作る
+### サムネイル自動生成元からサムネイルを作る
 
-`poster.png`のような追跡中の画像を代表ファイルに指定すると、サムネイルを指定せずに保存したとき、そこから長辺512pxのサムネイルを自動で作ります。`--thumbnail`を指定した場合はそちらを優先します。
+`poster.png`のような追跡中の画像をサムネイル自動生成元に指定すると、サムネイルを指定せずに保存したとき、そこから長辺512pxのサムネイルを自動で作ります。`--thumbnail`を指定した場合はそちらを優先します。
 
 ```powershell
-sprout cover poster.png        # 指定する
-sprout cover                   # 確認する
-sprout cover --apply --dry-run # サムネイルのない既存の葉へ適用した場合を確認する
-sprout cover --apply           # 適用する（登録済みのサムネイルは変更しない）
-sprout cover --clear           # 解除する
+sprout leaf thumbnail source set poster.png       # 指定する
+sprout leaf thumbnail source show                 # 確認する
+sprout leaf thumbnail source apply --dry-run      # 適用できる葉を確認する
+sprout leaf thumbnail source apply                # 登録済みのサムネイルは変更しない
+sprout leaf thumbnail source clear                # 解除する
 ```
 
-指定は素材IDで保持するので、`move`や大文字小文字の改名の後も有効です。対応形式はPNG・JPEG・静止WebP・BMPです。代表ファイルが追跡されていない、画像でない、大きすぎる、読み取れない場合も保存は成功し、サムネイルなしになります。理由は警告と、`commit --json`の`cover`（`applied`と`reason`）で確認できます。`status --tracked --json`には、指定中の場合だけ`cover`を含めます。指定はリポジトリの`meta`に保存します。
+指定は素材IDで保持するので、`move`や大文字小文字の改名の後も有効です。対応形式はPNG・JPEG・静止WebP・BMPです。サムネイル自動生成元が追跡されていない、画像でない、大きすぎる、読み取れない場合も保存は成功し、サムネイルなしになります。理由は警告と、`commit --json`の`cover`（`applied`と`reason`）で確認できます。`status --tracked --json`には、指定中の場合だけ`cover`を含めます。指定はリポジトリの`meta`に保存します。
 
 ## コミットのpreviewを管理する
 
@@ -688,7 +688,7 @@ sprout commit -m "ファイルを移動"
 | `switch BRANCH [--json]` | 別のブランチへ切り替える |
 | `serve` | JSON Linesで要求を受け付ける常駐モードを起動する |
 | `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
-| `cover [PATH\|--clear\|--apply [--dry-run]] [--json]` | サムネイルを作る代表ファイルを確認・指定・解除し、既存の葉へ適用する |
+| `cover [PATH\|--clear\|--apply [--dry-run]] [--json]` | サムネイルを作るサムネイル自動生成元を確認・指定・解除し、既存の葉へ適用する |
 | `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元する、ゴミ箱へ移す |
 | `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
 | `export COMMIT [PATH...] --output DIR [--force] [--json]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
