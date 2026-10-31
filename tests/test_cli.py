@@ -161,12 +161,12 @@ def test_branch_cli_start_point_switch_and_restored_guard(
     assert "specify the start point explicitly" in str(guarded.exception)
     assert "oops" not in invoke(["branch"], project, monkeypatch).stdout
 
-    help_result = invoke(["branch", "--help"], project, monkeypatch)
+    help_result = invoke(["branch", "create", "--help"], project, monkeypatch)
     assert help_result.exit_code == 0
     help_text = " ".join(help_result.stdout.split())
-    assert "START_POINT" in help_text or "start_point" in help_text
+    assert "LEAF" in help_text or "leaf" in help_text
     assert "--switch" in help_text
-    assert "Commit ID, prefix, branch, or tag" in help_text
+    assert "Leaf ID, prefix, branch, or tag" in help_text
 
 
 def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch) -> None:

@@ -95,6 +95,15 @@ def _install_safe_powershell_completion_template() -> None:
 
 _install_safe_powershell_completion_template()
 
+class _MigrationGroup(typer.core.TyperGroup):
+    """Keep pre-migration invocations working until the final caller migration."""
+
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        if not args or (args[0] not in self.commands and args[0] not in {'--help', '-h'}):
+            args = ['_legacy', *args]
+        return super().parse_args(ctx, args)
+
+
 app = typer.Typer(
     add_completion=True,
     no_args_is_help=True,
@@ -105,12 +114,16 @@ tag_app = typer.Typer(no_args_is_help=True, help="Name and protect saved leaves 
 label_app = typer.Typer(no_args_is_help=True, help="List project labels or manage labels on a leaf.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
+bud_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Save and restore buds of unfinished work.")
+branch_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Create and manage branches.")
 trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery items.")
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
 leaf_app.add_typer(label_app, name="label")
 app.add_typer(file_app, name="file")
 app.add_typer(maintenance_app, name="maintenance")
+app.add_typer(bud_app, name="bud")
+app.add_typer(branch_app, name="branch")
 app.add_typer(trash_app, name="trash")
 
 
@@ -1569,7 +1582,7 @@ def remove_leaf_label(
     label(leaf, value=None, delete=value, json_output=json_output)
 
 
-@app.command()
+@branch_app.command(name="_legacy", hidden=True)
 def branch(
     name: Annotated[str | None, typer.Argument()] = None,
     start_point: Annotated[
@@ -1836,7 +1849,7 @@ def tag_delete(
     tag(delete=name, json_output=json_output)
 
 
-@app.command()
+@bud_app.command(name="_legacy", hidden=True)
 def bud(
     save: Annotated[
         bool,
@@ -1931,6 +1944,104 @@ def bud(
         return
     for item in buds:
         typer.echo(_bud_summary(item))
+
+
+@bud_app.command(name="list")
+def bud_list(
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List saved buds."""
+    bud(json_output=json_output)
+
+
+@bud_app.command(name="save")
+def bud_save(
+    name: Annotated[str, typer.Option("--name", help="Name for the saved bud")] = "",
+    keep_files: Annotated[bool, typer.Option("--keep-files", help="Copy changes and leave working files unchanged")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Save unfinished tracked changes, returning to the current leaf by default."""
+    bud(save=True, name=name, keep_files=keep_files, json_output=json_output)
+
+
+@bud_app.command(name="restore")
+def bud_restore(
+    target: Annotated[str, typer.Argument(help="Bud ID or prefix")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Restore a bud and consume it on success, saving other unfinished work first."""
+    bud(restore=target, json_output=json_output)
+
+
+@bud_app.command(name="rename")
+def bud_rename(
+    target: Annotated[str, typer.Argument(help="Bud ID or prefix")],
+    name: Annotated[str, typer.Argument(help="New name; an empty string clears it")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Replace or clear a bud's name."""
+    bud(rename=(target, name), json_output=json_output)
+
+
+@bud_app.command(name="delete")
+def bud_delete(
+    target: Annotated[str, typer.Argument(help="Bud ID or prefix")],
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm moving the bud to the trash")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Move a bud to the trash after confirmation."""
+    bud(drop=target, yes=yes, json_output=json_output)
+
+
+@branch_app.command(name="list")
+def branch_list(
+    deleted: Annotated[bool, typer.Option("--deleted", help="List deleted branches")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List live or deleted branches."""
+    branch(deleted=deleted, json_output=json_output)
+
+
+@branch_app.command(name="create")
+def branch_create(
+    name: Annotated[str, typer.Argument(help="New branch name")],
+    leaf: Annotated[str | None, typer.Argument(help="Leaf ID, prefix, branch, or tag; defaults to the current branch tip", autocompletion=_complete_references)] = None,
+    comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the branch")] = "",
+    switch: Annotated[bool, typer.Option("--switch", help="Move to the new branch after creating it")] = False,
+    keep_changes: Annotated[bool, typer.Option("--keep-changes", help="With --switch, save unfinished changes in a bud")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Create a branch, optionally restoring its starting leaf."""
+    branch(name=name, start_point=leaf, comment=comment, switch=switch, keep_changes=keep_changes, json_output=json_output)
+
+
+@branch_app.command(name="rename")
+def branch_rename(
+    old: Annotated[str, typer.Argument(help="Current branch name", autocompletion=_complete_branches)],
+    new: Annotated[str, typer.Argument(help="New branch name")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Rename a branch while preserving its identity."""
+    branch(name=old, rename=new, json_output=json_output)
+
+
+@branch_app.command(name="comment")
+def branch_comment(
+    name: Annotated[str, typer.Argument(help="Branch name", autocompletion=_complete_branches)],
+    text: Annotated[str, typer.Argument(help="New comment; an empty string clears it")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Replace or clear a branch's comment."""
+    branch(name=name, set_comment=text, json_output=json_output)
+
+
+@branch_app.command(name="delete")
+def branch_delete(
+    name: Annotated[str, typer.Argument(help="Branch to move to the trash", autocompletion=_complete_branches)],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Move a non-current branch to the trash while retaining its leaves."""
+    branch(delete=name, json_output=json_output)
 
 
 @app.command()
