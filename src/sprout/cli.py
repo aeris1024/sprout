@@ -102,11 +102,13 @@ app = typer.Typer(
 )
 leaf_app = typer.Typer(no_args_is_help=True, help="Create and manage saved leaves.")
 tag_app = typer.Typer(no_args_is_help=True, help="Name and protect saved leaves with tags.")
+label_app = typer.Typer(no_args_is_help=True, help="List project labels or manage labels on a leaf.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
 trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery items.")
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
+leaf_app.add_typer(label_app, name="label")
 app.add_typer(file_app, name="file")
 app.add_typer(maintenance_app, name="maintenance")
 app.add_typer(trash_app, name="trash")
@@ -1499,6 +1501,45 @@ def label(
         return
     for item in annotations.labels:
         typer.echo(item)
+
+
+@label_app.command(name="list")
+def list_labels(
+    leaf: Annotated[str | None, typer.Argument(help="Inspect one leaf; omit to list labels and leaf counts across the project", autocompletion=_complete_references)] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """List labels on all live leaves, including leaves from deleted branches."""
+    if leaf is not None:
+        label(leaf, value=None, delete=None, json_output=json_output)
+        return
+    labels = repo().project_labels()
+    if json_output:
+        _echo_json(labels)
+    elif not labels:
+        typer.echo("No labels")
+    else:
+        for item in labels:
+            typer.echo(f"{item['name']}\t{item['leaf_count']} leaves")
+
+
+@label_app.command(name="add")
+def add_leaf_label(
+    leaf: Annotated[str, typer.Argument(autocompletion=_complete_references)],
+    value: Annotated[str, typer.Argument(help="Label to add")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Add a label without changing other annotations or files."""
+    label(leaf, value=value, delete=None, json_output=json_output)
+
+
+@label_app.command(name="remove")
+def remove_leaf_label(
+    leaf: Annotated[str, typer.Argument(autocompletion=_complete_references)],
+    value: Annotated[str, typer.Argument(help="Label to remove")],
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Remove a label without deleting the leaf."""
+    label(leaf, value=None, delete=value, json_output=json_output)
 
 
 @app.command()

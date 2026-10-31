@@ -2157,6 +2157,16 @@ class Repository:
             )
         return self.annotations(commit_id)
 
+    def project_labels(self) -> list[dict[str, Any]]:
+        """Count current label usage across live leaves, irrespective of branch reachability."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT labels.label AS name, COUNT(DISTINCT labels.commit_id) AS leaf_count "
+                "FROM commit_labels AS labels JOIN commits ON commits.id=labels.commit_id "
+                "GROUP BY labels.label ORDER BY labels.label COLLATE BINARY"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def thumbnail(self, value: str) -> CommitAttachment | None:
         commit_id = self.resolve_commit(value)
         with self.connect() as db:

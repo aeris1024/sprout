@@ -584,16 +584,22 @@ sprout note <commit-id> "クライアント確認済み"
 sprout note <commit-id>
 sprout note <commit-id> --delete
 
-# ラベルの追加・一覧・削除
-sprout label <commit-id> submitted
-sprout label <commit-id>
-sprout label <commit-id> --delete submitted
+# ラベルの追加・葉ごとの一覧・解除
+sprout leaf label add <commit-id> submitted
+sprout leaf label list <commit-id>
+sprout leaf label remove <commit-id> submitted
+
+# プロジェクト全体で使用中のラベルと利用中の葉数
+sprout leaf label list
+sprout leaf label list --json
 
 # ラベルで履歴を絞り込む
 sprout log --label submitted
 ```
 
 メモは前後の空白を除去して保存し、空文字を指定すると削除します。上限は20,000文字です。ラベルも前後の空白を除去し、Unicode NFCで正規化します。ラベルは1件64文字以内、1コミット32件以内で、大文字小文字を区別します。同じラベルの再追加は1件のままです。メモとラベルは`show`と`log`の通常表示およびJSON出力にも含まれます。
+
+`leaf label list`は全ブランチの現存する葉から使用中のラベルを集計し、名前順に表示します。削除済みブランチ由来の葉も含み、ゴミ箱にしか残っていない付与は含みません。最後の付与を外すと一覧から消え、葉を復旧すると再び集計されます。JSONは`[{"name":"submitted","leaf_count":2}]`形式です。葉を指定した一覧はその葉の付与情報を返し、`log --label`による履歴の絞り込みとは用途が異なります。専用のラベル辞書は保存しません。
 
 ## ファイルの追跡状態を確認する
 
