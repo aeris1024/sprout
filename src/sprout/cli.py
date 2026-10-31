@@ -1044,6 +1044,28 @@ def show(
         )
 
 
+@leaf_app.command(name="edit")
+def leaf_edit(
+    commit: Annotated[str, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)],
+    message: Annotated[str | None, typer.Option("--message", "-m", help="Replace the message")] = None,
+    note: Annotated[str | None, typer.Option("--note", help="Replace the note")] = None,
+    clear_note: Annotated[bool, typer.Option("--clear-note", help="Delete the note, keeping it in trash")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+) -> None:
+    """Edit message and note atomically; inspect them with leaf show."""
+    if note is not None and clear_note:
+        raise SproutError("--note and --clear-note cannot be combined", code="conflicting_note_options")
+    commit_id, text, annotations = repo().edit_leaf(
+        commit,
+        message=message if message is not None else UNCHANGED,
+        note="" if clear_note else note if note is not None else UNCHANGED,
+    )
+    if json_output:
+        _echo_json({"commit_id": commit_id, "message": text, **_annotations_json(annotations)})
+        return
+    typer.echo(f"Updated leaf {commit_id[:12]}")
+
+
 @app.command()
 def message(
     commit: Annotated[

@@ -2104,21 +2104,48 @@ class Repository:
         if len(normalized) > NOTE_MAX_CHARS:
             raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit", code="note_too_long", details={"limit": NOTE_MAX_CHARS})
         with self.connect() as db:
-            if not normalized:
-                before = {"commit_notes": recovery.rows(db, "commit_notes", "commit_id=?", (commit_id,))}
-                db.execute("DELETE FROM commit_notes WHERE commit_id=?", (commit_id,))
-                for row in before["commit_notes"]:
-                    title = row["note"].splitlines()[0][:40]
-                    recovery.record(db, before, "note_delete", title, commit_id, utc_timestamp())
-            else:
-                updated_at = utc_timestamp()
-                db.execute(
-                    "INSERT INTO commit_notes(commit_id, note, updated_at) "
-                    "VALUES(?, ?, ?) ON CONFLICT(commit_id) DO UPDATE SET "
-                    "note=excluded.note, updated_at=excluded.updated_at",
-                    (commit_id, normalized, updated_at),
-                )
+            self._write_note(db, commit_id, normalized)
         return self.annotations(commit_id)
+
+    @staticmethod
+    def _write_note(db: sqlite3.Connection, commit_id: str, normalized: str) -> None:
+        if not normalized:
+            before = {"commit_notes": recovery.rows(db, "commit_notes", "commit_id=?", (commit_id,))}
+            db.execute("DELETE FROM commit_notes WHERE commit_id=?", (commit_id,))
+            for row in before["commit_notes"]:
+                title = row["note"].splitlines()[0][:40]
+                recovery.record(db, before, "note_delete", title, commit_id, utc_timestamp())
+        else:
+            db.execute(
+                "INSERT INTO commit_notes(commit_id, note, updated_at) "
+                "VALUES(?, ?, ?) ON CONFLICT(commit_id) DO UPDATE SET "
+                "note=excluded.note, updated_at=excluded.updated_at",
+                (commit_id, normalized, utc_timestamp()),
+            )
+
+    @locked
+    def edit_leaf(
+        self, value: str, *, message: str | object = UNCHANGED, note: str | object = UNCHANGED,
+    ) -> tuple[str, str, CommitAnnotations]:
+        """Edit the requested descriptions in one transaction, preserving omitted fields."""
+        if message is UNCHANGED and note is UNCHANGED:
+            raise SproutError("specify --message, --note, or --clear-note", code="no_edit_fields")
+        commit_id = self.resolve_commit(value)
+        if message is not UNCHANGED:
+            message = message.strip()
+            if not message:
+                raise SproutError("commit message cannot be empty", code="empty_message")
+        if note is not UNCHANGED:
+            note = note.strip()
+            if len(note) > NOTE_MAX_CHARS:
+                raise SproutError(f"note exceeds {NOTE_MAX_CHARS} character limit", code="note_too_long", details={"limit": NOTE_MAX_CHARS})
+        with self.connect() as db:
+            if message is not UNCHANGED:
+                db.execute("UPDATE commits SET message=? WHERE id=?", (message, commit_id))
+            if note is not UNCHANGED:
+                self._write_note(db, commit_id, note)
+            result_message = db.execute("SELECT message FROM commits WHERE id=?", (commit_id,)).fetchone()[0]
+        return commit_id, result_message, self.annotations(commit_id)
 
     @locked
     def add_label(self, value: str, label: str) -> CommitAnnotations:
