@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ComponentProps, type RefObject } from "react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
@@ -74,6 +74,29 @@ export default function CommitPanel({
   const annotationSection = useRef<HTMLDivElement>(null);
   const previewSection = useRef<HTMLDivElement>(null);
   const fileSection = useRef<HTMLDivElement>(null);
+  const menuRoot = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const menuContext = `${projectDir}:${detail.id}`;
+  const [menuTarget, setMenuTarget] = useState<string | null>(null);
+  const menuOpen = menuTarget === menuContext && !busy;
+
+  function closeMenu(restoreFocus = false) {
+    setMenuTarget(null);
+    if (restoreFocus) menuTrigger.current?.focus();
+  }
+
+  useEffect(() => { setMenuTarget(null); }, [projectDir, detail.id, busy]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRoot.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!menuRoot.current?.contains(event.target as Node)) setMenuTarget(null);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [menuOpen]);
 
   useEffect(() => {
     setEditingMessage(false);
@@ -139,18 +162,46 @@ export default function CommitPanel({
           <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy} title="この葉から新しいブランチを作って移動します">ブランチを作る</button>
         )}
         <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
-        <button className="button secondary" onClick={() => onSetThumbnail(detail.id)} disabled={busy} title="Ctrl+Vでクリップボードの画像も登録できます">
-          {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
-        </button>
-        <button className="button secondary" onClick={() => onExport(detail.id)} disabled={busy}>ファイルを取り出す</button>
-        <button
-          className="button danger span-all"
-          onClick={() => onDelete(detail.id)}
-          disabled={busy || commitTags.length > 0}
-          title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、先端にしているブランチ・いまここ・子の葉は親へ移します"}
+        <div
+          className="leaf-actions span-all"
+          ref={menuRoot}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenu();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && menuOpen) {
+              event.preventDefault();
+              event.stopPropagation();
+              closeMenu(true);
+            } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+              event.preventDefault();
+              if (!menuOpen) { if (!busy) setMenuTarget(menuContext); return; }
+              const items = Array.from(menuRoot.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+              const index = items.indexOf(document.activeElement as HTMLButtonElement);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
+              items[next]?.focus();
+            }
+          }}
         >
-          この葉を削除
-        </button>
+          <button className="button secondary" ref={menuTrigger} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} disabled={busy} onClick={() => menuOpen ? closeMenu() : setMenuTarget(menuContext)}>その他の操作 <span aria-hidden="true">▾</span></button>
+          {menuOpen && (
+            <div className="leaf-actions-menu" id={menuId} role="menu" aria-label="葉の補助操作">
+              <button className="button secondary" role="menuitem" onClick={() => { closeMenu(true); onSetThumbnail(detail.id); }} title="Ctrl+Vでクリップボードの画像も登録できます">
+                {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
+              </button>
+              <button className="button secondary" role="menuitem" onClick={() => { closeMenu(true); onExport(detail.id); }}>ファイルを取り出す</button>
+              <button
+                className="button danger"
+                role="menuitem"
+                onClick={() => { closeMenu(true); onDelete(detail.id); }}
+                disabled={commitTags.length > 0}
+                aria-describedby={commitTags.length > 0 ? `${menuId}-delete-reason` : undefined}
+                title={commitTags.length > 0 ? "タグ付きの葉は削除できません。先にタグを外してください。" : "この葉だけを削除し、先端にしているブランチ・いまここ・子の葉は親へ移します"}
+              >この葉を削除</button>
+              {commitTags.length > 0 && <p id={`${menuId}-delete-reason`} className="field-hint">タグ付きの葉は削除できません。先にタグを外してください。</p>}
+            </div>
+          )}
+        </div>
       </div>
       <nav className="section-nav" aria-label="葉の詳細の移動先">
         <button type="button" onClick={() => jumpTo(annotationSection)}>メモ・ラベル・タグ</button>

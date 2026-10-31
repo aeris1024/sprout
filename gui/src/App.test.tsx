@@ -104,6 +104,11 @@ async function openWorkspace(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();
 }
 
+async function chooseLeafAction(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole("button", { name: "その他の操作" }));
+  await user.click(screen.getByRole("menuitem", { name }));
+}
+
 describe("Sprout GUI operations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -667,7 +672,7 @@ describe("Sprout GUI operations", () => {
 
     mocks.open.mockResolvedValueOnce("C:\\work\\out");
     mocks.runSprout.mockResolvedValueOnce({ commit_id: commitEntry.id, output: "C:\\work\\out", paths: ["design/main.psd"] });
-    await user.click(screen.getByRole("button", { name: "ファイルを取り出す" }));
+    await chooseLeafAction(user, "ファイルを取り出す");
     expect(await screen.findByText("1件のファイルを C:\\work\\out へ書き出しました")).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["export", commitEntry.id, "--output", "C:\\work\\out"], "");
   });
@@ -764,7 +769,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce(thumbnail);
     mockWorkspace(cleanStatus, [commitEntry], treeGraph.branches, treeGraph);
     mocks.runSprout.mockResolvedValueOnce(detail);
-    await user.click(screen.getByRole("button", { name: "サムネイルを変更" }));
+    await chooseLeafAction(user, "サムネイルを変更");
     expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
     expect(mocks.runSprout).toHaveBeenCalledWith(project, ["thumbnail", tipId, image], "");
   });
@@ -820,14 +825,14 @@ describe("Sprout GUI operations", () => {
     const detail = { ...rootEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Past commit/ }));
-    expect(await screen.findByRole("button", { name: "サムネイルを登録" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "その他の操作" })).toBeTruthy();
 
     const image = "C:\\work\\past.png";
     let finishDialog: (value: string) => void = () => undefined;
     mocks.open.mockImplementationOnce(() => new Promise<string>((resolve) => {
       finishDialog = resolve;
     }));
-    await user.click(screen.getByRole("button", { name: "サムネイルを登録" }));
+    await chooseLeafAction(user, "サムネイルを登録");
     const callsBeforeFocus = mocks.runSprout.mock.calls.length;
     window.dispatchEvent(new Event("focus"));
     expect(mocks.runSprout).toHaveBeenCalledTimes(callsBeforeFocus);
@@ -866,7 +871,7 @@ describe("Sprout GUI operations", () => {
     const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
     mocks.runSprout.mockResolvedValueOnce(detail);
     await user.click(screen.getByRole("button", { name: /Initial design/ }));
-    expect(await screen.findByRole("button", { name: "サムネイルを登録" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "その他の操作" })).toBeTruthy();
 
     mocks.runSprout.mockResolvedValueOnce({});
     mockWorkspace();
@@ -1382,11 +1387,10 @@ describe("Sprout GUI operations", () => {
     it("deletes a snapshot only after confirming its previewed effects", async () => {
       const user = userEvent.setup();
       await openDetail(user);
-      const deleteButton = () => screen.getByRole("button", { name: "この葉を削除" });
 
       mocks.runSprout.mockResolvedValueOnce(deletion(true));
       mocks.confirm.mockResolvedValueOnce(false);
-      await user.click(deleteButton());
+      await chooseLeafAction(user, "この葉を削除");
       await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
       const [message, options] = mocks.confirm.mock.calls[0];
       expect(message).toContain("Initial design");
@@ -1403,7 +1407,7 @@ describe("Sprout GUI operations", () => {
         current_commit: null, at_branch_tip: true, commits: [], tags: [], buds: [],
         branches: [{ ...mainBranch[0], commit_id: null }],
       });
-      await user.click(deleteButton());
+      await chooseLeafAction(user, "この葉を削除");
       expect(await screen.findByText(`葉 ${id.slice(0, 12)} を削除しました`)).toBeTruthy();
       expect(sentArgs()).toContainEqual(["delete-commit", id, "--yes"]);
       expect(screen.queryByRole("region", { name: "選択中の葉" })).toBeNull();
@@ -1415,14 +1419,14 @@ describe("Sprout GUI operations", () => {
       mocks.runSprout.mockResolvedValueOnce(deletion(true));
       mocks.confirm.mockRejectedValueOnce("dialog.message not allowed");
 
-      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      await chooseLeafAction(user, "この葉を削除");
       expect(await screen.findByText("dialog.message not allowed")).toBeTruthy();
       expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
       expect(screen.getByRole("region", { name: "選択中の葉" })).toBeTruthy();
 
       mocks.runSprout.mockResolvedValueOnce(deletion(true));
       mocks.confirm.mockResolvedValueOnce(false);
-      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      await chooseLeafAction(user, "この葉を削除");
       await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
       expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
     });
@@ -1431,7 +1435,7 @@ describe("Sprout GUI operations", () => {
       const user = userEvent.setup();
       await openDetail(user);
       mocks.runSprout.mockRejectedValueOnce({ code: "tagged_commit", message: "commit is tagged", details: {} });
-      await user.click(screen.getByRole("button", { name: "この葉を削除" }));
+      await chooseLeafAction(user, "この葉を削除");
       expect(await screen.findByText("タグが付いた葉は削除できません。先にタグを削除してください")).toBeTruthy();
       expect(mocks.confirm).not.toHaveBeenCalled();
       expect(sentArgs().some((args) => args.includes("--yes"))).toBe(false);
@@ -1447,7 +1451,8 @@ describe("Sprout GUI operations", () => {
       await user.click(tagRegion.getByRole("button", { name: "タグを付ける" }));
       await screen.findByText("タグ 提出版 を付けました");
 
-      const deleteButton = screen.getByRole("button", { name: "この葉を削除" });
+      await user.click(screen.getByRole("button", { name: "その他の操作" }));
+      const deleteButton = screen.getByRole("menuitem", { name: "この葉を削除" });
       expect(deleteButton.hasAttribute("disabled")).toBe(true);
       expect(deleteButton.getAttribute("title")).toContain("タグ付きの葉は削除できません");
     });
@@ -2215,7 +2220,7 @@ describe("Sprout GUI operations", () => {
       const detail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail, attachments: [thumbnail], files: [] };
       mocks.runSprout.mockResolvedValueOnce(detail);
       await user.click(screen.getByRole("button", { name: /Initial design/ }));
-      await screen.findByRole("button", { name: "サムネイルを変更" });
+      await screen.findByRole("button", { name: "その他の操作" });
       if (accepted) {
         mocks.runSprout.mockResolvedValueOnce({});
         mockWorkspace();

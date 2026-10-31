@@ -289,6 +289,10 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .panel-actions { display: grid; gap: 8px; }
 .commit-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .commit-actions .button { padding-inline: 8px; white-space: normal; }
+.leaf-actions { position: relative; }
+.leaf-actions > .button { width: 100%; }
+.leaf-actions-menu { position: absolute; inset: 100% 0 auto; z-index: 4; display: grid; gap: 6px; margin-top: 4px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: 0 6px 20px #0002; }
+.leaf-actions-menu .button { text-align: left; }
 .span-all { grid-column: 1 / -1; }
 /* A flex column: a sticky grid item could not leave its own row. */
 .commit-panel { display: flex; flex-direction: column; }
