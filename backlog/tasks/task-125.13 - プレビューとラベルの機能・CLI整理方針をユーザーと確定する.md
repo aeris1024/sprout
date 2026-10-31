@@ -1,10 +1,11 @@
 ---
 id: TASK-125.13
 title: プレビューを葉全体の確認資料へ整理し素材関連付けを廃止する
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:33'
-updated_date: '2026-10-31 09:07'
+updated_date: '2026-10-31 11:26'
 labels:
   - cli
   - gui
@@ -49,11 +50,29 @@ ordinal: 137000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 プレビューを葉全体の添付資料として扱い、GUIの対象素材選択・表示、CLIの関連付け指定/解除、プレビューのJSONやアーカイブから素材関連付けの機能を廃止する
-- [ ] #2 leaf previewのlist/add/replace/delete/export/order/edit/imageを利用でき、editで表示名・説明を編集できる。代表指定や素材関連付けの操作を増設しない
-- [ ] #3 表示名・説明の値・既存制約・正規化と表示名未設定時の元ファイル名表示を維持し、順序の変更と再起動後の維持を利用できる
-- [ ] #4 追跡対象外ファイルの添付と置き換えを維持し、置き換えでは添付ID・位置・最初の登録日時・表示名・説明を保ち、失敗時に元の添付を変更しない
-- [ ] #5 削除・置き換えのゴミ箱復旧で原本と表示用メタ情報・順序を保ち、既存の関連付けを含む復旧記録を扱っても素材関連付けや代表指定を機能として復活させない
-- [ ] #6 ファイル自身の不変素材ID・改名移動をまたぐ履歴・サムネイル自動生成元の指定・ラベルは変更せず、V1方針と整合する
-- [ ] #7 CLI・GUI・serve・JSON・アーカイブ・サンプル・文書と関連テストを更新し、素材関連付け廃止、表示名/説明/順序・置き換え/復旧の維持を検証する
+- [x] #1 プレビューを葉全体の添付資料として扱い、GUIの対象素材選択・表示、CLIの関連付け指定/解除、プレビューのJSONやアーカイブから素材関連付けの機能を廃止する
+- [x] #2 leaf previewのlist/add/replace/delete/export/order/edit/imageを利用でき、editで表示名・説明を編集できる。代表指定や素材関連付けの操作を増設しない
+- [x] #3 表示名・説明の値・既存制約・正規化と表示名未設定時の元ファイル名表示を維持し、順序の変更と再起動後の維持を利用できる
+- [x] #4 追跡対象外ファイルの添付と置き換えを維持し、置き換えでは添付ID・位置・最初の登録日時・表示名・説明を保ち、失敗時に元の添付を変更しない
+- [x] #5 削除・置き換えのゴミ箱復旧で原本と表示用メタ情報・順序を保ち、既存の関連付けを含む復旧記録を扱っても素材関連付けや代表指定を機能として復活させない
+- [x] #6 ファイル自身の不変素材ID・改名移動をまたぐ履歴・サムネイル自動生成元の指定・ラベルは変更せず、V1方針と整合する
+- [x] #7 CLI・GUI・serve・JSON・アーカイブ・サンプル・文書と関連テストを更新し、素材関連付け廃止、表示名/説明/順序・置き換え/復旧の維持を検証する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Remove material association from public preview APIs and UI while keeping V1 physical storage inert; add canonical leaf preview operations with edit; preserve files, order, identity, metadata and recovery conflicts; verify backend/GUI/serve/archive/sample and update docs.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Preview metadata now consists of display name and description for leaf-wide reference material. Removed file_ids from attachment API/CLI/JSON/archive/GUI and association flags, choices and labels; file identity/history/thumbnail source remain untouched. Canonical leaf preview exposes list/add/replace/delete/export/order/edit/image; a separate hidden legacy root preview group keeps existing callers working until125.8. Physical V1 preview_assets storage stays inert, preserving existing repositories and complete raw recovery rows for exact conflict checks without migrations. Public trash detail omits inert association patches. Sample preview calls and README examples use canonical syntax. Verification: preview metadata/previews/trash/archive/cache tests77passed; sample/serve/file identity/cover/V1 storage tests100passed; full GUI238passed; TypeScript and Vitebuild succeeded. Tests cover all8canonical commands, removed option refusal without changes, persisted order, identity-preserving replacement, legacy stored association records through replace/delete/leaf-delete restoration and archive omission. Existing CRLF documentation checked with core.whitespace=cr-at-eol.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Simplified previews into leaf-wide reference material and introduced canonical leaf preview commands, preserving name/description/order, replacement identity, original files and recovery conflicts. Material association inputs/displays/public data are removed. Verified177backend tests,238GUI tests,typecheck and productionbuild; physical V1 storage unchanged.
+<!-- SECTION:FINAL_SUMMARY:END -->

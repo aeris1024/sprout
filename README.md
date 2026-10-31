@@ -540,22 +540,22 @@ sprout cover --clear           # 解除する
 
 ```powershell
 # 末尾へ追加（複数指定時はすべて追加されるか、1件も追加されない）
-sprout preview add <commit-id> voice.wav model.stl notes.pdf
+sprout leaf preview add <commit-id> voice.wav model.stl notes.pdf
 
 # 保存前にサイズと容量への影響を確認
-sprout preview add <commit-id> movie.mp4 --dry-run
+sprout leaf preview add <commit-id> movie.mp4 --dry-run
 
 # 表示順に一覧
-sprout preview list <commit-id>
-sprout preview list <commit-id> --json
+sprout leaf preview list <commit-id>
+sprout leaf preview list <commit-id> --json
 
 # 添付IDまたは一意な接頭辞で個別に操作
-sprout preview replace <commit-id> <preview-id> voice-v2.wav
-sprout preview export <commit-id> <preview-id> --output ../voice.wav
-sprout preview delete <commit-id> <preview-id>
+sprout leaf preview replace <commit-id> <preview-id> voice-v2.wav
+sprout leaf preview export <commit-id> <preview-id> --output ../voice.wav
+sprout leaf preview delete <commit-id> <preview-id>
 
 # 表示順を変更（そのコミットのpreviewをすべて新しい順に並べる）
-sprout preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
+sprout leaf preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
 ```
 
 各previewは不変の添付IDで識別されます。同じファイル名でも別のpreviewとして登録でき、置き換え・並べ替え・他のpreviewの削除でIDは変わりません。置き換えでは表示順と作成日時を維持し、更新日時だけが変わります。削除すると残りのpreviewは相対順を保ったまま詰められます。表示順はDBに保存され、再オープン後も一覧・`show`・`tree`とそれぞれのJSONが同じ順で返します。
@@ -564,7 +564,7 @@ sprout preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
 
 previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
 
-GUI向けの `sprout preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、原本形式（format）、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
+GUI向けの `sprout leaf preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、原本形式（format）、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
 
 ## コミットメッセージを変更する
 
@@ -1025,20 +1025,20 @@ Sproutは[MIT License](LICENSE)のもとで公開されています。
 葉のゴミ箱からの復旧も保存したIDを戻します。素材IDの登録情報は履歴や復旧項目の参照を失わないよう保持し、gcは内容の実体だけを従来どおり回収します。内容が同じ素材の重複排除は維持します。
 
 
-### previewの表示名・説明・対象素材
+### 葉全体のpreviewの表示名・説明
 
 previewには原本のファイル名とは別に表示名・説明を保存できます。表示名はNFC正規化と前後の空白除去後に256 Unicode文字まで、保存値に改行・NULは含めません。説明はNFC正規化後に2万文字までで改行を保持し、NULを拒否します。未設定の表示名は原本のファイル名で表示します。
 
 ```powershell
-sprout preview metadata <commit> <preview-id> --name=確認用 --description=初稿 --file-id <file-id-1> --file-id <file-id-2>
-sprout preview metadata <commit> <preview-id> --name= --description= --clear-materials
+sprout leaf preview edit <commit> <preview-id> --name=確認用 --description=初稿
+sprout leaf preview edit <commit> <preview-id> --name= --description=
 ```
 
-重要なpreviewは並べ替えて一覧の上へ置けます。順序を変えてもサムネイルを自動変更したり、未選択メディアを読み込んだりはしません。対象素材は同じコミット内の不変file_idで複数指定できます。別コミットにしかない素材や存在しないIDは拒否します。素材を改名・移動しても同一性はIDで保ち、各コミットの保存パスで対象を確認できます。作業中に追跡を解除しても過去コミットの関連は維持します。
+previewは葉全体を確認するための添付資料です。追跡対象外のファイルも添付でき、個別素材の指定は必要ありません。重要なpreviewは並べ替えて一覧の上へ置けます。順序を変えてもサムネイルを自動変更したり、未選択メディアを読み込んだりはしません。
 
-内容の置き換えと並べ替えではメタ情報・関連を保持します。置き換えは添付ID・表示位置・最初の登録日時も保持します。previewを削除すると関連を解除し、削除や置き換えの取り消しでは保存した情報を復旧します。その後にメタ情報や関連が編集されていれば、上書きを避けて復旧を拒否します。葉の削除・復旧も関連情報を含めて行います。必要なファイル一覧や添付が削除された場合は外部キーで関連を除去し、無効な参照を残しません。
+内容の置き換えと並べ替えでは表示名・説明を保持します。置き換えは添付ID・表示位置・最初の登録日時も保持します。削除や置き換えの取り消しでは保存した原本・表示名・説明・順序を復旧します。その後にメタ情報や添付一覧が編集されていれば、上書きを避けて復旧を拒否します。ファイル自身の素材ID、改名・移動をまたぐ履歴、サムネイル自動生成元はそれぞれ従来どおり利用できます。
 
-CLI・JSON・GUI・archiveに`display_name`、`description`、`file_ids`を含めます。GUIでは各previewの「表示名・説明・対象素材を編集」で設定・解除でき、関連する保存パスを表示します。
+CLI・JSON・GUI・archiveに`display_name`、`description`を含めます。GUIでは各previewの「表示名・説明を編集」で設定・解除できます。正規CLIは`leaf preview list/add/replace/delete/export/order/edit/image`です。
 
 
 ### 静止画像previewの表示キャッシュ

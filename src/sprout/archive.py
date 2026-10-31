@@ -177,8 +177,6 @@ def _attachment_html(from_dir: str, attachment: dict[str, Any], css_class: str) 
     metadata = ''
     if attachment.get('description'):
         metadata += '<p>' + _e(attachment['description']).replace('\n', '<br>') + '</p>'
-    if attachment.get('file_ids'):
-        metadata += '<p>対象素材: ' + ', '.join(_e(value) for value in attachment['file_ids']) + '</p>'
     return (
         f'<div class="{css_class}" id="a-{_e(attachment["id"])}">'
         f"<div>{position}<a href=\"{href}\">{name}</a> "

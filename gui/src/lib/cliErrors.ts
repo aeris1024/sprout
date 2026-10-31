@@ -12,7 +12,6 @@ const trashConflicts: Record<string, string> = {
   newer_note: "葉に新しいメモがあります",
   name_in_use: "同じ名前のブランチかタグがあります",
   preview_list_changed: "プレビューの一覧が変わっています。新しい操作から順に戻してください",
-  preview_materials_changed: "プレビューと素材の関連が変わっています",
   bud_base_missing: "つぼみの元の葉がありません",
   changed_since: "削除した後に内容が変わっています",
   missing_reference: "戻すために必要な葉やブランチがありません",
@@ -95,7 +94,6 @@ export const cliErrorTranslations: Record<string, Translation> = {
   invalid_preview_metadata: (details) => (details.field === "description"
     ? "プレビューの説明は20,000文字までです"
     : "プレビューの表示名は改行なしの256文字までです"),
-  invalid_preview_material: "プレビューの対象素材には同じ葉のファイルを選んでください",
   invalid_preview_order: "プレビューの一覧が変わっています。開き直してから並べ替えてください",
 
   path_not_in_commit: "この葉に含まれていないファイルです",

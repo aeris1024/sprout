@@ -38,7 +38,7 @@ describe("translateCliError", () => {
   it("only translates codes the CLI can send", () => {
     const missing = Object.keys(cliErrorTranslations).filter((code) => !cliSources.match(new RegExp(`code\\s*=\\s*["']${code}["']|code: str = "${code}"`)));
     expect(missing).toEqual([]);
-    for (const reason of ["commit_missing", "newer_note", "name_in_use", "preview_list_changed", "preview_materials_changed", "bud_base_missing", "changed_since", "missing_reference", "record_conflict"]) {
+    for (const reason of ["commit_missing", "newer_note", "name_in_use", "preview_list_changed", "bud_base_missing", "changed_since", "missing_reference", "record_conflict"]) {
       expect(cliSources).toContain(`'${reason}'`);
     }
   });

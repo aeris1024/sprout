@@ -391,7 +391,6 @@ class CommitAttachment:
     updated_at: str
     display_name: str = ""
     description: str = ""
-    file_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1759,7 +1758,7 @@ class Repository:
         }
 
     @staticmethod
-    def _attachment_from_row(row: sqlite3.Row, file_ids: tuple[str, ...] = ()) -> CommitAttachment:
+    def _attachment_from_row(row: sqlite3.Row) -> CommitAttachment:
         return CommitAttachment(
             id=row["id"],
             position=row["position"],
@@ -1772,7 +1771,6 @@ class Repository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             display_name=row["display_name"], description=row["description"],
-            file_ids=file_ids,
         )
 
     def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
@@ -1985,7 +1983,7 @@ class Repository:
                 f"WHERE commit_id IN ({placeholders}) ORDER BY role, position, id",
                 chunk,
             ):
-                grouped[row["commit_id"]].append(cls._attachment_from_row(row, tuple(r[0] for r in db.execute("SELECT file_id FROM preview_assets WHERE attachment_id=? ORDER BY file_id", (row["id"],)))))
+                grouped[row["commit_id"]].append(cls._attachment_from_row(row))
         return {
             commit_id: tuple(attachments)
             for commit_id, attachments in grouped.items()
@@ -2409,7 +2407,7 @@ class Repository:
         cls, db: sqlite3.Connection, commit_id: str
     ) -> list[CommitAttachment]:
         return [
-            cls._attachment_from_row(row, tuple(r[0] for r in db.execute("SELECT file_id FROM preview_assets WHERE attachment_id=? ORDER BY file_id", (row["id"],))))
+            cls._attachment_from_row(row)
             for row in db.execute(
                 "SELECT * FROM commit_attachments WHERE commit_id=? AND role=? "
                 "ORDER BY position, id",
@@ -2474,8 +2472,7 @@ class Repository:
     @locked
     def set_preview_metadata(self, value: str, attachment_id: str, *,
                              display_name: str | object = UNCHANGED,
-                             description: str | object = UNCHANGED,
-                             file_ids: list[str] | object = UNCHANGED) -> CommitAttachment:
+                             description: str | object = UNCHANGED) -> CommitAttachment:
         commit_id = self.resolve_commit(value)
         target = self.preview(commit_id, attachment_id)
         if display_name is not UNCHANGED:
@@ -2488,13 +2485,6 @@ class Repository:
                 raise SproutError('description must be at most 20000 characters', code='invalid_preview_metadata', details={'field': 'description'})
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if file_ids is not UNCHANGED:
-                for file_id in set(file_ids):
-                    if not db.execute('SELECT 1 FROM commit_files WHERE commit_id=? AND file_id=?', (commit_id,file_id)).fetchone():
-                        raise SproutError('preview material must belong to the same commit', code='invalid_preview_material', details={'file_id':file_id})
-                db.execute('DELETE FROM preview_assets WHERE attachment_id=?', (target.id,))
-                db.executemany('INSERT INTO preview_assets(attachment_id,commit_id,file_id) VALUES(?,?,?)',
-                               ((target.id,commit_id,f) for f in sorted(set(file_ids))))
             updates = {'updated_at':utc_timestamp()}
             for key, value in (('display_name',display_name),('description',description)):
                 if value is not UNCHANGED:
@@ -3119,7 +3109,7 @@ class Repository:
         changes = [{key: ({k: v for k, v in value.items() if k != 'is_primary'}
                           if patch['table'] == 'commit_attachments' and isinstance(value, dict)
                           else value) for key, value in patch.items()}
-                   for patch in payload['patches']]
+                   for patch in payload['patches'] if patch['table'] != 'preview_assets']
         return result | {'changes': changes}
 
     @locked
@@ -4253,7 +4243,6 @@ class Repository:
             "position": attachment.position,
             "original_name": attachment.original_name,
             "display_name": attachment.display_name, "description": attachment.description,
-            "file_ids": list(attachment.file_ids),
             "media_type": attachment.media_type,
             "size": attachment.size,
             "sha256": attachment.object_hash,

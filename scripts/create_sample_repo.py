@@ -223,17 +223,14 @@ class SampleBuilder:
         write_wav(jingle, (523.25, 659.25, 783.99, 1046.5))
         stand = self.attachments / "stand.stl"
         stand.write_text(STL, encoding="ascii")
-        previews = sprout.json("preview", "add", commit, str(large), str(jingle), str(stand))
+        previews = sprout.json("leaf", "preview", "add", commit, str(large), str(jingle), str(stand))
 
-        files = sprout.json("show", commit)["files"]
-        poster_id = next(item["file_id"] for item in files if item["path"] == "poster.png")
         sprout.run(
-            "preview", "metadata", commit, previews[0]["id"],
+            "leaf", "preview", "edit", commit, previews[0]["id"],
             "--name=印刷確認用", "--description=入稿データを2倍で書き出した確認用画像",
-            "--file-id", poster_id,
         )
-        sprout.run("preview", "metadata", commit, previews[1]["id"], "--name=ジングル試聴")
-        sprout.run("preview", "metadata", commit, previews[2]["id"], "--name=掲示スタンドの3Dモデル")
+        sprout.run("leaf", "preview", "edit", commit, previews[1]["id"], "--name=ジングル試聴")
+        sprout.run("leaf", "preview", "edit", commit, previews[2]["id"], "--name=掲示スタンドの3Dモデル")
 
     def build_side_branches(self, palette_commit: str, reviewed: str) -> None:
         sprout = self.sprout

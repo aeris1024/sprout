@@ -230,7 +230,7 @@ export default function CommitPanel({
         <CommitAnnotations detail={detail} tags={commitTags} busy={busy} {...annotations} />
       </div>
       <div className="section-target" ref={previewSection} tabIndex={-1}>
-        <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} files={detail.files} busy={busy} actions={previews} />
+        <PreviewPanel key={`${projectDir}:${detail.id}`} projectDir={projectDir} program={program} commitId={detail.id} attachments={detail.attachments} busy={busy} actions={previews} />
       </div>
       <div className="section-target" ref={fileSection} tabIndex={-1}>
         <SnapshotFiles key={detail.id} files={detail.files} busy={busy} onExport={(paths) => onExport(detail.id, paths)} onRestore={(paths) => onRestoreFiles(detail.id, paths)} />

@@ -164,7 +164,7 @@ def restore(db, item):
     if 'preview_commit' in payload:
         assets = capture_preview(db, payload['preview_commit'])['preview_assets']
         if sorted(assets, key=lambda r:(r['attachment_id'],r['file_id'])) != sorted(payload.get('assets_after',[]), key=lambda r:(r['attachment_id'],r['file_id'])):
-            conflict(item['id'], 'preview material associations changed', 'preview_materials_changed')
+            conflict(item['id'], 'preview recovery context changed since this operation', 'changed_since')
     for patch in payload['patches']:
         if item['kind'] in ANNOTATION_KINDS:
             check_annotation_target(db, item, patch)

@@ -263,7 +263,6 @@ def _attachment_json(attachment: CommitAttachment) -> dict[str, Any]:
         "role": attachment.role,
         "original_name": attachment.original_name,
         "display_name": attachment.display_name, "description": attachment.description,
-        "file_ids": list(attachment.file_ids),
         "media_type": attachment.media_type,
         "object_hash": attachment.object_hash,
         "size": attachment.size,
@@ -1171,7 +1170,10 @@ preview_app = typer.Typer(
     help="List, add, replace, delete, export, or reorder commit previews.",
     no_args_is_help=True,
 )
-app.add_typer(preview_app, name="preview")
+leaf_app.add_typer(preview_app, name="preview")
+# Keep existing GUI/script calls working until the final migration cleanup.
+legacy_preview_app = typer.Typer(no_args_is_help=True)
+app.add_typer(legacy_preview_app, name="preview", hidden=True)
 
 PreviewCommitArgument = Annotated[
     str,
@@ -1247,6 +1249,7 @@ def _preview_text(index: int, attachment: CommitAttachment) -> str:
 
 
 @preview_app.command(name="list")
+@legacy_preview_app.command(name="list")
 def preview_list(
     commit: PreviewCommitArgument,
     json_output: PreviewJsonOption = False,
@@ -1265,6 +1268,7 @@ def preview_list(
 
 
 @preview_app.command(name="image")
+@legacy_preview_app.command(name="image")
 def preview_image(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1281,6 +1285,7 @@ def preview_image(
 
 
 @preview_app.command(name="add")
+@legacy_preview_app.command(name="add")
 def preview_add(
     commit: PreviewCommitArgument,
     files: Annotated[
@@ -1308,23 +1313,19 @@ def preview_add(
         typer.echo(f"Added preview {_preview_text(item.position + 1, item)}")
 
 
-@preview_app.command(name="metadata")
+@preview_app.command(name="edit")
+@legacy_preview_app.command(name="metadata")
 def preview_metadata(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
     name: Annotated[str | None, typer.Option("--name")] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
-    material: Annotated[list[str] | None, typer.Option("--file-id")] = None,
-    clear_materials: Annotated[bool, typer.Option("--clear-materials")] = False,
     json_output: PreviewJsonOption = False,
 ) -> None:
-    """Edit preview presentation and same-snapshot material associations."""
-    if material and clear_materials:
-        raise SproutError('--file-id cannot be combined with --clear-materials')
+    """Edit the display name and description of leaf-wide reference material."""
     attachment = repo().set_preview_metadata(commit,attachment_id,
         display_name=name if name is not None else UNCHANGED,
-        description=description if description is not None else UNCHANGED,
-        file_ids=[] if clear_materials else material if material is not None else UNCHANGED)
+        description=description if description is not None else UNCHANGED)
     if json_output:
         _echo_json(_attachment_json(attachment))
     else:
@@ -1332,6 +1333,7 @@ def preview_metadata(
 
 
 @preview_app.command(name="replace")
+@legacy_preview_app.command(name="replace")
 def preview_replace(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1358,6 +1360,7 @@ def preview_replace(
 
 
 @preview_app.command(name="delete")
+@legacy_preview_app.command(name="delete")
 def preview_delete(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1375,6 +1378,7 @@ def preview_delete(
 
 
 @preview_app.command(name="export")
+@legacy_preview_app.command(name="export")
 def preview_export(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1401,6 +1405,7 @@ def preview_export(
 
 
 @preview_app.command(name="order")
+@legacy_preview_app.command(name="order")
 def preview_order(
     commit: PreviewCommitArgument,
     attachment_ids: Annotated[
