@@ -1,10 +1,11 @@
 ---
 id: TASK-125.6
 title: Gitで馴染みのある手打ちaliasを正規CLIへ対応させる
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:24'
-updated_date: '2026-10-31 08:59'
+updated_date: '2026-10-31 16:15'
 labels:
   - cli
   - usability
@@ -54,10 +55,28 @@ tag NAME [LEAF] -> leaf tag create NAME [LEAF]
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 列挙した15パターンが統合後の正規処理へ対応し、logの素材ID検索、commitの既存オプション、stash pushのname/keep-files、dropの確認指定も利用できる
-- [ ] #2 aliasと対応する統合後の正規処理で結果・JSON・終了コード・安全確認が一致する。switchは指定したブランチを選び、旧switchとの動作差は移動統合で確認した方針に従う
-- [ ] #3 stash popは明示したBUDを復元して成功時に消費する既存bud restoreの動作であり、Gitのapplyや追跡設定の仕様を新設しない
-- [ ] #4 引数なしのtagは一覧、tag NAME [LEAF]は作成となり、list/create等の語もタグ名として指定できる
-- [ ] #5 通常ヘルプで正規入口を見つけやすく、別途aliasの全対応を確認でき、GitとSproutの動作差を利用者が理解できる
-- [ ] #6 正規構文とaliasの対応、および不正な引数・衝突する名前・確認付き操作を自動テストで検証する
+- [x] #1 列挙した15パターンが統合後の正規処理へ対応し、logの素材ID検索、commitの既存オプション、stash pushのname/keep-files、dropの確認指定も利用できる
+- [x] #2 aliasと対応する統合後の正規処理で結果・JSON・終了コード・安全確認が一致する。switchは指定したブランチを選び、旧switchとの動作差は移動統合で確認した方針に従う
+- [x] #3 stash popは明示したBUDを復元して成功時に消費する既存bud restoreの動作であり、Gitのapplyや追跡設定の仕様を新設しない
+- [x] #4 引数なしのtagは一覧、tag NAME [LEAF]は作成となり、list/create等の語もタグ名として指定できる
+- [x] #5 通常ヘルプで正規入口を見つけやすく、別途aliasの全対応を確認でき、GitとSproutの動作差を利用者が理解できる
+- [x] #6 正規構文とaliasの対応、および不正な引数・衝突する名前・確認付き操作を自動テストで検証する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Map the agreed 15 hand-typed alias patterns to canonical callbacks, adding mv/stash and canonical log file-id support without extra Git behavior. Show the ten canonical entries in normal help, expose --help-aliases, and preserve alias completion despite hidden help entries. Retain temporary legacy routes until TASK-125.8. Verify alias/canonical JSON, options, refusal/confirmation, literal names and explicit stash-pop consumption through CLI and serve.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Mapped all 15 agreed alias patterns to canonical operations: shared commit/log/show/tree/diff/track/untrack callbacks, mv for file move, switch for explicit go, direct stash push/list/pop/drop registrations on bud callbacks, and tag list-or-create delegation. Added --help-aliases with the full mapping and no-staging/explicit-consuming-pop/no-apply explanations. Normal help shows exactly the ten canonical entries; a custom root completion group adds only the agreed hidden alias names so aliases remain discoverable by completion while temporary old entries do not. Tag alias temporarily retains hidden legacy deletion/comment options for current GUI callers until TASK-125.8 removes them. Verified all alias patterns, file-ID log, thumbnail and stash options, JSON and refusal parity, literal tag names, explicit pop consumption, drop confirmation and completion behavior. Selected CLI/serve and canonical-group regression suite: 100 passed in 72s. git diff --check passed; storage unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added the agreed hand-typed aliases, focused ten-entry help and --help-aliases, while keeping aliases available in completion. Verified 100 CLI/serve regression tests covering mappings, options, errors and destructive-operation safeguards.
+<!-- SECTION:FINAL_SUMMARY:END -->

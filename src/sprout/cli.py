@@ -104,7 +104,41 @@ class _MigrationGroup(typer.core.TyperGroup):
         return super().parse_args(ctx, args)
 
 
+_CANONICAL_COMMANDS = {'init', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
+_ALIAS_HELP = (
+    ('commit -m TEXT', 'leaf create -m TEXT'),
+    ('log [PATH] / --file-id FILE_ID', 'leaf list [PATH] / --file-id FILE_ID'),
+    ('show LEAF', 'leaf show LEAF'),
+    ('tree', 'leaf tree'),
+    ('diff ...', 'file diff ...'),
+    ('track PATH...', 'file track PATH...'),
+    ('untrack PATH...', 'file untrack PATH...'),
+    ('mv OLD NEW', 'file move OLD NEW'),
+    ('switch NAME', 'go --branch NAME'),
+    ('stash push', 'bud save'),
+    ('stash list', 'bud list'),
+    ('stash pop BUD', 'bud restore BUD'),
+    ('stash drop BUD', 'bud delete BUD'),
+    ('tag', 'leaf tag list'),
+    ('tag NAME [LEAF]', 'leaf tag create NAME [LEAF]'),
+)
+_ALIAS_NAMES = {name.split()[0] for name, _ in _ALIAS_HELP}
+
+
+class _AliasGroup(typer.core.TyperGroup):
+    """Complete hand-typed aliases while keeping normal help focused."""
+
+    def shell_complete(self, ctx: Any, incomplete: str) -> list[Any]:
+        results = super().shell_complete(ctx, incomplete)
+        present = {item.value for item in results}
+        for name in sorted(_ALIAS_NAMES):
+            if name.startswith(incomplete) and name in self.commands and name not in present:
+                results.append(typer.core.CompletionItem(name, help='Hand-typed alias; see --help-aliases'))
+        return results
+
+
 app = typer.Typer(
+    cls=_AliasGroup,
     add_completion=True,
     no_args_is_help=True,
     help="Offline snapshot version control for local files.",
@@ -119,6 +153,7 @@ maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain p
 bud_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Save and restore buds of unfinished work.")
 branch_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Create and manage branches.")
 trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery items.")
+stash_app = typer.Typer(no_args_is_help=True, help="Hand-typed aliases for saving and restoring buds.")
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
 leaf_app.add_typer(label_app, name="label")
@@ -129,6 +164,7 @@ app.add_typer(maintenance_app, name="maintenance")
 app.add_typer(bud_app, name="bud")
 app.add_typer(branch_app, name="branch")
 app.add_typer(trash_app, name="trash")
+app.add_typer(stash_app, name="stash", hidden=True)
 
 
 @file_app.callback()
@@ -201,9 +237,20 @@ def _version(value: bool) -> None:
         raise typer.Exit()
 
 
+def _show_aliases(value: bool) -> None:
+    if value:
+        for alias, canonical in _ALIAS_HELP:
+            typer.echo(f"{alias:<32} -> {canonical}")
+        typer.echo("\nAliases use Sprout behavior: track has no staging area.")
+        typer.echo("stash pop requires an explicit BUD and consumes it on success; there is no stash apply.")
+        typer.echo("All options, JSON, exit codes and safety checks come from the corresponding canonical operation.")
+        raise typer.Exit()
+
+
 @app.callback()
 def callback(
     version: Annotated[bool, typer.Option("--version", callback=_version, is_eager=True)] = False,
+    help_aliases: Annotated[bool, typer.Option("--help-aliases", callback=_show_aliases, is_eager=True, help="Show hand-typed aliases and their canonical commands")] = False,
 ) -> None:
     """Manage complete snapshots of project files."""
 
@@ -1843,7 +1890,6 @@ def branch(
         typer.echo(f"{marker} {branch_name:<20} {(commit_id or '-')[:12]}{suffix}")
 
 
-@app.command()
 def tag(
     name: Annotated[str | None, typer.Argument(help="Tag name")] = None,
     commit: Annotated[
@@ -1951,6 +1997,27 @@ def tag_delete(
 ) -> None:
     """Delete the tag while retaining its leaf and recovery data."""
     tag(delete=name, json_output=json_output)
+
+
+@app.command(name="tag", hidden=True)
+def tag_alias(
+    name: Annotated[str | None, typer.Argument(help="Tag name; omit to list tags")] = None,
+    commit: Annotated[str | None, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)] = None,
+    comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the new tag")] = "",
+    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
+    delete: Annotated[str | None, typer.Option("--delete", hidden=True)] = None,
+    set_comment: Annotated[str | None, typer.Option("--set-comment", hidden=True)] = None,
+) -> None:
+    """Alias for leaf tag list or leaf tag create NAME [LEAF]."""
+    if delete is not None or set_comment is not None:
+        # Only retained until the GUI and scripts finish their staged migration.
+        tag(name, commit, comment, delete, set_comment, json_output)
+    elif name is None:
+        if commit is not None or comment:
+            raise SproutError("a tag name is required")
+        tag_list(json_output=json_output)
+    else:
+        tag_create(name, commit, comment, json_output)
 
 
 @bud_app.command(name="_legacy", hidden=True)
@@ -2738,6 +2805,21 @@ def stats(
     typer.echo(f"Logical size:  {result.logical_bytes} bytes")
     typer.echo(f"Unique size:   {result.unique_bytes} bytes")
     typer.echo(f"Dedup saved:   {result.dedup_saved_bytes} bytes")
+
+
+app.command(name="mv", hidden=True)(move)
+stash_app.command(name="push")(bud_save)
+stash_app.command(name="list")(bud_list)
+stash_app.command(name="pop")(bud_restore)
+stash_app.command(name="drop")(bud_delete)
+
+# Temporary old entry points still execute during migration, but only canonical
+# commands are shown in normal help. TASK-125.8 removes the temporary routes.
+for _command in app.registered_commands:
+    _name = _command.name or _command.callback.__name__.replace('_', '-')
+    _command.hidden = _name not in _CANONICAL_COMMANDS
+for _group in app.registered_groups:
+    _group.hidden = _group.name not in _CANONICAL_COMMANDS
 
 
 def _system_exit_code(value: object) -> int:
