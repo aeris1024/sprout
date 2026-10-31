@@ -1766,7 +1766,7 @@ describe("Sprout GUI operations", () => {
     mocks.runSprout.mockResolvedValueOnce(previewDetail);
   }
 
-  it("edits preview metadata and materials, retains refused input and shows the representative", async () => {
+  it("edits preview metadata and materials, retains refused input without primary controls", async () => {
     const user = userEvent.setup();
     render(<App />);
     await openWorkspace(user);
@@ -1778,20 +1778,21 @@ describe("Sprout GUI operations", () => {
     const form = screen.getByRole("form", { name: "voice.wavのメタ情報" });
     await user.type(within(form).getByLabelText("表示名"), "Review");
     await user.type(within(form).getByLabelText("説明"), "Notes");
-    await user.click(within(form).getByRole("checkbox", { name: "この葉の代表プレビュー" }));
+    expect(within(form).queryByRole("checkbox", { name: "この葉の代表プレビュー" })).toBeNull();
     await user.click(within(form).getByRole("checkbox", { name: "scene.blend" }));
     mocks.runSprout.mockRejectedValueOnce({ code: "invalid_preview_material", message: "material changed", details: {} });
     await user.click(within(form).getByRole("button", { name: "メタ情報を保存" }));
     expect((await screen.findByRole("alert")).textContent).toContain("プレビューの対象素材には同じ葉のファイルを選んでください");
     expect((within(form).getByLabelText("表示名") as HTMLInputElement).value).toBe("Review");
-    const metadata = { display_name: "Review", description: "Notes", is_primary: true, file_ids: ["asset-1"] };
+    const metadata = { display_name: "Review", description: "Notes", file_ids: ["asset-1"] };
     mocks.runSprout.mockResolvedValueOnce(metadata);
     mockWorkspace();
     mocks.runSprout.mockResolvedValueOnce({ ...detail, attachments: [{ ...detail.attachments[0], ...metadata, updated_at: "changed" }, detail.attachments[1]] });
     await user.click(within(form).getByRole("button", { name: "メタ情報を保存" }));
-    expect(await screen.findByText("代表")).toBeTruthy();
+    expect(await screen.findByText("Review")).toBeTruthy();
+    expect(screen.queryByText("代表")).toBeNull();
     expect(screen.getByText("対象素材: scene.blend")).toBeTruthy();
-    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "metadata", commitEntry.id, "p1", "--name=Review", "--description=Notes", "--primary", "--file-id", "asset-1"], "");
+    expect(mocks.runSprout).toHaveBeenCalledWith(project, ["preview", "metadata", commitEntry.id, "p1", "--name=Review", "--description=Notes", "--file-id", "asset-1"], "");
     expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "preview" && call[1][1] === "image")).toBe(false);
   });
 

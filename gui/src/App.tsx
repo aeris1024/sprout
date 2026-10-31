@@ -1121,7 +1121,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
       return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
           await runSprout(projectDir, ["preview", "metadata", commitDetail.id, id,
-            `--name=${data.display_name}`, `--description=${data.description}`, data.is_primary ? "--primary" : "--no-primary",
+            `--name=${data.display_name}`, `--description=${data.description}`,
             ...(data.file_ids.length ? data.file_ids.flatMap((fileId) => ["--file-id", fileId]) : ["--clear-materials"])], sproutProgram);
           return true;
         }),

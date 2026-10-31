@@ -230,7 +230,7 @@ class SampleBuilder:
         sprout.run(
             "preview", "metadata", commit, previews[0]["id"],
             "--name=印刷確認用", "--description=入稿データを2倍で書き出した確認用画像",
-            "--primary", "--file-id", poster_id,
+            "--file-id", poster_id,
         )
         sprout.run("preview", "metadata", commit, previews[1]["id"], "--name=ジングル試聴")
         sprout.run("preview", "metadata", commit, previews[2]["id"], "--name=掲示スタンドの3Dモデル")

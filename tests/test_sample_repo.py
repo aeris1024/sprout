@@ -57,7 +57,7 @@ def test_sample_contains_each_feature(sprout) -> None:
     assert submitted["labels"] == ["submitted"]
     previews = sprout("preview", "list", "submitted")
     assert len(previews) == 3
-    assert [preview["is_primary"] for preview in previews] == [True, False, False]
+    assert all('is_primary' not in preview for preview in previews)
 
 
 def test_sample_ends_clean_on_main_with_healthy_storage(sprout, sample: Path) -> None:

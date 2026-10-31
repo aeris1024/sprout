@@ -257,7 +257,7 @@ def _attachment_json(attachment: CommitAttachment) -> dict[str, Any]:
         "role": attachment.role,
         "original_name": attachment.original_name,
         "display_name": attachment.display_name, "description": attachment.description,
-        "is_primary": attachment.is_primary, "file_ids": list(attachment.file_ids),
+        "file_ids": list(attachment.file_ids),
         "media_type": attachment.media_type,
         "object_hash": attachment.object_hash,
         "size": attachment.size,
@@ -1252,7 +1252,6 @@ def preview_metadata(
     attachment_id: PreviewIdArgument,
     name: Annotated[str | None, typer.Option("--name")] = None,
     description: Annotated[str | None, typer.Option("--description")] = None,
-    primary: Annotated[bool | None, typer.Option("--primary/--no-primary")] = None,
     material: Annotated[list[str] | None, typer.Option("--file-id")] = None,
     clear_materials: Annotated[bool, typer.Option("--clear-materials")] = False,
     json_output: PreviewJsonOption = False,
@@ -1263,7 +1262,6 @@ def preview_metadata(
     attachment = repo().set_preview_metadata(commit,attachment_id,
         display_name=name if name is not None else UNCHANGED,
         description=description if description is not None else UNCHANGED,
-        primary=primary if primary is not None else UNCHANGED,
         file_ids=[] if clear_materials else material if material is not None else UNCHANGED)
     if json_output:
         _echo_json(_attachment_json(attachment))

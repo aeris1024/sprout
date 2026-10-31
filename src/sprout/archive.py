@@ -174,7 +174,7 @@ def _attachment_html(from_dir: str, attachment: dict[str, Any], css_class: str) 
     position = (
         f"表示順 {attachment['position'] + 1} / " if attachment["role"] == "preview" else ""
     )
-    metadata = ('<strong>代表preview</strong>' if attachment.get('is_primary') else '')
+    metadata = ''
     if attachment.get('description'):
         metadata += '<p>' + _e(attachment['description']).replace('\n', '<br>') + '</p>'
     if attachment.get('file_ids'):

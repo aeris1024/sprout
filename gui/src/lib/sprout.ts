@@ -73,7 +73,6 @@ export interface CommitAttachment {
   original_name: string;
   display_name?: string;
   description?: string;
-  is_primary?: boolean;
   file_ids?: string[];
   media_type: string;
   object_hash: string;

@@ -391,7 +391,6 @@ class CommitAttachment:
     updated_at: str
     display_name: str = ""
     description: str = ""
-    is_primary: bool = False
     file_ids: tuple[str, ...] = ()
 
 
@@ -1773,7 +1772,7 @@ class Repository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             display_name=row["display_name"], description=row["description"],
-            is_primary=bool(row["is_primary"]), file_ids=file_ids,
+            file_ids=file_ids,
         )
 
     def _store_tracked_files(self, action: str) -> tuple[list[FileState], list[str]]:
@@ -2439,7 +2438,6 @@ class Repository:
     def set_preview_metadata(self, value: str, attachment_id: str, *,
                              display_name: str | object = UNCHANGED,
                              description: str | object = UNCHANGED,
-                             primary: bool | object = UNCHANGED,
                              file_ids: list[str] | object = UNCHANGED) -> CommitAttachment:
         commit_id = self.resolve_commit(value)
         target = self.preview(commit_id, attachment_id)
@@ -2460,10 +2458,8 @@ class Repository:
                 db.execute('DELETE FROM preview_assets WHERE attachment_id=?', (target.id,))
                 db.executemany('INSERT INTO preview_assets(attachment_id,commit_id,file_id) VALUES(?,?,?)',
                                ((target.id,commit_id,f) for f in sorted(set(file_ids))))
-            if primary is True:
-                db.execute("UPDATE commit_attachments SET is_primary=0 WHERE commit_id=? AND role='preview'", (commit_id,))
             updates = {'updated_at':utc_timestamp()}
-            for key, value in (('display_name',display_name),('description',description),('is_primary',primary)):
+            for key, value in (('display_name',display_name),('description',description)):
                 if value is not UNCHANGED:
                     updates[key] = value
             db.execute('UPDATE commit_attachments SET '+','.join(f'{k}=?' for k in updates)+' WHERE id=?',
@@ -3081,7 +3077,13 @@ class Repository:
         result = self.trash_items(item_id)[0]
         with self.connect() as db:
             payload = recovery.validate(db, recovery.load(db, item_id))
-        return result | {'changes': payload['patches']}
+        # Recovery stores complete V1 rows, but retired storage markers are not
+        # part of the public attachment metadata or recovery presentation.
+        changes = [{key: ({k: v for k, v in value.items() if k != 'is_primary'}
+                          if patch['table'] == 'commit_attachments' and isinstance(value, dict)
+                          else value) for key, value in patch.items()}
+                   for patch in payload['patches']]
+        return result | {'changes': changes}
 
     @locked
     def restore_trash(self, item_id: str, *, dry_run: bool = False) -> dict[str, Any]:
@@ -4214,7 +4216,7 @@ class Repository:
             "position": attachment.position,
             "original_name": attachment.original_name,
             "display_name": attachment.display_name, "description": attachment.description,
-            "is_primary": attachment.is_primary, "file_ids": list(attachment.file_ids),
+            "file_ids": list(attachment.file_ids),
             "media_type": attachment.media_type,
             "size": attachment.size,
             "sha256": attachment.object_hash,
