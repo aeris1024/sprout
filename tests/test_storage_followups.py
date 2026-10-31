@@ -234,7 +234,7 @@ def test_unsupported_encoding_cli_error(tmp_path, monkeypatch, capsys, json_outp
     digest = repo.manifest(first)["asset.bin"].object_hash
     unsupported(repo, digest)
     monkeypatch.chdir(repo.root)
-    monkeypatch.setattr(sys, "argv", ["sprout", "restore", first, "--discard"] + (["--json"] if json_output else []))
+    monkeypatch.setattr(sys, "argv", ["sprout", "go", first, "--keep-branch", "--discard"] + (["--json"] if json_output else []))
     assert cli.main() == 1
     captured = capsys.readouterr()
     if json_output:

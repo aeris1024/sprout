@@ -36,7 +36,7 @@ def test_bud_explicit_save_copy_names_clear_restore_and_pending_work(tmp_path, m
     assert restored['restored']['id'] == saved['id']
     assert restored['saved'] is not None and asset.read_bytes() == b'copied'
     assert saved['id'] not in {item['id'] for item in call('bud', 'list')}
-    assert call('bud', 'list') == call('bud')
+    assert len(call('bud', 'list')) == 1
     pending = restored['saved']['id']
     call('bud', 'restore', pending)
     assert asset.read_bytes() == b'other work'
@@ -89,7 +89,7 @@ def test_branch_creation_can_explicitly_refuse_unsaved_changes(tmp_path, monkeyp
     refused = run_command(app, ['branch', 'create', 'refused', leaf, '--switch', '--reject-changes', '--json'])
     assert not refused['ok'] and asset.read_bytes() == b'draft'
     assert 'refused' not in {name for name, _, _ in repo.branches()}
-    created = call('branch', 'create', 'new-work', leaf, '--switch', '--keep-changes')
+    created = call('branch', 'create', 'new-work', leaf, '--switch')
     assert created['current'] and created['bud'] is not None
     assert repo.head_branch() == 'new-work' and asset.read_bytes() == b'base'
     conflict = run_command(app, ['branch', 'rename', 'new-work', 'main', '--json'])
@@ -98,12 +98,16 @@ def test_branch_creation_can_explicitly_refuse_unsaved_changes(tmp_path, monkeyp
     assert 'switch' not in runner.invoke(app, ['branch', '--help']).stdout
 
 
-def test_transitional_legacy_bud_and_branch_flags_remain_available(tmp_path, monkeypatch):
+def test_transitional_bud_and_branch_routes_are_removed_without_changes(tmp_path, monkeypatch):
     repo, asset, _ = project(tmp_path, monkeypatch)
-    call('branch', 'old-name', '-m', 'legacy')
-    assert call('branch', 'old-name', '--set-comment', 'edited')['comment'] == 'edited'
-    assert any(item['name'] == 'old-name' for item in call('branch'))
     asset.write_bytes(b'draft')
-    saved = call('bud', '--save', '--name', 'old-bud')
-    assert call('bud', '--restore', saved['id'])['restored']['id'] == saved['id']
+    branches = repo.branches()
+    for args in [
+        ['branch', 'old-name'], ['branch', '--deleted'], ['branch', '_legacy'],
+        ['bud', '--save'], ['bud', '--restore', 'missing'], ['bud', '_legacy'],
+        ['branch', 'create', 'new-name', '--switch', '--keep-changes'],
+    ]:
+        refused = run_command(app, [*args, '--json'])
+        assert not refused['ok'] and refused['error']['code'] == 'usage_error'
+        assert repo.branches() == branches and repo.buds() == []
     assert asset.read_bytes() == b'draft'

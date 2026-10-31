@@ -37,10 +37,10 @@ def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
     asset = project / "scene.blend"
     asset.write_bytes(b"scene")
 
-    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "scene.blend"], project, monkeypatch).exit_code == 0
     result = invoke(["status"], project, monkeypatch)
     assert "added" in result.stdout
-    result = invoke(["commit", "-m", "first"], project, monkeypatch)
+    result = invoke(["leaf", "create", "-m", "first"], project, monkeypatch)
     assert result.exit_code == 0
     assert "[main " in result.stdout
     assert "Working tree clean" in invoke(["status"], project, monkeypatch).stdout
@@ -57,57 +57,58 @@ def test_cli_workflow(tmp_path: Path, monkeypatch) -> None:
     assert "Untracked files:" in result.stdout
     assert "notes.txt" in result.stdout
     assert "scene.blend" not in result.stdout
-    result = invoke(["move", "scene.blend", "archive/scene.blend"], project, monkeypatch)
+    result = invoke(["file", "move", "scene.blend", "archive/scene.blend"], project, monkeypatch)
     assert result.exit_code == 0
     assert "move  scene.blend -> archive/scene.blend" in result.stdout
     assert not asset.exists()
     assert (project / "archive/scene.blend").read_bytes() == b"scene"
-    assert "first" in invoke(["log"], project, monkeypatch).stdout
-    assert "* main" in invoke(["branch"], project, monkeypatch).stdout
-    result = invoke(["branch", "ideas", "--comment", "Explore silhouettes"], project, monkeypatch)
+    assert "first" in invoke(["leaf", "list"], project, monkeypatch).stdout
+    assert "* main" in invoke(["branch", "list"], project, monkeypatch).stdout
+    result = invoke(["branch", "create", "ideas", "--comment", "Explore silhouettes"], project, monkeypatch)
     assert result.exit_code == 0
-    assert "Explore silhouettes" in invoke(["branch"], project, monkeypatch).stdout
-    result = invoke(["branch", "ideas", "--set-comment", "Explore colors"], project, monkeypatch)
+    assert "Explore silhouettes" in invoke(["branch", "list"], project, monkeypatch).stdout
+    result = invoke(["branch", "comment", "ideas", "Explore colors"], project, monkeypatch)
     assert result.exit_code == 0
-    assert "Explore colors" in invoke(["branch"], project, monkeypatch).stdout
+    assert "Explore colors" in invoke(["branch", "list"], project, monkeypatch).stdout
 
 
 def test_branch_cli_renames_and_deletes(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "asset.bin").write_bytes(b"data")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "experiment", "-m", "案"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "experiment", "-m", "案"], project, monkeypatch).exit_code == 0
 
     renamed = invoke(
-        ["branch", "experiment", "--rename", "prototype"], project, monkeypatch
+        ["branch", "rename", "experiment", "prototype"], project, monkeypatch
     )
     assert renamed.exit_code == 0
     assert renamed.stdout == "Renamed branch experiment to prototype\n"
-    branches = json.loads(invoke(["branch", "--json"], project, monkeypatch).stdout)
+    branches = json.loads(invoke(["branch", "list", "--json"], project, monkeypatch).stdout)
     assert any(
         branch["name"] == "prototype" and branch["comment"] == "案"
         for branch in branches
     )
     assert all(branch["name"] != "experiment" for branch in branches)
 
-    deleted = invoke(["branch", "--delete", "prototype"], project, monkeypatch)
+    deleted = invoke(["branch", "delete", "prototype"], project, monkeypatch)
     assert deleted.exit_code == 0
-    assert deleted.stdout == "Deleted branch prototype; recover it with 'sprout trash'\n"
-    assert "prototype" not in invoke(["branch"], project, monkeypatch).stdout
+    assert deleted.stdout == "Deleted branch prototype; recover it with 'sprout trash list'\n"
+    assert "prototype" not in invoke(["branch", "list"], project, monkeypatch).stdout
 
-    current = invoke(["branch", "--delete", "main"], project, monkeypatch)
+    current = invoke(["branch", "delete", "main"], project, monkeypatch)
     assert current.exit_code != 0
     assert "cannot delete current branch" in str(current.exception)
 
     conflict = invoke(
-        ["branch", "main", "--rename", "trunk", "--set-comment", "note"],
+        ["branch", "rename", "main", "trunk", "--set-comment", "note"],
         project,
         monkeypatch,
     )
     assert conflict.exit_code != 0
-    assert "--rename cannot be combined with comment options" in str(conflict.exception)
+    assert conflict.exit_code == 2  # Canonical rename refuses the retired combined-operation flag.
+    assert Repository.discover(project).head_branch() == "main"
 
 
 def test_branch_cli_start_point_switch_and_restored_guard(
@@ -117,29 +118,29 @@ def test_branch_cli_start_point_switch_and_restored_guard(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     first = Repository.discover().log()[0]["id"]
     asset.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
-    assert invoke(["tag", "landmark", first], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "side"], project, monkeypatch).exit_code == 0
-    assert invoke(["switch", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "tag", "create", "landmark", first], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", "--branch", "side"], project, monkeypatch).exit_code == 0
     asset.write_bytes(b"side")
-    assert invoke(["commit", "-m", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "side"], project, monkeypatch).exit_code == 0
     side = Repository.discover().log()[0]["id"]
-    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", "--branch", "main"], project, monkeypatch).exit_code == 0
 
-    created = invoke(["branch", "from-commit", first], project, monkeypatch)
+    created = invoke(["branch", "create", "from-commit", first], project, monkeypatch)
     assert created.exit_code == 0
     assert created.stdout == "Created branch from-commit\n"
-    assert invoke(["branch", "from-prefix", first[:8]], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "from-tag", "landmark"], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "from-side", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "from-prefix", first[:8]], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "from-tag", "landmark"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "from-side", "side"], project, monkeypatch).exit_code == 0
 
     branches = {
         item["name"]: item["commit_id"]
-        for item in json.loads(invoke(["branch", "--json"], project, monkeypatch).stdout)
+        for item in json.loads(invoke(["branch", "list", "--json"], project, monkeypatch).stdout)
     }
     assert branches["from-commit"] == first
     assert branches["from-prefix"] == first
@@ -147,19 +148,19 @@ def test_branch_cli_start_point_switch_and_restored_guard(
     assert branches["from-side"] == side
 
     switched = invoke(
-        ["branch", "rethink", first, "--switch"], project, monkeypatch
+        ["branch", "create", "rethink", first, "--switch"], project, monkeypatch
     )
     assert switched.exit_code == 0
     assert switched.stdout == "Created and switched to branch rethink\n"
     assert Repository.discover().head_branch() == "rethink"
     assert asset.read_bytes() == b"v1"
 
-    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
-    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
-    guarded = invoke(["branch", "oops"], project, monkeypatch)
+    assert invoke(["go", "--branch", "main"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first, "--keep-branch", "--reject-changes"], project, monkeypatch).exit_code == 0
+    guarded = invoke(["branch", "create", "oops"], project, monkeypatch)
     assert guarded.exit_code != 0
     assert "specify the start point explicitly" in str(guarded.exception)
-    assert "oops" not in invoke(["branch"], project, monkeypatch).stdout
+    assert "oops" not in invoke(["branch", "list"], project, monkeypatch).stdout
 
     help_result = invoke(["branch", "create", "--help"], project, monkeypatch)
     assert help_result.exit_code == 0
@@ -174,38 +175,38 @@ def test_tag_cli_creates_lists_resolves_and_deletes(tmp_path: Path, monkeypatch)
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     first = Repository.discover().log()[0]["id"]
     asset.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
     second = Repository.discover().log()[0]["id"]
 
     created = invoke(
-        ["tag", "first-draft", first, "-m", "初稿"], project, monkeypatch
+        ["leaf", "tag", "create", "first-draft", first, "-m", "初稿"], project, monkeypatch
     )
     assert created.exit_code == 0
     assert created.stdout == f"Created tag first-draft at {first[:12]}\n"
-    latest = invoke(["tag", "submitted"], project, monkeypatch)
+    latest = invoke(["leaf", "tag", "create", "submitted"], project, monkeypatch)
     assert latest.exit_code == 0
     assert latest.stdout == f"Created tag submitted at {second[:12]}\n"
 
-    listed = invoke(["tag"], project, monkeypatch)
+    listed = invoke(["leaf", "tag", "list"], project, monkeypatch)
     assert listed.exit_code == 0
     assert f"first-draft          {first[:12]}  # 初稿" in listed.stdout
     assert f"submitted            {second[:12]}" in listed.stdout
 
-    shown = invoke(["show", "first-draft", "--json"], project, monkeypatch)
+    shown = invoke(["leaf", "show", "first-draft", "--json"], project, monkeypatch)
     assert shown.exit_code == 0
     assert json.loads(shown.stdout)["id"] == first
-    restored = invoke(["restore", "first-draft"], project, monkeypatch)
+    restored = invoke(["go", "first-draft", "--keep-branch", "--reject-changes"], project, monkeypatch)
     assert restored.exit_code == 0
     assert asset.read_bytes() == b"v1"
 
-    deleted = invoke(["tag", "--delete", "first-draft"], project, monkeypatch)
+    deleted = invoke(["leaf", "tag", "delete", "first-draft"], project, monkeypatch)
     assert deleted.exit_code == 0
-    assert deleted.stdout == "Deleted tag first-draft; recover it with 'sprout trash'\n"
-    assert "first-draft" not in invoke(["tag"], project, monkeypatch).stdout
+    assert deleted.stdout == "Deleted tag first-draft; recover it with 'sprout trash list'\n"
+    assert "first-draft" not in invoke(["leaf", "tag", "list"], project, monkeypatch).stdout
 
 
 def test_tag_cli_json_and_comment_editing(tmp_path: Path, monkeypatch) -> None:
@@ -218,28 +219,29 @@ def test_tag_cli_json_and_comment_editing(tmp_path: Path, monkeypatch) -> None:
     def run(args: list[str]):
         return invoke(args, repo.root, monkeypatch)
 
-    created = run(["tag", "提出", commit, "-m", "初稿", "--json"])
+    created = run(["leaf", "tag", "create", "提出", commit, "-m", "初稿", "--json"])
     assert created.exit_code == 0 and created.stderr == ""
     payload = json.loads(created.stdout)
     assert payload == {"name": "提出", "commit_id": commit, "comment": "初稿", "created_at": payload["created_at"]}
-    assert json.loads(run(["tag", "--json"]).stdout) == [payload]
+    assert json.loads(run(["leaf", "tag", "list", "--json"]).stdout) == [payload]
 
-    edited = run(["tag", "提出", "--set-comment", "  最終版  ", "--json"])
+    edited = run(["leaf", "tag", "comment", "提出", "  最終版  ", "--json"])
     assert edited.exit_code == 0
     assert json.loads(edited.stdout) == {**payload, "comment": "最終版"}
-    assert run(["tag", "提出", "--set-comment", ""]).stdout == "Updated comment for tag 提出\n"
+    assert run(["leaf", "tag", "comment", "提出", ""]).stdout == "Updated comment for tag 提出\n"
     assert repo.tags() == [("提出", commit, "", payload["created_at"])]
 
-    unknown = run(["tag", "missing", "--set-comment", "x", "--json"])
+    unknown = run(["leaf", "tag", "comment", "missing", "x", "--json"])
     assert unknown.exit_code != 0
     assert isinstance(unknown.exception, SproutError)
     assert str(unknown.exception) == "unknown tag: missing"
-    for args in (["tag", "--set-comment", "x"], ["tag", "提出", commit, "--set-comment", "x"], ["tag", "--delete", "提出", "--set-comment", "x"]):
-        assert isinstance(run(args).exception, SproutError)
+    for args in (["leaf", "tag", "comment", "x"], ["leaf", "tag", "comment", "提出", "x", commit], ["leaf", "tag", "delete", "提出", "--set-comment", "x"]):
+        assert run(args).exit_code == 2
+        assert repo.tags() == [("提出", commit, "", payload["created_at"])]
 
-    deleted = run(["tag", "--delete", "提出", "--json"])
+    deleted = run(["leaf", "tag", "delete", "提出", "--json"])
     assert json.loads(deleted.stdout) == {"name": "提出", "deleted": True}
-    assert json.loads(run(["tag", "--json"]).stdout) == []
+    assert json.loads(run(["leaf", "tag", "list", "--json"]).stdout) == []
     assert repo.manifest(commit)["asset.bin"].size == 2
 
 
@@ -248,12 +250,12 @@ def test_track_and_untrack_warn_when_nothing_matches(tmp_path: Path, monkeypatch
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "empty").mkdir()
 
-    track_result = invoke(["track", "empty"], project, monkeypatch)
+    track_result = invoke(["file", "track", "empty"], project, monkeypatch)
     assert track_result.exit_code == 0
     assert track_result.stdout == ""
     assert "Warning: no files were tracked" in track_result.stderr
 
-    untrack_result = invoke(["untrack", "missing.txt"], project, monkeypatch)
+    untrack_result = invoke(["file", "untrack", "missing.txt"], project, monkeypatch)
     assert untrack_result.exit_code == 0
     assert untrack_result.stdout == ""
     assert "Warning: no matching tracked paths" in untrack_result.stderr
@@ -264,12 +266,12 @@ def test_track_and_untrack_keep_success_output(tmp_path: Path, monkeypatch) -> N
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "scene.blend").write_bytes(b"scene")
 
-    track_result = invoke(["track", "scene.blend"], project, monkeypatch)
+    track_result = invoke(["file", "track", "scene.blend"], project, monkeypatch)
     assert track_result.exit_code == 0
     assert track_result.stdout == "track  scene.blend\n"
     assert track_result.stderr == ""
 
-    untrack_result = invoke(["untrack", "scene.blend"], project, monkeypatch)
+    untrack_result = invoke(["file", "untrack", "scene.blend"], project, monkeypatch)
     assert untrack_result.exit_code == 0
     assert untrack_result.stdout == "untrack  scene.blend\n"
     assert untrack_result.stderr == ""
@@ -280,15 +282,15 @@ def test_commit_reports_files_removed_from_tracking(tmp_path: Path, monkeypatch)
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "scene.blend"
     asset.write_bytes(b"scene")
-    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "scene.blend"], project, monkeypatch).exit_code == 0
 
-    initial = invoke(["commit", "-m", "initial"], project, monkeypatch)
+    initial = invoke(["leaf", "create", "-m", "initial"], project, monkeypatch)
     assert initial.exit_code == 0
     assert len(initial.stdout.splitlines()) == 1
     assert initial.stdout.startswith("[main ")
 
     asset.unlink()
-    removed = invoke(["commit", "-m", "remove scene"], project, monkeypatch)
+    removed = invoke(["leaf", "create", "-m", "remove scene"], project, monkeypatch)
     assert removed.exit_code == 0
     lines = removed.stdout.splitlines()
     assert len(lines) == 2
@@ -305,8 +307,8 @@ def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypa
     mtime_ns = 1_704_067_200_123_456_789
     os.utime(asset, ns=(mtime_ns, mtime_ns))
     stored_mtime_ns = asset.stat().st_mtime_ns
-    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
 
     repository = Repository.discover()
     commit_row = repository.log()[0]
@@ -314,7 +316,7 @@ def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypa
     _, files = repository.commit_info(commit_id)
     assert files[0].mtime_ns == stored_mtime_ns
 
-    utc_result = invoke(["show", commit_id], project, monkeypatch)
+    utc_result = invoke(["leaf", "show", commit_id], project, monkeypatch)
     assert utc_result.exit_code == 0
     assert "Date:   " in utc_result.stdout
     assert " UTC\n" in utc_result.stdout
@@ -322,7 +324,7 @@ def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypa
     assert str(stored_mtime_ns) not in utc_result.stdout
 
     tokyo_result = invoke(
-        ["show", commit_id, "--timezone", "Asia/Tokyo"], project, monkeypatch
+        ["leaf", "show", commit_id, "--timezone", "Asia/Tokyo"], project, monkeypatch
     )
     assert tokyo_result.exit_code == 0
     created_at = datetime.fromisoformat(commit_row["created_at"])
@@ -330,7 +332,7 @@ def test_show_formats_timestamps_and_supports_timezones(tmp_path: Path, monkeypa
     assert f"Date:   {expected_created_at:%Y-%m-%d %H:%M:%S} JST" in tokyo_result.stdout
     assert "2024-01-01 09:00:00 JST  scene.blend" in tokyo_result.stdout
 
-    local_result = invoke(["show", commit_id, "--timezone", "local"], project, monkeypatch)
+    local_result = invoke(["leaf", "show", commit_id, "--timezone", "local"], project, monkeypatch)
     assert local_result.exit_code == 0
     assert str(stored_mtime_ns) not in local_result.stdout
 
@@ -339,11 +341,11 @@ def test_show_rejects_unknown_timezone(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "scene.blend").write_bytes(b"scene")
-    assert invoke(["track", "scene.blend"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "scene.blend"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     commit_id = Repository.discover().log()[0]["id"]
 
-    result = invoke(["show", commit_id, "--timezone", "Mars/Olympus"], project, monkeypatch)
+    result = invoke(["leaf", "show", commit_id, "--timezone", "Mars/Olympus"], project, monkeypatch)
     assert result.exit_code != 0
     assert "unknown timezone: Mars/Olympus" in str(result.exception)
 
@@ -454,12 +456,12 @@ def test_main_reports_real_command_errors_as_json(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "ideas"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "ideas"], project, monkeypatch).exit_code == 0
     asset.write_bytes(b"changed")
     monkeypatch.chdir(project)
-    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "ideas", "--reject-changes", "--json"])
+    monkeypatch.setattr(sys, "argv", ["sprout", "go", "--branch", "ideas", "--reject-changes", "--json"])
 
     assert cli.main() == 1
     captured = capsys.readouterr()
@@ -473,7 +475,7 @@ def test_main_reports_real_command_errors_as_json(
 
 def test_main_reports_usage_errors_as_json(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["sprout", "switch", "--json"])
+    monkeypatch.setattr(sys, "argv", ["sprout", "file", "move", "--json"])
 
     assert cli.main() == 2
     captured = capsys.readouterr()
@@ -481,7 +483,7 @@ def test_main_reports_usage_errors_as_json(tmp_path: Path, monkeypatch, capsys) 
     payload = json.loads(captured.err)
     assert payload["code"] == "usage_error"
     assert payload["details"] == {"exit_code": 2}
-    assert "BRANCH_NAME" in payload["message"] or "branch_name" in payload["message"]
+    assert "SOURCE" in payload["message"] or "source" in payload["message"]
 
 
 def test_status_path_mode_rejects_listing_flags(tmp_path: Path, monkeypatch) -> None:
@@ -500,7 +502,7 @@ def test_move_rejects_untracked_source(tmp_path: Path, monkeypatch) -> None:
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "draft.txt").write_text("draft")
 
-    result = invoke(["move", "draft.txt", "archive/draft.txt"], project, monkeypatch)
+    result = invoke(["file", "move", "draft.txt", "archive/draft.txt"], project, monkeypatch)
     assert result.exit_code != 0
     assert "path is not tracked" in str(result.exception)
 
@@ -508,17 +510,17 @@ def test_move_rejects_untracked_source(tmp_path: Path, monkeypatch) -> None:
 def test_discard_help_describes_tracked_and_untracked_behavior(
     tmp_path: Path, monkeypatch
 ) -> None:
-    result = invoke(["switch", "--help"], tmp_path, monkeypatch)
+    result = invoke(["go", "--help"], tmp_path, monkeypatch)
     assert result.exit_code == 0
     help_text = " ".join(result.stdout.split())
-    assert "Discard all tracked changes" in help_text
+    assert "tracked" in help_text
     assert "untracked" in help_text
     assert "untouched" in help_text
 
-    result = invoke(["restore", "--help"], tmp_path, monkeypatch)
+    result = invoke(["file", "restore", "--help"], tmp_path, monkeypatch)
     assert result.exit_code == 0
     help_text = " ".join(result.stdout.split())
-    assert "Discard tracked changes on restored paths" in help_text
+    assert "tracked" in help_text
     assert "untouched" in help_text
 
 
@@ -674,8 +676,8 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"kept")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "initial"], project, monkeypatch).exit_code == 0
 
     orphan_hash = "ef" + ("2" * 62)
     orphan = project / ".sprout" / "objects" / orphan_hash[:2] / orphan_hash
@@ -684,7 +686,7 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     stale_temp = project / ".sprout" / "tmp" / "object-cli"
     stale_temp.write_bytes(b"tmp")
 
-    dry = invoke(["gc", "--dry-run"], project, monkeypatch)
+    dry = invoke(["maintenance", "gc", "--dry-run"], project, monkeypatch)
     assert dry.exit_code == 0
     assert f"object  {orphan_hash}" in dry.stdout
     assert "temp    object-cli" in dry.stdout
@@ -692,7 +694,7 @@ def test_gc_cli_reports_removed_objects_and_supports_dry_run(
     assert orphan.is_file()
     assert stale_temp.is_file()
 
-    result = invoke(["gc"], project, monkeypatch)
+    result = invoke(["maintenance", "gc"], project, monkeypatch)
     assert result.exit_code == 0
     assert "Removed 1 objects, 1 temp files (7 bytes)" in result.stdout
     assert not orphan.exists()
@@ -706,28 +708,28 @@ def test_prune_cli_requires_confirmation_and_supports_json_dry_run(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"first")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
-    assert invoke(["tag", "start"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "tag", "create", "start"], project, monkeypatch).exit_code == 0
     asset.write_bytes(b"middle")
-    assert invoke(["commit", "-m", "middle"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "middle"], project, monkeypatch).exit_code == 0
     removed = Repository.discover(project).head_commit()
     asset.write_bytes(b"last")
-    assert invoke(["commit", "-m", "last"], project, monkeypatch).exit_code == 0
-    assert invoke(["tag", "end"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "last"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "tag", "create", "end"], project, monkeypatch).exit_code == 0
 
-    help_result = invoke(["prune", "--help"], project, monkeypatch)
+    help_result = invoke(["leaf", "prune", "--help"], project, monkeypatch)
     assert help_result.exit_code == 0
     assert "--all" in help_result.stdout
     assert "--dry-run" in help_result.stdout
     assert "--yes" in help_result.stdout
 
-    unconfirmed = invoke(["prune", "start", "end"], project, monkeypatch)
+    unconfirmed = invoke(["leaf", "prune", "start", "end"], project, monkeypatch)
     assert unconfirmed.exit_code != 0
     assert "irreversible" in str(unconfirmed.exception)
 
     conflict = invoke(
-        ["prune", "start", "end", "--all", "--dry-run"],
+        ["leaf", "prune", "start", "end", "--all", "--dry-run"],
         project,
         monkeypatch,
     )
@@ -735,7 +737,7 @@ def test_prune_cli_requires_confirmation_and_supports_json_dry_run(
     assert "cannot be combined" in str(conflict.exception)
 
     dry = invoke(
-        ["prune", "start", "end", "--dry-run", "--json"],
+        ["leaf", "prune", "start", "end", "--dry-run", "--json"],
         project,
         monkeypatch,
     )
@@ -749,13 +751,13 @@ def test_prune_cli_requires_confirmation_and_supports_json_dry_run(
     assert Repository.discover(project).resolve_commit(removed) == removed
 
     all_history = invoke(
-        ["prune", "--all", "--dry-run", "--json"], project, monkeypatch
+        ["leaf", "prune", "--all", "--dry-run", "--json"], project, monkeypatch
     )
     assert all_history.exit_code == 0
     assert json.loads(all_history.stdout)["mode"] == "all"
 
     actual = invoke(
-        ["prune", "start", "end", "--yes"], project, monkeypatch
+        ["leaf", "prune", "start", "end", "--yes"], project, monkeypatch
     )
     assert actual.exit_code == 0
     assert f"commit  {removed[:12]} middle" in actual.stdout
@@ -769,10 +771,10 @@ def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"data")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "initial"], project, monkeypatch).exit_code == 0
 
-    healthy = invoke(["doctor"], project, monkeypatch)
+    healthy = invoke(["maintenance", "doctor"], project, monkeypatch)
     assert healthy.exit_code == 0
     assert "OK (1 objects checked)" in healthy.stdout
 
@@ -780,7 +782,7 @@ def test_doctor_cli_reports_ok_and_issues(tmp_path: Path, monkeypatch) -> None:
     object_hash = repo.manifest(repo.head_commit())["asset.bin"].object_hash
     (repo.objects / object_hash[:2] / object_hash).unlink()
 
-    broken = invoke(["doctor"], project, monkeypatch)
+    broken = invoke(["maintenance", "doctor"], project, monkeypatch)
     assert broken.exit_code == 1
     assert f"missing_object     {object_hash}" in broken.stdout
     assert "Found 1 issue(s) (1 objects checked)" in broken.stdout
@@ -794,9 +796,9 @@ def test_main_propagates_doctor_exit_code(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"data")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "initial"], project, monkeypatch).exit_code == 0
-    monkeypatch.setattr(sys, "argv", ["sprout", "doctor"])
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "initial"], project, monkeypatch).exit_code == 0
+    monkeypatch.setattr(sys, "argv", ["sprout", "maintenance", "doctor"])
 
     assert cli.main() == 0
     assert "OK (1 objects checked)" in capsys.readouterr().out
@@ -818,10 +820,10 @@ def test_stats_cli_shows_counts_and_dedup(tmp_path: Path, monkeypatch) -> None:
     twin = project / "twin.bin"
     asset.write_bytes(b"abcd")
     twin.write_bytes(b"abcd")
-    assert invoke(["track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "shared"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "shared"], project, monkeypatch).exit_code == 0
 
-    result = invoke(["stats"], project, monkeypatch)
+    result = invoke(["maintenance", "stats"], project, monkeypatch)
     assert result.exit_code == 0
     assert "Commits:       1" in result.stdout
     assert "Branches:      1" in result.stdout
@@ -842,8 +844,8 @@ def maintenance_project(tmp_path: Path, monkeypatch) -> tuple[Path, Repository]:
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "asset.bin").write_bytes(b"abcd")
     (project / "twin.bin").write_bytes(b"abcd")
-    assert invoke(["track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "shared"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin", "twin.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "shared"], project, monkeypatch).exit_code == 0
     return project, Repository.discover(project)
 
 
@@ -858,13 +860,13 @@ def run_main(args: list[str], cwd: Path, monkeypatch, capsys) -> tuple[int, str,
 def test_doctor_json_reports_health_and_issues(tmp_path: Path, monkeypatch, capsys) -> None:
     project, repo = maintenance_project(tmp_path, monkeypatch)
 
-    code, out, err = run_main(["doctor", "--json"], project, monkeypatch, capsys)
+    code, out, err = run_main(["maintenance", "doctor", "--json"], project, monkeypatch, capsys)
     assert (code, err) == (0, "")
     assert json.loads(out) == {"ok": True, "checked_objects": 1, "issues": []}
 
     object_hash = repo.manifest(repo.head_commit())["asset.bin"].object_hash
     (repo.objects / object_hash[:2] / object_hash).unlink()
-    code, out, err = run_main(["doctor", "--json"], project, monkeypatch, capsys)
+    code, out, err = run_main(["maintenance", "doctor", "--json"], project, monkeypatch, capsys)
     assert (code, err) == (1, "")
     assert json.loads(out) == {
         "ok": False,
@@ -878,7 +880,7 @@ def test_stats_json_reports_counts_and_sizes(tmp_path: Path, monkeypatch, capsys
     project, repo = maintenance_project(tmp_path, monkeypatch)
     object_bytes = sum(path.stat().st_size for path in repo.objects.glob("*/*"))
 
-    code, out, err = run_main(["stats", "--json"], project, monkeypatch, capsys)
+    code, out, err = run_main(["maintenance", "stats", "--json"], project, monkeypatch, capsys)
     assert (code, err) == (0, "")
     assert json.loads(out) == {
         "commits": 1,
@@ -909,19 +911,19 @@ def test_gc_json_reports_dry_run_and_removal(tmp_path: Path, monkeypatch, capsys
         "temps": ["object-leftover"],
     }
 
-    code, out, err = run_main(["gc", "--dry-run", "--json"], project, monkeypatch, capsys)
+    code, out, err = run_main(["maintenance", "gc", "--dry-run", "--json"], project, monkeypatch, capsys)
     assert (code, err) == (0, "")
     assert json.loads(out) == {"dry_run": True, **expected}
     assert orphan.exists() and temp.exists()
 
-    code, out, err = run_main(["gc", "--json"], project, monkeypatch, capsys)
+    code, out, err = run_main(["maintenance", "gc", "--json"], project, monkeypatch, capsys)
     assert (code, err) == (0, "")
     assert json.loads(out) == {"dry_run": False, **expected}
     assert not orphan.exists() and not temp.exists()
     assert (project / "asset.bin").read_bytes() == b"abcd"
 
 
-@pytest.mark.parametrize("command", [["doctor"], ["stats"], ["gc"], ["gc", "--dry-run"]])
+@pytest.mark.parametrize("command", [["maintenance", "doctor"], ["maintenance", "stats"], ["maintenance", "gc"], ["maintenance", "gc", "--dry-run"]])
 def test_maintenance_json_errors_are_structured(
     tmp_path: Path, monkeypatch, capsys, command: list[str]
 ) -> None:
@@ -936,11 +938,11 @@ def test_maintenance_json_errors_are_structured(
 @pytest.mark.parametrize(
     ("command", "code", "message", "details"),
     [
-        (["show", "abc"], "unknown_commit", "unknown commit: abc", {"commit_id": "abc"}),
-        (["commit", "-m", "first"], "nothing_to_commit", "nothing to commit", {}),
-        (["commit", "-m", " "], "empty_message", "commit message cannot be empty", {}),
-        (["branch", "--delete", "nope"], "unknown_branch", "unknown branch: nope", {"name": "nope"}),
-        (["tag", "--delete", "nope"], "unknown_tag", "unknown tag: nope", {"name": "nope"}),
+        (["leaf", "show", "abc"], "unknown_commit", "unknown commit: abc", {"commit_id": "abc"}),
+        (["leaf", "create", "-m", "first"], "nothing_to_commit", "nothing to commit", {}),
+        (["leaf", "create", "-m", " "], "empty_message", "commit message cannot be empty", {}),
+        (["branch", "delete", "nope"], "unknown_branch", "unknown branch: nope", {"name": "nope"}),
+        (["leaf", "tag", "delete", "nope"], "unknown_tag", "unknown tag: nope", {"name": "nope"}),
     ],
 )
 def test_json_errors_keep_the_message_and_add_a_code(
@@ -959,15 +961,15 @@ def test_partial_restore_cli(tmp_path: Path, monkeypatch) -> None:
     second = project / "second.bin"
     first.write_bytes(b"v1")
     second.write_bytes(b"v1")
-    assert invoke(["track", "first.bin", "second.bin"], project, monkeypatch).exit_code == 0
-    result = invoke(["commit", "-m", "old"], project, monkeypatch)
+    assert invoke(["file", "track", "first.bin", "second.bin"], project, monkeypatch).exit_code == 0
+    result = invoke(["leaf", "create", "-m", "old"], project, monkeypatch)
     assert result.exit_code == 0
     commit_id = result.stdout.split()[1].rstrip("]")
     first.write_bytes(b"v2")
     second.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "new"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "new"], project, monkeypatch).exit_code == 0
 
-    restored = invoke(["restore", commit_id, "first.bin"], project, monkeypatch)
+    restored = invoke(["file", "restore", commit_id, "first.bin"], project, monkeypatch)
     assert restored.exit_code == 0
     assert "Restored paths from" in restored.stdout
     assert first.read_bytes() == b"v1"
@@ -983,15 +985,15 @@ def test_export_and_cat_cli(tmp_path: Path, monkeypatch) -> None:
     asset.write_bytes(content)
     saved_mtime = 1_700_000_000_123_456_700
     os.utime(asset, ns=(saved_mtime, saved_mtime))
-    assert invoke(["track", "assets/image.bin"], project, monkeypatch).exit_code == 0
-    committed = invoke(["commit", "-m", "saved"], project, monkeypatch)
+    assert invoke(["file", "track", "assets/image.bin"], project, monkeypatch).exit_code == 0
+    committed = invoke(["leaf", "create", "-m", "saved"], project, monkeypatch)
     assert committed.exit_code == 0
     commit_id = committed.stdout.split()[1].rstrip("]")
     asset.write_bytes(b"working")
 
     output = tmp_path / "exported"
     exported = invoke(
-        ["export", commit_id, "assets", "--output", str(output)],
+        ["file", "export", commit_id, "assets", "--output", str(output)],
         project,
         monkeypatch,
     )
@@ -1004,7 +1006,7 @@ def test_export_and_cat_cli(tmp_path: Path, monkeypatch) -> None:
     assert Repository.discover(project).tracked() == {"assets/image.bin"}
 
     duplicate = invoke(
-        ["export", commit_id, "--output", str(output)],
+        ["file", "export", commit_id, "--output", str(output)],
         project,
         monkeypatch,
     )
@@ -1013,14 +1015,14 @@ def test_export_and_cat_cli(tmp_path: Path, monkeypatch) -> None:
     assert exported_file.read_bytes() == content
 
     forced = invoke(
-        ["export", commit_id, "--output", str(output), "--force"],
+        ["file", "export", commit_id, "--output", str(output), "--force"],
         project,
         monkeypatch,
     )
     assert forced.exit_code == 0
     assert exported_file.read_bytes() == content
 
-    cat_result = invoke(["cat", commit_id, "assets/image.bin"], project, monkeypatch)
+    cat_result = invoke(["file", "cat", commit_id, "assets/image.bin"], project, monkeypatch)
     assert cat_result.exit_code == 0
     assert cat_result.stdout_bytes == content
     assert asset.read_bytes() == b"working"
@@ -1035,10 +1037,10 @@ def test_thumbnail_cli_commit_show_replace_export_and_delete(
     asset.write_bytes(b"data")
     first = write_image(tmp_path / "first.png")
     second = write_image(tmp_path / "second.webp", "WEBP", "green")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
 
     committed = invoke(
-        ["commit", "-m", "with thumbnail", "--thumbnail", str(first)],
+        ["leaf", "create", "-m", "with thumbnail", "--thumbnail", str(first)],
         project,
         monkeypatch,
     )
@@ -1046,33 +1048,33 @@ def test_thumbnail_cli_commit_show_replace_export_and_delete(
     commit_id = Repository.discover(project).head_commit()
     assert commit_id is not None
 
-    shown = invoke(["show", commit_id], project, monkeypatch)
+    shown = invoke(["leaf", "show", commit_id], project, monkeypatch)
     assert shown.exit_code == 0
     assert "Thumbnail: first.png (image/png" in shown.stdout
     payload = json.loads(
-        invoke(["show", commit_id, "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "show", commit_id, "--json"], project, monkeypatch).stdout
     )
     assert payload["thumbnail"]["role"] == "thumbnail"
     assert payload["thumbnail"]["original_name"] == "first.png"
     inspected = json.loads(
-        invoke(["thumbnail", commit_id, "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "thumbnail", "show", commit_id, "--json"], project, monkeypatch).stdout
     )
     assert inspected == payload["thumbnail"]
 
-    replaced = invoke(["thumbnail", commit_id, str(second)], project, monkeypatch)
+    replaced = invoke(["leaf", "thumbnail", "set", commit_id, str(second)], project, monkeypatch)
     assert replaced.exit_code == 0
     assert "Set thumbnail" in replaced.stdout
     output = tmp_path / "exported.webp"
     exported = invoke(
-        ["thumbnail", commit_id, "--output", str(output)], project, monkeypatch
+        ["leaf", "thumbnail", "export", commit_id, "--output", str(output)], project, monkeypatch
     )
     assert exported.exit_code == 0
     assert output.read_bytes() == second.read_bytes()
 
-    deleted = invoke(["thumbnail", commit_id, "--delete"], project, monkeypatch)
+    deleted = invoke(["leaf", "thumbnail", "delete", commit_id], project, monkeypatch)
     assert deleted.exit_code == 0
     assert json.loads(
-        invoke(["thumbnail", commit_id, "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "thumbnail", "show", commit_id, "--json"], project, monkeypatch).stdout
     ) is None
 
 
@@ -1083,19 +1085,19 @@ def test_diff_cli_shows_commit_and_working_tree_changes(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    first = invoke(["commit", "-m", "first"], project, monkeypatch)
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    first = invoke(["leaf", "create", "-m", "first"], project, monkeypatch)
     assert first.exit_code == 0
     first_id = first.stdout.split()[1].rstrip("]")
     asset.write_bytes(b"v2xx")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
 
-    between = invoke(["diff", first_id, "main"], project, monkeypatch)
+    between = invoke(["file", "diff", first_id, "main"], project, monkeypatch)
     assert between.exit_code == 0
     assert "modified asset.bin  (2 bytes -> 4 bytes)" in between.stdout
 
     asset.write_bytes(b"work")
-    working = invoke(["diff"], project, monkeypatch)
+    working = invoke(["file", "diff"], project, monkeypatch)
     assert working.exit_code == 0
     assert "modified asset.bin  (4 bytes -> 4 bytes)" in working.stdout
 
@@ -1107,20 +1109,20 @@ def test_log_path_cli_filters_history(tmp_path: Path, monkeypatch) -> None:
     other = project / "other.bin"
     target.write_bytes(b"v1")
     other.write_bytes(b"other")
-    assert invoke(["track", "target.bin", "other.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "add both"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "target.bin", "other.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "add both"], project, monkeypatch).exit_code == 0
     other.write_bytes(b"other2")
-    assert invoke(["commit", "-m", "change other"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "change other"], project, monkeypatch).exit_code == 0
     target.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "change target"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "change target"], project, monkeypatch).exit_code == 0
 
-    result = invoke(["log", "target.bin"], project, monkeypatch)
+    result = invoke(["leaf", "list", "target.bin"], project, monkeypatch)
     assert result.exit_code == 0
     assert "change target" in result.stdout
     assert "add both" in result.stdout
     assert "change other" not in result.stdout
 
-    missing = invoke(["log", "missing.bin"], project, monkeypatch)
+    missing = invoke(["leaf", "list", "missing.bin"], project, monkeypatch)
     assert missing.exit_code == 0
     assert "No history for path: missing.bin" in missing.stdout
 
@@ -1130,32 +1132,32 @@ def test_log_cli_limits_and_summarizes_history(tmp_path: Path, monkeypatch) -> N
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     commit_ids: list[str] = []
     for version in ("first", "second", "third"):
         asset.write_text(version)
-        result = invoke(["commit", "-m", version], project, monkeypatch)
+        result = invoke(["leaf", "create", "-m", version], project, monkeypatch)
         assert result.exit_code == 0
         commit_ids.append(Repository.discover().log()[0]["id"])
 
-    limited = invoke(["log", "-n", "2"], project, monkeypatch)
+    limited = invoke(["leaf", "list", "-n", "2"], project, monkeypatch)
     assert limited.exit_code == 0
     assert "third" in limited.stdout
     assert "second" in limited.stdout
     assert "first" not in limited.stdout
 
-    full = invoke(["log"], project, monkeypatch)
+    full = invoke(["leaf", "list"], project, monkeypatch)
     assert full.exit_code == 0
     assert all(message in full.stdout for message in ("first", "second", "third"))
 
-    oneline = invoke(["log", "--max-count", "2", "--oneline"], project, monkeypatch)
+    oneline = invoke(["leaf", "list", "--max-count", "2", "--oneline"], project, monkeypatch)
     assert oneline.exit_code == 0
     assert oneline.stdout.splitlines() == [
         f"{commit_ids[2][:12]} third",
         f"{commit_ids[1][:12]} second",
     ]
 
-    invalid = invoke(["log", "-n", "0"], project, monkeypatch)
+    invalid = invoke(["leaf", "list", "-n", "0"], project, monkeypatch)
     assert invalid.exit_code != 0
     assert "x>=1" in invalid.stderr
 
@@ -1165,12 +1167,12 @@ def test_message_cli_updates_human_and_json_views(tmp_path: Path, monkeypatch) -
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     commit_id = Repository.discover().log()[0]["id"]
 
     updated = invoke(
-        ["message", commit_id, "  renamed snapshot  ", "--json"],
+        ["leaf", "edit", commit_id, "--message", "  renamed snapshot  ", "--json"],
         project,
         monkeypatch,
     )
@@ -1178,19 +1180,23 @@ def test_message_cli_updates_human_and_json_views(tmp_path: Path, monkeypatch) -
     assert json.loads(updated.stdout) == {
         "commit_id": commit_id,
         "message": "renamed snapshot",
+        "note": None,
+        "note_updated_at": None,
+        "labels": [],
     }
     show_payload = json.loads(
-        invoke(["show", commit_id, "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "show", commit_id, "--json"], project, monkeypatch).stdout
     )
-    log_payload = json.loads(invoke(["log", "--json"], project, monkeypatch).stdout)
+    log_payload = json.loads(invoke(["leaf", "list", "--json"], project, monkeypatch).stdout)
     assert show_payload["message"] == "renamed snapshot"
     assert log_payload[0]["message"] == "renamed snapshot"
 
-    human = invoke(["message", commit_id, "final name"], project, monkeypatch)
+    human = invoke(["leaf", "edit", commit_id, "--message", "final name"], project, monkeypatch)
     assert human.exit_code == 0
-    assert human.stdout == f"Updated message for {commit_id[:12]}: final name\n"
+    assert human.stdout == f"Updated leaf {commit_id[:12]}\n"
+    assert Repository.discover(project).log()[0]["message"] == "final name"
 
-    invalid = invoke(["message", commit_id, "   "], project, monkeypatch)
+    invalid = invoke(["leaf", "edit", commit_id, "--message", "   "], project, monkeypatch)
     assert invalid.exit_code != 0
     assert "commit message cannot be empty" in str(invalid.exception)
 
@@ -1202,27 +1208,27 @@ def test_note_and_label_cli_updates_displays_and_filters_annotations(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     first_id = Repository.discover().log()[0]["id"]
 
-    note_set = invoke(["note", first_id, "  client approved  "], project, monkeypatch)
+    note_set = invoke(["leaf", "edit", first_id, "--note", "  client approved  "], project, monkeypatch)
     assert note_set.exit_code == 0
-    note_show = invoke(["note", first_id], project, monkeypatch)
+    note_show = invoke(["leaf", "show", first_id], project, monkeypatch)
     assert "client approved" in note_show.stdout
-    assert "Updated:" in note_show.stdout
+    assert "Note updated:" in note_show.stdout
 
-    assert invoke(["label", first_id, " Approved "], project, monkeypatch).exit_code == 0
-    assert invoke(["label", first_id, "approved"], project, monkeypatch).exit_code == 0
-    labels = invoke(["label", first_id], project, monkeypatch)
+    assert invoke(["leaf", "label", "add", first_id, " Approved "], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "label", "add", first_id, "approved"], project, monkeypatch).exit_code == 0
+    labels = invoke(["leaf", "label", "list", first_id], project, monkeypatch)
     assert labels.stdout.splitlines() == ["Approved", "approved"]
 
     asset.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
     second_id = Repository.discover().log()[0]["id"]
-    assert invoke(["label", second_id, "Other"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "label", "add", second_id, "Other"], project, monkeypatch).exit_code == 0
 
-    filtered = invoke(["log", "--label", " Approved "], project, monkeypatch)
+    filtered = invoke(["leaf", "list", "--label", " Approved "], project, monkeypatch)
     assert filtered.exit_code == 0
     assert "first" in filtered.stdout
     assert "second" not in filtered.stdout
@@ -1231,13 +1237,13 @@ def test_note_and_label_cli_updates_displays_and_filters_annotations(
     assert "Note updated:" in filtered.stdout
 
     show_payload = json.loads(
-        invoke(["show", first_id, "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "show", first_id, "--json"], project, monkeypatch).stdout
     )
     assert show_payload["note"] == "client approved"
     assert show_payload["note_updated_at"] is not None
     assert show_payload["labels"] == ["Approved", "approved"]
     log_payload = json.loads(
-        invoke(["log", "--label", "Approved", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "list", "--label", "Approved", "--json"], project, monkeypatch).stdout
     )
     assert len(log_payload) == 1
     assert log_payload[0]["id"] == first_id
@@ -1245,15 +1251,16 @@ def test_note_and_label_cli_updates_displays_and_filters_annotations(
     assert log_payload[0]["labels"] == ["Approved", "approved"]
 
     assert invoke(
-        ["label", first_id, "--delete", "Approved"], project, monkeypatch
+        ["leaf", "label", "remove", first_id, "Approved"], project, monkeypatch
     ).exit_code == 0
-    assert invoke(["label", first_id], project, monkeypatch).stdout == "approved\n"
-    assert invoke(["note", first_id, "replaced"], project, monkeypatch).exit_code == 0
-    shown = invoke(["show", first_id], project, monkeypatch).stdout
+    assert invoke(["leaf", "label", "list", first_id], project, monkeypatch).stdout == "approved\n"
+    assert invoke(["leaf", "edit", first_id, "--note", "replaced"], project, monkeypatch).exit_code == 0
+    shown = invoke(["leaf", "show", first_id], project, monkeypatch).stdout
     assert "replaced" in shown
     assert "Note updated:" in shown
-    assert invoke(["note", first_id, "--delete"], project, monkeypatch).exit_code == 0
-    assert invoke(["note", first_id], project, monkeypatch).stdout == "No note\n"
+    assert invoke(["leaf", "edit", first_id, "--clear-note"], project, monkeypatch).exit_code == 0
+    cleared = json.loads(invoke(["leaf", "show", first_id, "--json"], project, monkeypatch).stdout)
+    assert cleared["note"] is None and cleared["note_updated_at"] is None
 
 
 def test_note_and_label_cli_reject_conflicting_or_invalid_input(
@@ -1263,19 +1270,20 @@ def test_note_and_label_cli_reject_conflicting_or_invalid_input(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"data")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     commit_id = Repository.discover().log()[0]["id"]
 
-    conflict = invoke(["note", commit_id, "text", "--delete"], project, monkeypatch)
+    conflict = invoke(["leaf", "edit", commit_id, "--note", "text", "--clear-note"], project, monkeypatch)
     assert conflict.exit_code != 0
     assert "cannot be combined" in str(conflict.exception)
     conflict = invoke(
-        ["label", commit_id, "value", "--delete", "other"], project, monkeypatch
+        ["leaf", "label", "add", commit_id, "value", "--delete", "other"], project, monkeypatch
     )
     assert conflict.exit_code != 0
-    assert "cannot be combined" in str(conflict.exception)
-    invalid = invoke(["label", commit_id, "   "], project, monkeypatch)
+    assert conflict.exit_code == 2
+    assert Repository.discover(project).annotations(commit_id).labels == ()
+    invalid = invoke(["leaf", "label", "add", commit_id, "   "], project, monkeypatch)
     assert invalid.exit_code != 0
     assert "label cannot be empty" in str(invalid.exception)
 
@@ -1292,29 +1300,29 @@ def test_tree_cli_shows_complete_graph_and_structured_json(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     first = Repository.discover().log()[0]["id"]
     asset.write_bytes(b"main-v2")
-    assert invoke(["commit", "-m", "main work"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "main work"], project, monkeypatch).exit_code == 0
     main_tip = Repository.discover().log()[0]["id"]
 
     assert invoke(
-        ["branch", "side", first, "--switch"], project, monkeypatch
+        ["branch", "create", "side", first, "--switch"], project, monkeypatch
     ).exit_code == 0
     asset.write_bytes(b"side-v2")
-    assert invoke(["commit", "-m", "side work"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "side work"], project, monkeypatch).exit_code == 0
     side_tip = Repository.discover().log()[0]["id"]
     thumbnail = write_image(project / "preview.png")
-    assert invoke(["thumbnail", side_tip, str(thumbnail)], project, monkeypatch).exit_code == 0
-    assert invoke(["note", side_tip, "review this"], project, monkeypatch).exit_code == 0
-    assert invoke(["label", side_tip, "Candidate"], project, monkeypatch).exit_code == 0
-    assert invoke(["switch", "main"], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "archive", first], project, monkeypatch).exit_code == 0
-    assert invoke(["tag", "baseline", first, "-m", "shared root"], project, monkeypatch).exit_code == 0
-    assert invoke(["branch", "--delete", "side"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "thumbnail", "set", side_tip, str(thumbnail)], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "edit", side_tip, "--note", "review this"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "label", "add", side_tip, "Candidate"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", "--branch", "main"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "create", "archive", first], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "tag", "create", "baseline", first, "-m", "shared root"], project, monkeypatch).exit_code == 0
+    assert invoke(["branch", "delete", "side"], project, monkeypatch).exit_code == 0
 
-    human = invoke(["tree"], project, monkeypatch)
+    human = invoke(["leaf", "tree"], project, monkeypatch)
     assert human.exit_code == 0
     assert f"* {first[:12]} first" in human.stdout
     assert f"{main_tip[:12]} main work" in human.stdout
@@ -1331,7 +1339,7 @@ def test_tree_cli_shows_complete_graph_and_structured_json(
     assert "[note]" in human.stdout
     assert "[labels:Candidate]" in human.stdout
 
-    result = invoke(["tree", "--json"], project, monkeypatch)
+    result = invoke(["leaf", "tree", "--json"], project, monkeypatch)
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert [commit["id"] for commit in payload["commits"]] == [
@@ -1371,8 +1379,8 @@ def test_tree_cli_handles_an_empty_repository(tmp_path: Path, monkeypatch) -> No
     project = tmp_path / "project"
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
 
-    assert invoke(["tree"], project, monkeypatch).stdout == "No commits yet\n"
-    payload = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    assert invoke(["leaf", "tree"], project, monkeypatch).stdout == "No commits yet\n"
+    payload = json.loads(invoke(["leaf", "tree", "--json"], project, monkeypatch).stdout)
     branches_without_times(payload["branches"])
     assert payload == {
         "current_commit": None,
@@ -1394,7 +1402,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     asset.parent.mkdir()
     asset.write_bytes(b"image")
     stored_mtime_ns = asset.stat().st_mtime_ns
-    assert invoke(["track", "作品/絵.psd"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "作品/絵.psd"], project, monkeypatch).exit_code == 0
 
     status_result = invoke(
         ["status", "--tracked", "--untracked", "--json"], project, monkeypatch
@@ -1424,10 +1432,10 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
         "paths": [{"path": "作品/絵.psd", "tracked": True}],
     }
 
-    assert invoke(["commit", "-m", "日本語コミット"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "日本語コミット"], project, monkeypatch).exit_code == 0
     commit_id = Repository.discover().log()[0]["id"]
 
-    log_result = invoke(["log", "-n", "1", "--json"], project, monkeypatch)
+    log_result = invoke(["leaf", "list", "-n", "1", "--json"], project, monkeypatch)
     assert log_result.exit_code == 0
     log_payload = json.loads(log_result.stdout)
     assert log_payload == [
@@ -1442,9 +1450,9 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
         }
     ]
     assert "commit " not in log_result.stdout
-    assert json.loads(invoke(["log", "missing.bin", "--json"], project, monkeypatch).stdout) == []
+    assert json.loads(invoke(["leaf", "list", "missing.bin", "--json"], project, monkeypatch).stdout) == []
 
-    show_result = invoke(["show", commit_id, "--json"], project, monkeypatch)
+    show_result = invoke(["leaf", "show", commit_id, "--json"], project, monkeypatch)
     assert show_result.exit_code == 0
     show_payload = json.loads(show_result.stdout)
     assert show_payload == {
@@ -1471,8 +1479,8 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
     }
     assert "Date:" not in show_result.stdout
 
-    assert invoke(["branch", "ideas", "-m", "案"], project, monkeypatch).exit_code == 0
-    branch_result = invoke(["branch", "--json"], project, monkeypatch)
+    assert invoke(["branch", "create", "ideas", "-m", "案"], project, monkeypatch).exit_code == 0
+    branch_result = invoke(["branch", "list", "--json"], project, monkeypatch)
     assert branch_result.exit_code == 0
     assert branches_without_times(json.loads(branch_result.stdout)) == [
         {"id": Repository.discover(project).branch_id("ideas"), "name": "ideas", "commit_id": commit_id, "comment": "案", "current": False},
@@ -1488,16 +1496,16 @@ def test_json_output_rejects_conflicting_display_options(
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"data")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "first"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "first"], project, monkeypatch).exit_code == 0
     commit_id = Repository.discover().log()[0]["id"]
 
-    log_result = invoke(["log", "--json", "--oneline"], project, monkeypatch)
+    log_result = invoke(["leaf", "list", "--json", "--oneline"], project, monkeypatch)
     assert log_result.exit_code != 0
     assert "--json and --oneline cannot be used together" in str(log_result.exception)
 
     show_result = invoke(
-        ["show", commit_id, "--json", "--timezone", "Asia/Tokyo"], project, monkeypatch
+        ["leaf", "show", commit_id, "--json", "--timezone", "Asia/Tokyo"], project, monkeypatch
     )
     assert show_result.exit_code != 0
     assert "--timezone cannot be used with --json" in str(show_result.exception)
@@ -1514,19 +1522,19 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
     asset = project / "作品" / "絵.psd"
     asset.parent.mkdir()
     asset.write_bytes(b"image")
-    tracked = invoke(["track", "作品/絵.psd", "--json"], project, monkeypatch)
+    tracked = invoke(["file", "track", "作品/絵.psd", "--json"], project, monkeypatch)
     assert tracked.exit_code == 0
     assert json.loads(tracked.stdout) == {"paths": ["作品/絵.psd"]}
     assert tracked.stderr == ""
 
     empty = project / "empty"
     empty.mkdir()
-    no_tracks = invoke(["track", "empty", "--json"], project, monkeypatch)
+    no_tracks = invoke(["file", "track", "empty", "--json"], project, monkeypatch)
     assert json.loads(no_tracks.stdout) == {"paths": []}
     assert no_tracks.stderr == ""
 
     committed = invoke(
-        ["commit", "-m", "日本語コミット", "--json"], project, monkeypatch
+        ["leaf", "create", "-m", "日本語コミット", "--json"], project, monkeypatch
     )
     assert committed.exit_code == 0
     commit_payload = json.loads(committed.stdout)
@@ -1544,31 +1552,32 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
 
     preview = write_image(project / "preview.png")
     thumbnail_result = invoke(
-        ["thumbnail", commit_id, str(preview), "--json"], project, monkeypatch
+        ["leaf", "thumbnail", "set", commit_id, str(preview), "--json"], project, monkeypatch
     )
     assert thumbnail_result.exit_code == 0
     assert json.loads(thumbnail_result.stdout)["original_name"] == "preview.png"
     assert thumbnail_result.stderr == ""
 
     noted = invoke(
-        ["note", commit_id, "確認メモ", "--json"], project, monkeypatch
+        ["leaf", "edit", commit_id, "--note", "確認メモ", "--json"], project, monkeypatch
     )
     assert noted.exit_code == 0
     assert json.loads(noted.stdout) == {
         "commit_id": commit_id,
+        "message": "日本語コミット",
         "note": "確認メモ",
         "note_updated_at": json.loads(noted.stdout)["note_updated_at"],
         "labels": [],
     }
 
     labeled = invoke(
-        ["label", commit_id, "承認済み", "--json"], project, monkeypatch
+        ["leaf", "label", "add", commit_id, "承認済み", "--json"], project, monkeypatch
     )
     assert labeled.exit_code == 0
     assert json.loads(labeled.stdout)["labels"] == ["承認済み"]
 
     created = invoke(
-        ["branch", "案", commit_id, "--comment", "検討中", "--json"],
+        ["branch", "create", "案", commit_id, "--comment", "検討中", "--json"],
         project,
         monkeypatch,
     )
@@ -1583,7 +1592,7 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
         "current": False,
     }
 
-    switched = invoke(["switch", "案", "--json"], project, monkeypatch)
+    switched = invoke(["go", "--branch", "案", "--json"], project, monkeypatch)
     assert switched.exit_code == 0
     assert json.loads(switched.stdout) == {
         "branch": "案",
@@ -1594,12 +1603,15 @@ def test_structured_json_output_for_gui_mutations(tmp_path: Path, monkeypatch) -
         "changes": [],
     }
 
-    restored = invoke(["restore", commit_id, "--json"], project, monkeypatch)
+    restored = invoke(["go", commit_id, "--keep-branch", "--reject-changes", "--json"], project, monkeypatch)
     assert restored.exit_code == 0
-    assert json.loads(restored.stdout) == {"commit_id": commit_id, "paths": None}
+    restored_payload = json.loads(restored.stdout)
+    assert restored_payload["current_commit"] == commit_id
+    assert restored_payload["branch"] == "案" and restored_payload["branch_id"] == idea_id
+    assert restored_payload["bud"] is None and restored_payload["changes"] == []
 
     untracked = invoke(
-        ["untrack", "作品/絵.psd", "--json"], project, monkeypatch
+        ["file", "untrack", "作品/絵.psd", "--json"], project, monkeypatch
     )
     assert untracked.exit_code == 0
     assert json.loads(untracked.stdout) == {"paths": ["作品/絵.psd"]}
@@ -1611,20 +1623,20 @@ def test_status_and_tree_report_current_position(tmp_path: Path, monkeypatch) ->
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
     asset.write_bytes(b"v2")
     second = json.loads(
-        invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "second", "--json"], project, monkeypatch).stdout
     )["id"]
 
     at_tip = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)
     assert (at_tip["current_commit"], at_tip["at_branch_tip"]) == (second, True)
     assert "Viewing saved snapshot" not in invoke(["status"], project, monkeypatch).stdout
 
-    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first, "--keep-branch", "--reject-changes"], project, monkeypatch).exit_code == 0
     viewing = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)
     assert (viewing["current_commit"], viewing["at_branch_tip"]) == (first, False)
     path_status = json.loads(
@@ -1636,9 +1648,9 @@ def test_status_and_tree_report_current_position(tmp_path: Path, monkeypatch) ->
         f"Viewing saved snapshot {first[:12]} (not the branch tip)",
     ]
 
-    graph = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    graph = json.loads(invoke(["leaf", "tree", "--json"], project, monkeypatch).stdout)
     assert (graph["current_commit"], graph["at_branch_tip"]) == (first, False)
-    tree_lines = invoke(["tree"], project, monkeypatch).stdout.splitlines()
+    tree_lines = invoke(["leaf", "tree"], project, monkeypatch).stdout.splitlines()
     assert [line for line in tree_lines if "current" in line] == [
         line for line in tree_lines if first[:12] in line
     ]
@@ -1649,17 +1661,17 @@ def test_status_is_clean_after_moving_to_an_old_snapshot(tmp_path: Path, monkeyp
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
     asset.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
 
-    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first, "--keep-branch", "--reject-changes"], project, monkeypatch).exit_code == 0
     assert "Working tree clean" in invoke(["status"], project, monkeypatch).stdout
     assert json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)["changes"] == []
-    assert invoke(["diff"], project, monkeypatch).stdout == "No differences\n"
+    assert invoke(["file", "diff"], project, monkeypatch).stdout == "No differences\n"
 
     asset.write_bytes(b"edited")
     changes = json.loads(invoke(["status", "--json"], project, monkeypatch).stdout)["changes"]
@@ -1671,47 +1683,47 @@ def test_bud_command_saves_lists_restores_and_drops(tmp_path: Path, monkeypatch)
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
-    assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
+    assert invoke(["bud", "list"], project, monkeypatch).stdout == "No buds\n"
 
     asset.write_bytes(b"draft")
-    saved = json.loads(invoke(["bud", "--save", "--json"], project, monkeypatch).stdout)
+    saved = json.loads(invoke(["bud", "save", "--json"], project, monkeypatch).stdout)
     assert saved["base_commit_id"] == first
     assert saved["changes"] == [{"state": "modified", "path": "asset.bin"}]
     assert [item["path"] for item in saved["files"]] == ["asset.bin"]
     assert asset.read_bytes() == b"v1"
-    listed = json.loads(invoke(["bud", "--json"], project, monkeypatch).stdout)
+    listed = json.loads(invoke(["bud", "list", "--json"], project, monkeypatch).stdout)
     assert [item["id"] for item in listed] == [saved["id"]]
-    assert invoke(["bud"], project, monkeypatch).stdout == (
+    assert invoke(["bud", "list"], project, monkeypatch).stdout == (
         f"{saved['id'][:12]} on {first[:12]} [main] 1 changes\n"
     )
-    graph = json.loads(invoke(["tree", "--json"], project, monkeypatch).stdout)
+    graph = json.loads(invoke(["leaf", "tree", "--json"], project, monkeypatch).stdout)
     assert [item["id"] for item in graph["buds"]] == [saved["id"]]
-    assert "Buds:          1" in invoke(["stats"], project, monkeypatch).stdout
+    assert "Buds:          1" in invoke(["maintenance", "stats"], project, monkeypatch).stdout
 
-    assert invoke(["restore", "main", "--discard"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", "main", "--keep-branch", "--discard"], project, monkeypatch).exit_code == 0
     restored = json.loads(
-        invoke(["bud", "--restore", saved["id"][:10], "--json"], project, monkeypatch).stdout
+        invoke(["bud", "restore", saved["id"][:10], "--json"], project, monkeypatch).stdout
     )
     assert restored["restored"]["id"] == saved["id"]
     assert restored["saved"] is None
     assert asset.read_bytes() == b"draft"
 
-    again = json.loads(invoke(["bud", "--save", "--json"], project, monkeypatch).stdout)
-    refused = invoke(["bud", "--drop", again["id"]], project, monkeypatch)
+    again = json.loads(invoke(["bud", "save", "--json"], project, monkeypatch).stdout)
+    refused = invoke(["bud", "delete", again["id"]], project, monkeypatch)
     assert refused.exit_code != 0
     assert "--yes" in str(refused.exception)
-    assert len(json.loads(invoke(["bud", "--json"], project, monkeypatch).stdout)) == 1
-    assert invoke(["bud", "--drop", again["id"], "--yes"], project, monkeypatch).exit_code == 0
-    assert invoke(["bud"], project, monkeypatch).stdout == "No buds\n"
-    assert invoke(["bud", "--save", "--drop", "x"], project, monkeypatch).exit_code != 0
-    assert invoke(["bud", "--keep-files"], project, monkeypatch).exit_code != 0
+    assert len(json.loads(invoke(["bud", "list", "--json"], project, monkeypatch).stdout)) == 1
+    assert invoke(["bud", "delete", again["id"], "--yes"], project, monkeypatch).exit_code == 0
+    assert invoke(["bud", "list"], project, monkeypatch).stdout == "No buds\n"
+    assert invoke(["bud", "save", "--drop", "x"], project, monkeypatch).exit_code != 0
+    assert invoke(["bud", "list", "--keep-files"], project, monkeypatch).exit_code != 0
 
     asset.write_bytes(b"draft")
-    kept = invoke(["bud", "--save", "--keep-files", "--json"], project, monkeypatch)
+    kept = invoke(["bud", "save", "--keep-files", "--json"], project, monkeypatch)
     assert kept.exit_code == 0
     assert asset.read_bytes() == b"draft"
 
@@ -1721,24 +1733,24 @@ def test_commit_reports_auto_created_branch(tmp_path: Path, monkeypatch) -> None
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
     asset.write_bytes(b"v2")
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
-    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first, "--keep-branch", "--reject-changes"], project, monkeypatch).exit_code == 0
 
     asset.write_bytes(b"alt one")
     payload = json.loads(
-        invoke(["commit", "-m", "alt one", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "alt one", "--json"], project, monkeypatch).stdout
     )
     assert payload["created_branch"] is True
     assert payload["branch"].startswith("branch-")
 
-    assert invoke(["restore", first], project, monkeypatch).exit_code == 0
+    assert invoke(["go", first, "--keep-branch", "--reject-changes"], project, monkeypatch).exit_code == 0
     asset.write_bytes(b"alt two")
-    lines = invoke(["commit", "-m", "alt two"], project, monkeypatch).stdout.splitlines()
+    lines = invoke(["leaf", "create", "-m", "alt two"], project, monkeypatch).stdout.splitlines()
     assert lines[0].startswith("Created branch branch-")
     assert lines[0].endswith(" from a snapshot that is not a branch tip")
     assert lines[1].startswith("[branch-")
@@ -1749,13 +1761,13 @@ def test_go_command_moves_and_reports_state(tmp_path: Path, monkeypatch) -> None
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
     asset.write_bytes(b"v2")
     second = json.loads(
-        invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "second", "--json"], project, monkeypatch).stdout
     )["id"]
     asset.write_bytes(b"draft")
 
@@ -1781,13 +1793,13 @@ def test_export_json_and_structured_untracked_conflict(tmp_path: Path, monkeypat
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     asset = project / "asset.bin"
     asset.write_bytes(b"v1")
-    assert invoke(["track", "asset.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "asset.bin"], project, monkeypatch).exit_code == 0
     first = json.loads(
-        invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout
+        invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout
     )["id"]
 
     out = tmp_path / "out"
-    exported = invoke(["export", first, "--output", str(out), "--json"], project, monkeypatch)
+    exported = invoke(["file", "export", first, "--output", str(out), "--json"], project, monkeypatch)
     assert exported.exit_code == 0
     assert json.loads(exported.stdout) == {
         "commit_id": first,
@@ -1798,8 +1810,8 @@ def test_export_json_and_structured_untracked_conflict(tmp_path: Path, monkeypat
 
     extra = project / "extra.bin"
     extra.write_bytes(b"tracked")
-    assert invoke(["track", "extra.bin"], project, monkeypatch).exit_code == 0
-    assert invoke(["commit", "-m", "second"], project, monkeypatch).exit_code == 0
+    assert invoke(["file", "track", "extra.bin"], project, monkeypatch).exit_code == 0
+    assert invoke(["leaf", "create", "-m", "second"], project, monkeypatch).exit_code == 0
     assert invoke(["go", first], project, monkeypatch).exit_code == 0
     extra.write_bytes(b"untracked work")
     blocked = invoke(["go", "main", "--json"], project, monkeypatch)
@@ -1825,14 +1837,14 @@ def test_json_exposes_branch_identity_and_ordered_attachments(tmp_path, monkeypa
                 "VALUES(?,?,'preview',?,'same.bin','application/x-future',?,7,?,?)",
                 (attachment_id, commit, position, digest, utc_timestamp(), utc_timestamp()),
             )
-    detail = json.loads(invoke(["show", commit, "--json"], repo.root, monkeypatch).stdout)
-    graph = json.loads(invoke(["tree", "--json"], repo.root, monkeypatch).stdout)
+    detail = json.loads(invoke(["leaf", "show", commit, "--json"], repo.root, monkeypatch).stdout)
+    graph = json.loads(invoke(["leaf", "tree", "--json"], repo.root, monkeypatch).stdout)
     assert detail["branch_id"] == repo.branch_id()
     assert graph["commits"][0]["branch_id"] == repo.branch_id()
     assert graph["branches"][0]["id"] == repo.branch_id()
     assert [(a["id"], a["position"]) for a in detail["attachments"]] == [("first", 1), ("second", 8)]
     assert graph["commits"][0]["attachments"] == detail["attachments"]
-    text = invoke(["show", commit], repo.root, monkeypatch).stdout
+    text = invoke(["leaf", "show", commit], repo.root, monkeypatch).stdout
     assert "Preview 1. first  same.bin (application/x-future, 7 bytes)" in text
     assert text.index("Preview 1. first") < text.index("Preview 2. second")
 
@@ -1850,29 +1862,29 @@ def test_json_reports_branch_identity_for_position_and_branch_edits(tmp_path, mo
         assert result.exit_code == 0, result.output
         return json.loads(result.stdout)
 
-    side = run(["branch", "side", first, "-m", "draft"])
+    side = run(["branch", "create", "side", first, "-m", "draft"])
     side_id = side["id"]
     assert side_id != main_id
-    assert run(["branch", "--set-comment", "kept", "side"]) == {
+    assert run(["branch", "comment", "side", "kept"]) == {
         "id": side_id, "name": "side", "comment": "kept"
     }
-    assert run(["branch", "side", "--rename", "idea"]) == {
+    assert run(["branch", "rename", "side", "idea"]) == {
         "id": side_id, "name": "idea", "previous_name": "side"
     }
-    switched = run(["switch", "idea"])
+    switched = run(["go", "--branch", "idea"])
     assert (switched["branch"], switched["branch_id"]) == ("idea", side_id)
     assert run(["status"])["branch_id"] == side_id
 
     asset.write_bytes(b"v2")
-    committed = run(["commit", "-m", "second"])
+    committed = run(["leaf", "create", "-m", "second"])
     assert (committed["branch"], committed["branch_id"]) == ("idea", side_id)
 
     moved = run(["go", "main"])
     assert (moved["branch"], moved["branch_id"]) == ("main", main_id)
-    assert run(["branch", "--delete", "idea"]) == {"id": side_id, "name": "idea", "deleted": True}
-    recreated = run(["branch", "idea", first])
+    assert run(["branch", "delete", "idea"]) == {"id": side_id, "name": "idea", "deleted": True}
+    recreated = run(["branch", "create", "idea", first])
     assert recreated["id"] not in (side_id, main_id)
-    graph = run(["tree"])
+    graph = run(["leaf", "tree"])
     assert {c["branch_id"] for c in graph["commits"] if c["message"] == "second"} == {side_id}
     assert side_id not in {branch["id"] for branch in graph["branches"]}
 
@@ -1882,15 +1894,15 @@ def test_diff_json_is_read_only(tmp_path: Path, monkeypatch) -> None:
     assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
     (project / "changed.bin").write_bytes(b"old")
     (project / "deleted.bin").write_bytes(b"gone")
-    assert invoke(["track", "changed.bin", "deleted.bin"], project, monkeypatch).exit_code == 0
-    first = json.loads(invoke(["commit", "-m", "first", "--json"], project, monkeypatch).stdout)["id"]
+    assert invoke(["file", "track", "changed.bin", "deleted.bin"], project, monkeypatch).exit_code == 0
+    first = json.loads(invoke(["leaf", "create", "-m", "first", "--json"], project, monkeypatch).stdout)["id"]
     (project / "changed.bin").write_bytes(b"updated")
     (project / "deleted.bin").unlink()
     (project / "追加.bin").write_bytes(b"new")
-    assert invoke(["track", "追加.bin"], project, monkeypatch).exit_code == 0
-    second = json.loads(invoke(["commit", "-m", "second", "--json"], project, monkeypatch).stdout)["id"]
+    assert invoke(["file", "track", "追加.bin"], project, monkeypatch).exit_code == 0
+    second = json.loads(invoke(["leaf", "create", "-m", "second", "--json"], project, monkeypatch).stdout)["id"]
     before = invoke(["status", "--json"], project, monkeypatch).stdout
-    result = invoke(["diff", first, second, "--json"], project, monkeypatch)
+    result = invoke(["file", "diff", first, second, "--json"], project, monkeypatch)
     assert result.exit_code == 0
     entries = {entry["path"]: entry for entry in json.loads(result.stdout)}
     assert entries == {
@@ -1899,5 +1911,5 @@ def test_diff_json_is_read_only(tmp_path: Path, monkeypatch) -> None:
         "追加.bin": {"path": "追加.bin", "state": "added", "old_size": None, "new_size": 3},
     }
     assert invoke(["status", "--json"], project, monkeypatch).stdout == before
-    assert json.loads(invoke(["diff", second, second, "--json"], project, monkeypatch).stdout) == []
+    assert json.loads(invoke(["file", "diff", second, second, "--json"], project, monkeypatch).stdout) == []
     assert (project / "changed.bin").read_bytes() == b"updated"

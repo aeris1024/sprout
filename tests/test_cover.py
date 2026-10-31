@@ -286,11 +286,11 @@ def test_cli_and_json(tmp_path, monkeypatch):
     repo, poster, _ = project(tmp_path)
     monkeypatch.chdir(repo.root)
     runner = CliRunner()
-    assert 'No thumbnail source' in runner.invoke(app, ['cover']).stdout
+    assert 'No thumbnail source' in runner.invoke(app, ['leaf', 'thumbnail', 'source', 'show']).stdout
     status = json.loads(runner.invoke(app, ['status', '--tracked', '--json']).stdout)
     assert 'cover' not in status
 
-    chosen = json.loads(runner.invoke(app, ['cover', 'poster.png', '--json']).stdout)
+    chosen = json.loads(runner.invoke(app, ['leaf', 'thumbnail', 'source', 'set', 'poster.png', '--json']).stdout)
     assert chosen['path'] == 'poster.png' and chosen['problem'] is None
     assert json.loads(runner.invoke(app, ['status', '--tracked', '--json']).stdout)['cover']['path'] == 'poster.png'
 
@@ -304,8 +304,10 @@ def test_cli_and_json(tmp_path, monkeypatch):
     assert warned.exit_code == 0
     assert 'cover_not_image' in warned.stderr
 
-    assert json.loads(runner.invoke(app, ['cover', '--apply', '--dry-run', '--json']).stdout)['dry_run'] is True
-    for args in (['cover', 'poster.png', '--clear'], ['cover', '--dry-run']):
-        with pytest.raises(SproutError):
-            runner.invoke(app, args, catch_exceptions=False)
-    assert json.loads(runner.invoke(app, ['cover', '--clear', '--json']).stdout)['file_id'] is None
+    assert json.loads(runner.invoke(app, ['leaf', 'thumbnail', 'source', 'apply', '--dry-run', '--json']).stdout)['dry_run'] is True
+    before = repo.cover_file()
+    for args in (['leaf', 'thumbnail', 'source', 'set', 'poster.png', '--clear'],
+                 ['leaf', 'thumbnail', 'source', 'show', '--dry-run']):
+        assert runner.invoke(app, args).exit_code != 0
+        assert repo.cover_file() == before
+    assert json.loads(runner.invoke(app, ['leaf', 'thumbnail', 'source', 'clear', '--json']).stdout)['file_id'] is None

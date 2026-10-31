@@ -91,7 +91,7 @@ def test_canonical_label_commands_share_existing_annotations_and_filter(tmp_path
     assert annotations['labels'] == ['Café']
     assert call('leaf', 'label', 'list') == [{'name': 'Café', 'leaf_count': 1}]
     assert call('leaf', 'label', 'list', first) == annotations
-    assert call('label', first) == annotations  # Transitional caller until the final migration.
+    assert not run_command(app, ['label', first, '--json'])['ok']
     assert [row['id'] for row in call('log', '--label', 'Café')] == [first]
     runner = CliRunner()
     text = runner.invoke(app, ['leaf', 'label', 'list'])

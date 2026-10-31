@@ -1,10 +1,11 @@
 ---
 id: TASK-125.8
 title: 新CLI体系とaliasのヘルプ・補完・文書・統合検証をそろえる
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-10-31 07:24'
-updated_date: '2026-10-31 09:34'
+updated_date: '2026-10-31 21:17'
 labels:
   - cli
   - docs
@@ -43,14 +44,32 @@ ordinal: 132000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 READMEのクイックスタート・全コマンド一覧・各機能例・JSON例とGUI READMEのCLI説明が新構文に整合し、旧33入口からの対応を確認できる
-- [ ] #2 rootと各下位操作のhelpが整合し、基本10入口・用途・必須引数・alias対応を迷わず確認できる
-- [ ] #3 PowerShell/bash/zshで階層化されたコマンドと対応aliasの補完、および葉・ブランチ・タグ参照の既存補完が機能することを検証する
-- [ ] #4 基本の保存から履歴閲覧・分岐・退避・復元・取り出し、添付管理、ゴミ箱、prune、保守まで、正規CLIの対応漏れがないことを統合検証する
-- [ ] #5 CLI・serve・alias・GUIの関連テストと必要なビルドが成功し、既存V1リポジトリとサンプルを正規構文で利用できる
-- [ ] #6 4系統の統合結果と確定したラベル維持を説明でき、TASK-125.13の素材関連付け廃止と表示名・説明・順序・置き換えの維持を含む実装・移行の完了を確認する
-- [ ] #7 ヘルプ・補完・GUI README・サンプル・アーカイブの案内が代表指定廃止・置き換え維持・サムネイル自動生成元への改称に整合し、TASK-125.14の実装と検証完了を確認する
-- [ ] #8 TASK-125.15・TASK-125.16のラベル一覧・候補表示と既存の付与/解除・履歴検索が検証され、CLI/GUIヘルプとREADMEが整合する
-- [ ] #9 ヘルプ・補完・GUI/README・JSON・アーカイブ・サンプルに廃止した素材関連付け操作の案内を残さず、葉全体の確認資料という位置付けと維持する表示名・説明・順序を説明する
-- [ ] #10 正規CLIへの利用箇所移行後に、段階的移行の仮の旧入口/旧フラグを整理し、最終公開入口と合意したaliasだけが案内・補完・実行契約として整合することを検証する
+- [x] #1 READMEのクイックスタート・全コマンド一覧・各機能例・JSON例とGUI READMEのCLI説明が新構文に整合し、旧33入口からの対応を確認できる
+- [x] #2 rootと各下位操作のhelpが整合し、基本10入口・用途・必須引数・alias対応を迷わず確認できる
+- [x] #3 PowerShell/bash/zshで階層化されたコマンドと対応aliasの補完、および葉・ブランチ・タグ参照の既存補完が機能することを検証する
+- [x] #4 基本の保存から履歴閲覧・分岐・退避・復元・取り出し、添付管理、ゴミ箱、prune、保守まで、正規CLIの対応漏れがないことを統合検証する
+- [x] #5 CLI・serve・alias・GUIの関連テストと必要なビルドが成功し、既存V1リポジトリとサンプルを正規構文で利用できる
+- [x] #6 4系統の統合結果と確定したラベル維持を説明でき、TASK-125.13の素材関連付け廃止と表示名・説明・順序・置き換えの維持を含む実装・移行の完了を確認する
+- [x] #7 ヘルプ・補完・GUI README・サンプル・アーカイブの案内が代表指定廃止・置き換え維持・サムネイル自動生成元への改称に整合し、TASK-125.14の実装と検証完了を確認する
+- [x] #8 TASK-125.15・TASK-125.16のラベル一覧・候補表示と既存の付与/解除・履歴検索が検証され、CLI/GUIヘルプとREADMEが整合する
+- [x] #9 ヘルプ・補完・GUI/README・JSON・アーカイブ・サンプルに廃止した素材関連付け操作の案内を残さず、葉全体の確認資料という位置付けと維持する表示名・説明・順序を説明する
+- [x] #10 正規CLIへの利用箇所移行後に、段階的移行の仮の旧入口/旧フラグを整理し、最終公開入口と合意したaliasだけが案内・補完・実行契約として整合することを検証する
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Remove temporary old command registrations/groups/flags, leaving canonical10 plus agreed aliases, and update generated archive/error guidance. 2. Migrate actual test argv and expected contracts to canonical commands or intentional aliases without test-only compatibility wrappers. 3. Align quickstart/reference/JSON examples, GUI README and sample guide with final syntax and old33-entry mapping, clarified go/labels/previews and flag-like values. 4. Exercise hierarchical completion protocol for PowerShell/bash/zsh; parse generated scripts in real pwsh/GitBash where available and record zsh interpreter limitation. 5. Run focused regression loops, final canonical/alias/serve/sample/V1 integration and whole backend+GUI/type/build checks; finalize after evidence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Final validation completed without repeating successful cases: original interrupted run covered463 cases (457 passed,3 skipped,3 outdated guidance assertions failed). Updated only those3 expected messages to canonical syntax; reran them plus315 unexecuted cases:301 passed,17 skipped in142.46s. Unique full-suite coverage:778 cases,758 passed,20 skipped,no outstanding failures. GUI262 tests,typecheck,Vite build passed; Rust9 tests passed in125.7 with unchanged Rust source. Completion35 tests cover PowerShell/bash/zsh protocols and real PowerShell/Git Bash script parsing; zsh interpreter is not installed,so interactive zsh was not tested. Independent real CLI V1 workflow and exact final command allowlist passed; JSON examples and10/15/33 documentation mappings validated. Preserved original CRLF in repository tests; diff check passes with cr-at-eol.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed canonical CLI migration: removed temporary old routes/flags, retained only10 canonical entries plus agreed aliases, aligned help/completion/docs/JSON/sample/archive guidance and migrated actual regression argv. Verified778 backend cases (758 passed,20 skipped) across interrupted/resumed runs,262 GUI tests,typecheck/build,9 Rust tests,completion protocols and real CLI integration. V1 unchanged; interactive zsh not available.
+<!-- SECTION:FINAL_SUMMARY:END -->

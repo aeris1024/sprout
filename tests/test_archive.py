@@ -184,7 +184,7 @@ def test_archive_dry_run_reports_counts_and_space_without_writing(
     data = history(tmp_path, monkeypatch)
     output = tmp_path / "planned"
 
-    result = runner.invoke(app, ["archive", "--output", str(output), "--dry-run", "--json"])
+    result = runner.invoke(app, ['leaf', 'archive', '--output', str(output), '--dry-run', '--json'])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.stdout)
@@ -198,7 +198,7 @@ def test_archive_dry_run_reports_counts_and_space_without_writing(
     written = sum(path.stat().st_size for path in output.rglob("*") if path.is_file())
     assert abs(report["estimated_bytes"] - written) < 200  # only generated_at may differ
 
-    text = runner.invoke(app, ["archive", "-o", str(tmp_path / "other"), "--dry-run"])
+    text = runner.invoke(app, ['leaf', 'archive', '-o', str(tmp_path / "other"), '--dry-run'])
     assert text.exit_code == 0, text.output
     assert "Commits:         3" in text.stdout and "Free space:" in text.stdout
 
@@ -219,10 +219,10 @@ def test_archive_reports_insufficient_space_before_writing(
     assert error.value.details["free_bytes"] == 1
     assert not output.exists()
     assert not output.with_name(f".full{INCOMPLETE_SUFFIX}").exists()
-    dry_run = runner.invoke(app, ["archive", "-o", str(output), "--dry-run"])
+    dry_run = runner.invoke(app, ['leaf', 'archive', '-o', str(output), '--dry-run'])
     assert dry_run.exit_code == 1
     assert "Not enough free space" in dry_run.stdout
-    failure = main_json_error(monkeypatch, capsys, ["archive", "-o", str(output), "--json"])
+    failure = main_json_error(monkeypatch, capsys, ["leaf", "archive", "-o", str(output), "--json"])
     assert failure["code"] == "archive_insufficient_space"
 
 
@@ -301,7 +301,7 @@ def test_archive_failure_leaves_no_partial_output(
     repo._store_object(repo.root / "deep" / "nested" / "extra.dat")
     preview = repo.previews(data["side_tip"])[0]
     repo._object_path(preview.object_hash).write_bytes(zstandard.ZstdCompressor().compress(b"tampered"))
-    failure = main_json_error(monkeypatch, capsys, ["archive", "-o", str(output), "--json"])
+    failure = main_json_error(monkeypatch, capsys, ["leaf", "archive", "-o", str(output), "--json"])
     assert failure["code"] == "archive_object_invalid"
     assert failure["details"]["attachment_id"] == preview.id
     assert failure["details"]["role"] == "preview"
@@ -314,14 +314,14 @@ def test_archive_cli_writes_archive_and_reports_json(
     history(tmp_path, monkeypatch)
     output = tmp_path / "cli-archive"
 
-    result = runner.invoke(app, ["archive", "--output", str(output), "--json"])
+    result = runner.invoke(app, ['leaf', 'archive', '--output', str(output), '--json'])
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.stdout)
     assert report["dry_run"] is False and report["commits"] == 3
     assert report["output"] == str(output.resolve())
     assert (output / "index.html").is_file()
-    text = runner.invoke(app, ["archive", "-o", str(tmp_path / "plain")])
+    text = runner.invoke(app, ['leaf', 'archive', '-o', str(tmp_path / "plain")])
     assert text.exit_code == 0, text.output
     assert "Archived 3 commit(s)" in text.stdout
 

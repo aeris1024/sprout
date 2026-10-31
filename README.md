@@ -106,20 +106,20 @@ sprout init
 次に、保存したいファイルやフォルダを追跡対象へ登録します。フォルダを指定した場合は、その中にあるファイルがまとめて登録されます。
 
 ```powershell
-sprout track document.bin references
+sprout file track document.bin references
 sprout status
 ```
 
 作業の区切りでコミットを作成します。
 
 ```powershell
-sprout commit -m "最初のスナップショット"
+sprout leaf create -m "最初のスナップショット"
 ```
 
 コミットへ小さな静止画像を付ける場合は`--thumbnail`を指定します。PNG、JPEG、WebPに対応し、ファイルサイズは2 MiB以下、幅と高さはそれぞれ4096ピクセル以下に制限されます。画像は実際の内容をデコードして検証され、破損画像、アニメーション画像、拡張子だけを変更した非画像ファイルは拒否されます。
 
 ```powershell
-sprout commit -m "色を調整" --thumbnail preview.png
+sprout leaf create -m "色を調整" --thumbnail preview.png
 ```
 
 保存した履歴は、次のコマンドで確認できます。
@@ -127,8 +127,8 @@ sprout commit -m "色を調整" --thumbnail preview.png
 ```powershell
 sprout leaf list
 sprout leaf list scene.blend
-sprout show <commit-id>
-sprout tree
+sprout leaf show <commit-id>
+sprout leaf tree
 ```
 
 `sprout leaf list`は現在のブランチの履歴を表示します。パスを指定すると、そのパスの内容が変わった葉だけを表示し、内容が同じままの葉は省きます。一度も登場していないパスでは`No history for path:`と表示されます。
@@ -146,11 +146,11 @@ sprout leaf list --file-id <file-id> --json
 
 `--file-id`では全ブランチの同一素材の保存記録を表示します。内容不変の保存、改名・移動、削除済みブランチ由来の葉も含み、各時点のパス・内容・更新日時を新しい順に返します。`-n/--max-count`、`--oneline`、`--json`を利用できます。検索範囲が異なるため、PATHや`--label`との同時指定は拒否します。JSONは既存の素材履歴と同じ`commit_id`・`path`・`file_id`等を持つ配列で、通常モードの`id`・メモ・ラベルを持つ配列とは区別します。`log`は同じ処理への手打ち用aliasです。
 
-`sprout show`のコミット日時とファイル更新日時は、既定ではUTCで表示されます。ローカルタイム、またはIANAタイムゾーン名を指定することもできます。
+`sprout leaf show`のコミット日時とファイル更新日時は、既定ではUTCで表示されます。ローカルタイム、またはIANAタイムゾーン名を指定することもできます。
 
 ```powershell
-sprout show <commit-id> --timezone local
-sprout show <commit-id> --timezone Asia/Tokyo
+sprout leaf show <commit-id> --timezone local
+sprout leaf show <commit-id> --timezone Asia/Tokyo
 ```
 
 ### サンプルリポジトリで試す
@@ -165,84 +165,50 @@ uv run python scripts/create_sample_repo.py ../sprout-sample
 
 ## ブランチを使う
 
-現在の状態から別の作業を試したいときは、ブランチを作成します。
-ブランチは最初のコミット後に作成できます。
+現在のブランチ先端から別案を作る場合は、ブランチを作成して移動します。起点を省略できるのは最初の葉を保存した後です。
 
 ```powershell
-sprout branch experiment -m "別の方法を試す"
-sprout switch experiment
+sprout branch create experiment --comment="別の方法を試す"
+sprout go --branch experiment
+
+# 過去の葉を起点に、作成と移動をまとめて行う
+sprout branch create rethink <leaf-id> --switch
+sprout branch create from-tag submitted --switch
+
+# 一覧、名前・コメントの変更、削除
+sprout branch list
+sprout branch list --deleted
+sprout branch rename experiment prototype
+sprout branch comment prototype "試作版"
+sprout branch delete prototype
 ```
 
-過去のコミットから分岐したいときは、ブランチ名のあとに起点を指定します。コミットID（または先頭部分）、ブランチ名、タグ名を使えます。`--switch`を付けると、作成したブランチへ切り替わり、作業ツリーもその起点の内容になります。
+起点には葉ID、一意な接頭辞、ブランチ名、タグ名を指定できます。起点を省略すると現在のブランチ先端から作成します。ただし、現在位置が途中の葉にある場合は、誤った分岐を防ぐため`--switch`の有無にかかわらず起点の省略を拒否します。途中の葉から分岐する場合は葉を明示してください。
 
-```powershell
-# 過去のコミットからブランチを作るだけ
-sprout branch rethink <commit-id>
-
-# 作成してすぐ切り替える
-sprout branch rethink <commit-id> --switch
-
-# タグや別ブランチを起点にする
-sprout branch from-tag submitted --switch
-sprout branch from-main main
-```
-
-起点を省略した場合は、現在のブランチ先端から作成します。ただし`restore`で先端とは異なる保存済みスナップショットへ移動しているとき（現在位置が先端以外のとき）に起点を省略すると、移動後にファイルを編集していても、誤って最新から分岐しないようエラーになります。その場合は起点を明示してください。
-
-```powershell
-sprout restore <commit-id>
-# エラーになる（先端から暗黙に分岐しない）
-sprout branch rethink
-# 正しい指定
-sprout branch rethink <commit-id> --switch
-```
-
-ブランチの一覧は`sprout branch`で確認できます。先頭に`*`が付いているものが現在のブランチです。
-
-```text
-* main                 a12bc34de567
-  experiment           b98fe76dc543  # 別の方法を試す
-```
-
-ブランチ名を変更する場合は、現在の名前を位置引数、新しい名前を`--rename`へ指定します。現在のブランチを変更した場合も、そのブランチを選択した状態が保たれます。不要なブランチは`--delete`で削除できますが、現在のブランチは削除できません。
-
-```powershell
-sprout branch experiment --rename prototype
-sprout branch --delete prototype
-```
+`--switch`を付けなければブランチを作るだけです。付けると作成後に移動し、未保存の追跡変更は既定でつぼみに残します。変更がある場合の拒否には`--reject-changes`、ゴミ箱へ保存したうえでの破棄には`--discard`を指定します。現在のブランチは削除できません。名前を変更してもブランチのIDと現在の選択を保ちます。
 
 ## タグを使う
 
-動かない目印をコミットへ付けたい場合はタグを使用します。コミットを省略すると現在のブランチの先端、指定するとそのコミットへタグを作成します。コミットの代わりにブランチ名や既存タグ名も指定できます。
+保存した葉に動かない目印を付ける場合はタグを使います。葉を省略すると現在のブランチ先端へ作成します。
 
 ```powershell
-# 現在のコミットにタグを作成
-sprout tag submitted -m "提出版"
-
-# 過去のコミットにタグを作成
-sprout tag first-draft <commit-id> -m "初稿"
-
-# コメントの変更（空文字でコメントを消す）
-sprout tag first-draft --set-comment "初稿（差し戻し前）"
-
-# 一覧と削除
-sprout tag
-sprout tag --delete first-draft
+sprout leaf tag create submitted --comment="提出版"
+sprout leaf tag create first-draft <leaf-id> --comment="初稿"
+sprout leaf tag comment first-draft "初稿（差し戻し前）"
+sprout leaf tag list
+sprout leaf tag delete first-draft
+sprout leaf show submitted
+sprout go submitted
 ```
 
-タグ名は`show`や`restore`など、コミットを受け取るコマンドで使用できます。
-
-```powershell
-sprout show submitted
-sprout restore submitted
-```
+コメントは空文字で解除できます。タグは葉の参照として使え、タグ付きの葉は単一削除や間引きから保護されます。タグ自体の削除は葉を削除せず、ゴミ箱から戻せます。
 
 ## リポジトリ全体の履歴を見る
 
-`log`は現在のブランチだけをたどります。分岐した履歴や、削除済みブランチから作られたコミットを含む全履歴を見る場合は`tree`を使います。
+`leaf list`は現在のブランチだけをたどります。分岐した履歴や、削除済みブランチから作られたコミットを含む全履歴を見る場合は`leaf tree`を使います。
 
 ```powershell
-sprout tree
+sprout leaf tree
 ```
 
 人間向け表示は古いコミットから新しいコミットへ親子関係をASCII枝で示します。`created`はコミット作成時のブランチ名、`branch`と`tag`は現在そのコミットを指す参照です。現在のブランチには`*`が付きます。サムネイル、previewの件数、メモ、ラベルもマーカーで確認できます。
@@ -253,28 +219,28 @@ sprout tree
 `- * c34de56fa789 side work [created:side] [thumbnail] [previews:2] [note] [labels:Candidate]
 ```
 
-削除したブランチ名は現在の`branch`参照から消えますが、そのブランチで作成したコミットと`created`の値は保持されます。GUIや外部ツールから利用する場合は`tree --json`で平坦なコミット配列と現在の参照を取得できます。人間向けツリーは古い順、JSONの`commits`配列は新しい順です。
+削除したブランチ名は現在の`branch`参照から消えますが、そのブランチで作成したコミットと`created`の値は保持されます。GUIや外部ツールから利用する場合は`leaf tree --json`で平坦なコミット配列と現在の参照を取得できます。人間向けツリーは古い順、JSONの`commits`配列は新しい順です。
 
 ## 履歴を間引く
 
-制作途中のタグなしコミットを削除する場合は`prune`を使います。2つのタグを古い順に指定するタグ間モードでは、その祖先経路内にあるタグなし中間コミットだけが対象です。すべてのタグ付きコミット、現在存在する各ブランチの先端、作業ツリーの現在位置のコミットは常に保護されます。
+制作途中のタグなしコミットを削除する場合は`leaf prune`を使います。2つのタグを古い順に指定するタグ間モードでは、その祖先経路内にあるタグなし中間コミットだけが対象です。すべてのタグ付きコミット、現在存在する各ブランチの先端、作業ツリーの現在位置のコミットは常に保護されます。
 
 ```powershell
 # 変更せずに削除対象と、gcで回収可能になる容量を確認
-sprout prune first-draft submitted --dry-run
+sprout leaf prune first-draft submitted --dry-run
 
 # 確認したタグ間を実際に間引く
-sprout prune first-draft submitted --yes
+sprout leaf prune first-draft submitted --yes
 ```
 
 全履歴モードは、タグ付きコミットと現存ブランチ先端以外をすべて削除します。削除済みブランチ由来で、タグも現存ブランチ参照もないコミットも対象になります。
 
 ```powershell
-sprout prune --all --dry-run
-sprout prune --all --yes
+sprout leaf prune --all --dry-run
+sprout leaf prune --all --yes
 ```
 
-`prune`は取り消せません。実行には`--yes`が必要で、削除後は残したコミットの親が元の履歴上で最も近い残存祖先へ接続されます。部分復元などで作業ツリーの内容が削除対象の過去コミットと一致する場合は、そのコミットへタグを付けるかブランチを作成するまで実行を拒否します。コミット削除だけではobjectsのファイルやSQLiteデータベース自体のサイズは縮まらないため、表示された容量を実際に回収するには続けて`sprout gc`を実行してください。SQLiteの`VACUUM`は行いません。
+`leaf prune`は取り消せません。実行には`--yes`が必要で、削除後は残したコミットの親が元の履歴上で最も近い残存祖先へ接続されます。部分復元などで作業ツリーの内容が削除対象の過去コミットと一致する場合は、そのコミットへタグを付けるかブランチを作成するまで実行を拒否します。コミット削除だけではobjectsのファイルやSQLiteデータベース自体のサイズは縮まらないため、表示された容量を実際に回収するには続けて`sprout maintenance gc`を実行してください。SQLiteの`VACUUM`は行いません。
 
 ## 葉を1枚だけ削除する
 
@@ -282,10 +248,10 @@ sprout prune --all --yes
 
 ```powershell
 # 変更せずに影響（移るブランチ・いまここ・つなぎ直す子・付け替えるつぼみ）と回収可能な容量を確認
-sprout delete-commit 3f2a9c1b --dry-run
+sprout leaf delete 3f2a9c1b --dry-run
 
 # 確認した内容で削除する
-sprout delete-commit 3f2a9c1b --yes
+sprout leaf delete 3f2a9c1b --yes
 ```
 
 削除するコミットを指していた参照は、すべてその親へ移します。
@@ -295,7 +261,7 @@ sprout delete-commit 3f2a9c1b --yes
 - そのコミットを起点にしたつぼみは、内容を変えず起点を親へ付け替えます。
 - そのコミットのファイル一覧・添付・メモ・ラベルは削除されます。他のコミットの内容は変わりません。
 
-`delete-commit`は参照を移すため、実行には`--yes`が必要です。削除内容はゴミ箱へ保持し、参照が変更される前なら復旧できます。`--dry-run`は何も変更せず、実際の削除と同じ影響を報告します。途中で失敗した場合は削除内容と復旧記録の両方をロールバックします。ゴミ箱の実体は`gc`から保護されます。`reclaimable_objects`・`reclaimable_bytes`は、その葉だけが参照する内容のうち、他のつぼみやゴミ箱にも保護されていない分です。削除直後に回収できる容量ではありません。
+`delete-commit`は参照を移すため、実行には`--yes`が必要です。削除内容はゴミ箱へ保持し、参照が変更される前なら復旧できます。`--dry-run`は何も変更せず、実際の削除と同じ影響を報告します。途中で失敗した場合は削除内容と復旧記録の両方をロールバックします。ゴミ箱の実体は`maintenance gc`から保護されます。`reclaimable_objects`・`reclaimable_bytes`は、その葉だけが参照する内容のうち、他のつぼみやゴミ箱にも保護されていない分です。削除直後に回収できる容量ではありません。
 
 ### ゴミ箱から復旧する
 
@@ -310,129 +276,82 @@ sprout trash restore <trash-id>
 # 対象と容量を確認してから完全削除する
 sprout trash purge <trash-id> --dry-run --json
 sprout trash purge <trash-id> --yes
-sprout gc
+sprout maintenance gc
 ```
 
 復旧IDは一覧の完全なIDを指定します。葉の復旧では、保存ファイル・添付・メモ・ラベルに加え、削除時に変えた子の親・ブランチ先端・現在位置・つぼみの起点を戻します。作業ファイルや追跡設定は変更しません。削除後に影響範囲の記録が編集・削除された場合や、必要な親が失われた場合、ID・連番が衝突する場合は、`trash_restore_conflict`で全体を拒否し、ゴミ箱も残します。後から進めた履歴や同名の別ブランチを上書きしません。
 
 削除したメモ（`note_delete`）は内容と更新日時を、タグ（`tag_delete`）は対象の葉とコメントを、ブランチ（`branch_delete`）は枝先・コメント・IDを含めて戻します。対象の葉が失われている場合、その葉に新しいメモがある場合、同じ名前のブランチやタグがすでにある場合は、理由を示して`trash_restore_conflict`で拒否します。メモの内容を別の内容へ上書きした場合はゴミ箱に残りません。
 
-捨てたつぼみ（`bud_delete`）と破棄した未保存の変更（`discard`）は、ファイルの内容・素材ID・名前ごと保存し、復旧すると「つぼみ」として戻ります。作業ファイルは変更しないので、内容へ戻すには`bud --restore`を使います。`--discard`では実行時点の追跡ファイル全体を保存します（部分復元でも同じです）。戻す変更がなければ項目を作らず、復元が失敗した場合は項目を取り消します。つぼみの起点の葉が失われている場合は`trash_restore_conflict`で拒否します。
+捨てたつぼみ（`bud_delete`）と破棄した未保存の変更（`discard`）は、ファイルの内容・素材ID・名前ごと保存し、復旧すると「つぼみ」として戻ります。作業ファイルは変更しないので、内容へ戻すには`bud restore`を使います。`--discard`では実行時点の追跡ファイル全体を保存します（部分復元でも同じです）。戻す変更がなければ項目を作らず、復元が失敗した場合は項目を取り消します。つぼみの起点の葉が失われている場合は`trash_restore_conflict`で拒否します。
 
 previewは削除・置き換え前の添付ID・内容・元ファイル名・形式・サイズ・表示順・作成日時・更新日時をそのまま戻します。対象コミットが存在し、そのpreview一覧が記録した操作直後の状態と一致することが必要です。複数回置き換えた場合は新しい復旧項目から順に戻してください。追加・並べ替え・他のpreviewの編集などで一覧が変わった場合も拒否します。
 
-各項目の`protected_bytes`はその項目が保護するオブジェクトの圧縮後容量で、通常の履歴や他のゴミ箱と共有する分も含みます。項目間で単純に足すと重複します。`reclaimable_bytes`はその項目を完全削除した後に、他の履歴・添付・つぼみ・ゴミ箱から参照されなくなる容量です。完全削除は復旧記録だけを破棄し、実体は次回の`gc`が回収します。完全削除を取り消すことはできず、過去のpreview版を順に戻す経路や、削除した葉に属するpreviewの復旧経路も失われる場合があります。
+各項目の`protected_bytes`はその項目が保護するオブジェクトの圧縮後容量で、通常の履歴や他のゴミ箱と共有する分も含みます。項目間で単純に足すと重複します。`reclaimable_bytes`はその項目を完全削除した後に、他の履歴・添付・つぼみ・ゴミ箱から参照されなくなる容量です。完全削除は復旧記録だけを破棄し、実体は次回の`maintenance gc`が回収します。完全削除を取り消すことはできず、過去のpreview版を順に戻す経路や、削除した葉に属するpreviewの復旧経路も失われる場合があります。
 
-`trash list`は概要の配列、`show`は概要と`changes`（復旧する記録と操作直後の記録）、`restore`と`purge`は概要と`dry_run`・`restored`または`purged`をJSONで返します。`restore --dry-run`も競合と必要な内容の健全性を検査します。不正・非対応の復旧記録は`invalid_trash_record`で拒否し、`doctor`でも診断します。ゴミ箱の記録形式は整数のVersion 1です。
+`trash list`は概要の配列、`trash show`は概要と`changes`（復旧する記録と操作直後の記録）、`trash restore`と`trash purge`は概要と`dry_run`・`restored`または`purged`をJSONで返します。`trash restore --dry-run`も競合と必要な内容の健全性を検査します。不正・非対応の復旧記録は`invalid_trash_record`で拒否し、`maintenance doctor`でも診断します。ゴミ箱の記録形式は整数のVersion 1です。
 
-`prune`は引き続き取り消し対象外ですが、ゴミ箱が保護する実体を回収対象に含めません。`archive`は通常の履歴を対象とし、ゴミ箱を含めません。復旧データもバックアップする場合は、Sproutを終了して`.sprout`を含むプロジェクト全体をコピーしてください。
+`leaf prune`は引き続き取り消し対象外ですが、ゴミ箱が保護する実体を回収対象に含めません。`leaf archive`は通常の履歴を対象とし、ゴミ箱を含めません。復旧データもバックアップする場合は、Sproutを終了して`.sprout`を含むプロジェクト全体をコピーしてください。
 
 ## 過去の状態へ戻る
 
-ブランチを切り替える場合は`switch`、特定のコミットを作業フォルダへ復元する場合は`restore`を使います。
+作業フォルダ全体の移動には`go`を使います。葉ID、一意な接頭辞、ブランチ名、タグ名を指定できます。
 
 ```powershell
-sprout switch main
-sprout restore <commit-id>
-```
-
-復元や切り替えの前に、ファイル単位の差分だけ確認したい場合は`diff`を使います。
-
-```powershell
-# 現在位置と作業ツリー
-sprout diff
-
-# 指定コミットと作業ツリー
-sprout diff <commit-id>
-
-# コミット間（A から B）
-sprout diff <commit-a> <commit-b>
-```
-
-特定のファイルだけ昔の版に戻す場合は、コミットのあとにパスを指定します。ディレクトリを指定すると、そのコミット内の配下ファイルがまとめて復元されます。部分復元ではブランチ先端や、指定していない追跡ファイルの状態は変わりません。
-
-```powershell
-sprout restore <commit-id> docs/manual.bin
-sprout restore <commit-id> assets/
-```
-
-未保存の変更がある場合、Sproutはファイルを保護するため処理を中止します。
-変更を破棄してよい場合に限り、`--discard`を指定してください。
-部分復元では、復元対象のパスに未保存変更があるときだけ`--discard`が必要です。
-
-```powershell
-sprout switch main --discard
-```
-
-`--discard`は、新たに追跡したファイルや移動したファイルを含む、追跡済みファイルのすべての未コミット変更を破棄します。破棄した内容はゴミ箱に残り、`sprout trash restore`でつぼみとして戻せます。
-未追跡ファイルを削除したり上書きしたりすることはなく、復元先のパスと未追跡ファイルが衝突する場合は処理を中止します。
-作業フォルダが保存済みコミットの内容そのものなら、別のコミットやブランチへ戻るときに`--discard`は不要です。
-
-復元対象やその親ディレクトリにシンボリックリンク（リンク切れを含む）やWindowsのジャンクションがある場合は、リンク先がプロジェクト内でも復元を拒否します。`--discard`でもこの検査は省略されません。`switch`と`branch --switch`にも同じ保護が適用されます。
-
-全体復元では、たとえば`asset`というファイルと`asset/data.bin`というフォルダ構成の間を行き来できます。構成変更に必要な追跡ファイルを退避し、空になったディレクトリだけを除去してから配置します。衝突箇所に未追跡ファイルや未追跡の空ディレクトリがある場合は中止します。部分復元で選択外の追跡ファイルの移動・削除が必要になる場合も中止するため、その場合は全体復元を使ってください。
-
-復元途中で中断された場合は、次の起動時に記録済みの操作を巻き戻します。復旧途中の再中断にも対応し、復旧が完了するまで退避ファイルを保持します。復旧先にリンクや新たなファイルの衝突が見つかった場合は、自動復旧を止め、原因のパスを表示します。必要な作業ファイルを別の場所へ保存し、衝突やリンクへの置き換えを解消してからSproutを再実行してください。復旧完了前に`.sprout/tmp`を削除しないでください。復元・復旧の実行中は、他のアプリでファイルやディレクトリ構成を変更しないでください。
-
-古いコミットを確認したあと現在のブランチの最新状態に戻るには、ブランチ名を指定して復元します。
-
-```powershell
-sprout restore main
-```
-
-Sproutは、作業ツリーがどのスナップショットに基づいているかを「現在位置」として記録します。全体の`restore`、`switch`、`branch --switch`、`go`、つぼみの復元、`commit`が成功すると現在位置が更新されます。部分復元、失敗した操作、中断後に巻き戻された操作では更新されません。`status`の変更一覧、引数なしの`diff`、移動前の未保存変更の判定は、ブランチ先端ではなく現在位置と作業ツリーを比べます。そのため、過去のスナップショットへ移動した直後は変更なしと表示され、編集しなければ`--discard`なしで別のスナップショットへ移動できます。現在位置がブランチ先端以外のとき、`status`は`Viewing saved snapshot <id> (not the branch tip)`と表示し、`tree`は該当コミットに`current`を付けます。現在位置は専用の状態テーブルへ保存し、最初のコミット前はNULLで表します。必須の状態が欠けたリポジトリは、ブランチ先端と推測せずエラーにします。
-
-現在位置がブランチ先端以外のときに`commit`すると、変更が先端の上に積まれないよう、現在位置を起点とする新しいブランチを自動で作成して切り替え、そこへコミットします。ブランチ名は`branch-YYYYMMDD-HHMMSS`（ローカル時刻）で、既存のブランチ名やタグ名と重なる場合は末尾に`-2`、`-3`…を付けます。名前は`sprout branch OLD --rename NEW`で変更できます。`commit --json`の`created_branch`で、ブランチを自動作成したかどうかが分かります。現在位置から変更がない場合は、ブランチを作らずに`nothing to commit`となります。
-
-## スナップショット間を移動する
-
-`go`は、確認なしで別のスナップショットへ移動します。コミットID（または先頭部分）、ブランチ名、タグ名を指定できます。
-
-```powershell
-sprout go <commit-id>
-sprout go main
+sprout go <leaf-id>
+sprout go submitted
 sprout go --branch main
-sprout go <commit-id> --keep-branch
-sprout go main --reject-changes
-sprout go main --discard
+sprout go <leaf-id> --keep-branch
+sprout go --branch main --reject-changes
+sprout go --branch main --discard
 ```
 
-未保存の変更がある場合は、先にその変更を移動前の現在位置の「つぼみ」として残してから移動するため、`--discard`は不要です。ブランチ名を指定すると、ほかのブランチと先端が同じでも指定したブランチを選びます。`--branch NAME`でも明示でき、葉がまだない空のブランチへも移動できます。その場合、現在位置はJSONでnullになります。手打ち用の`switch NAME`は`go --branch NAME`と同じ動作です。
+未保存の追跡変更は、既定で移動前の現在位置のつぼみに残してから移動します。`--reject-changes`は未保存変更があれば拒否し、`--discard`は置き換える変更をゴミ箱に残します。この2つは併用できません。未追跡ファイルは削除・上書きしません。
 
-葉IDやタグを指定した場合は、移動先が現在のブランチの先端ならそのブランチを保ち、ほかのブランチの先端なら名前順で最初のブランチを選びます。途中の葉への移動ではブランチを変えず、現在位置だけを移します。`--keep-branch`を付けると移動先にかかわらず現在のブランチと先端を保ちます。途中の葉から保存すると、新しいブランチを自動作成する規則は変わりません。
+ブランチ名の指定や`--branch NAME`では、同じ先端を共有する別のブランチがあっても指定したブランチを選びます。空のブランチへも移動でき、そのとき現在位置はJSONで`null`です。葉IDやタグを指定すると、現在のブランチが移動先を先端に持つ場合はそのブランチを保ち、それ以外は移動先を先端に持つブランチの名前順で選びます。途中の葉への移動ではブランチを変えず、現在位置だけを移します。
 
-`--reject-changes`は未保存の変更があれば移動を拒否し、`--discard`は置き換える変更をゴミ箱へ残します。この2つは併用できません。`branch create NAME [LEAF] --switch`で作成後に移動するときも、既定ではつぼみに退避し、同じ2つの指定を使えます。`--switch`がなければブランチを作るだけです。未追跡ファイルとの衝突やリンクがある場合は、つぼみも作らず何も変更せずに中止します。移動途中で中断された場合は、次の起動時に移動前の状態へ戻します。選んだファイルだけを戻す操作は`file restore LEAF PATH...`で、現在位置やブランチ先端を変えません。
+`--keep-branch`では移動先にかかわらず現在のブランチと先端を保ちます。現在位置が先端以外の状態で`leaf create`すると、現在位置から新しいブランチを自動作成して保存します。自動名はローカル時刻の`branch-YYYYMMDD-HHMMSS`で、衝突時は連番を付けます。`leaf create --json`の`created_branch`で確認でき、`branch rename OLD NEW`で名前を変えられます。変更がなければブランチを作らず`nothing_to_commit`で拒否します。
 
-`sprout move`は追跡ファイルの名前や場所を変えるコマンドで、`go`とは別のものです。
+### 差分と部分復元
+
+```powershell
+# 現在位置と作業フォルダ、指定した葉と作業フォルダ、2枚の葉の比較
+sprout file diff
+sprout file diff <leaf-id>
+sprout file diff <leaf-a> <leaf-b>
+
+# 指定したファイルやフォルダだけ戻す。PATHは省略できない
+sprout file restore <leaf-id> docs/manual.bin
+sprout file restore <leaf-id> assets/
+sprout file restore <leaf-id> assets/ --discard
+```
+
+`file restore`は選択外のファイル、現在位置、ブランチ先端を変えません。対象パスに未保存変更がある場合は拒否し、`--discard`を付けた場合だけゴミ箱へ残して復元します。部分復元でも、破棄時の復旧用データは追跡ファイル全体から保存します。
+
+未追跡ファイルや未追跡の空フォルダとの衝突、シンボリックリンク、Windowsのジャンクションがある場合は拒否します。リンク先がプロジェクト内でも`--discard`で検査を省略しません。全体移動ではファイルとフォルダ構成の変更に必要な追跡ファイルを退避し、空になったフォルダだけを除去して配置します。部分復元で選択外のファイルの移動・削除が必要な場合は中止するため、その場合は全体移動を使ってください。
+
+移動・復元の途中で中断した場合は、次回起動時に記録済みの操作を巻き戻します。再度中断しても、復旧が完了するまで退避ファイルを保持します。復旧先にリンクや新しい衝突があれば原因のパスを表示して停止します。必要な作業ファイルを保全して原因を解消し、再実行してください。復旧完了前に`.sprout/tmp`を削除したり、復元・復旧中に別アプリでファイル構成を変更したりしないでください。
+
+Sproutは作業フォルダの基になる葉を「現在位置」として保存します。移動、ブランチ作成後の移動、つぼみの復元、葉の保存が成功すると更新します。部分復元、失敗、中断後の巻き戻しでは更新しません。`status`、引数なしの`file diff`、未保存変更の判定は、ブランチ先端と現在位置を区別します。
 
 ## 未保存の変更をつぼみとして残す
 
-コミットするほどではない未保存の変更は、「つぼみ」として現在位置のスナップショットへ移せます。つぼみには追跡中ファイルのその時点の内容が保存され、実体は通常のコミットと同じobjectsストアで重複排除されます。1つのスナップショットにいくつでも付けられます。
+つぼみは追跡ファイルのその時点の内容を保存し、現在位置の葉にいくつでも付けられます。内容は通常の葉と同じobjectsストアで重複排除します。
 
 ```powershell
-# 未保存の変更をつぼみへ移し、作業フォルダを現在位置の内容に戻す
-sprout bud --save
-
-# 作業フォルダはそのままで、今の内容をつぼみに写す
-sprout bud --save --keep-files
-
-# つぼみの一覧（新しい順）
-sprout bud
-
-# つぼみに戻る
-sprout bud --restore <bud-id>
-
-# つぼみを捨てる（ゴミ箱から戻せます）
-sprout bud --drop <bud-id> --yes
+sprout bud save --name "配色の別案"
+sprout bud save --keep-files
+sprout bud list
+sprout bud rename <bud-id> "修正案"
+sprout bud restore <bud-id>
+sprout bud delete <bud-id> --yes
 ```
 
-`--save`の後は未保存の変更がなくなるので、続けて`go`で移動してもつぼみは増えません。追跡中の追加ファイルは作業フォルダから消えてつぼみに入り、未追跡ファイルは変更しません。書き戻しが失敗した場合は、作業ファイルとつぼみを変更しません。`--keep-files`は未保存の変更が残るため、その後に移動すると同じ内容のつぼみがもう1つできます。
+`bud save`は未保存変更をつぼみに移し、作業フォルダを現在位置の内容へ戻します。追跡中の追加ファイルもつぼみに移り、未追跡ファイルは変えません。書き戻しが失敗した場合は作業ファイルとつぼみを変更しません。`--keep-files`では作業フォルダをそのままにし、内容をつぼみへ写すため、その後に移動すると同じ内容のつぼみが増える場合があります。
 
-`--restore`は、作業フォルダをつぼみを残したときの内容に戻し、現在位置をつぼみの元のスナップショットへ移します。そのとき別の未保存の変更があれば、先にそれを新しいつぼみとして残してから戻します。戻したつぼみは、書き戻しが完了した後に一覧から消えます。未追跡ファイルは削除も上書きもせず、戻す先と衝突する場合やリンクがある場合は何も変更せずに中止します。つぼみの元になっているコミットは`prune`で削除されず、つぼみが参照するオブジェクトは`gc`で削除されません。`doctor`はつぼみのオブジェクトも検査し、`stats`はつぼみの数を表示します。
+`bud restore BUD`は、別の未保存変更があれば先につぼみへ退避し、指定したつぼみの内容と現在位置を戻します。**成功したつぼみは一覧から消えます。** 未追跡ファイルとの衝突やリンクがある場合は、作業ファイルと元のつぼみを保って拒否します。名前は1行256文字までで、空文字で解除できます。自動退避では名前は空です。
 
-つぼみには任意の名前を付けられます。`sprout bud --save --name 配色の別案`で保存時に、`sprout bud --rename <つぼみ> 新しい名前`で後から設定でき、空の名前を指定すると消せます。名前は1行256文字までで、`go`などの自動退避では空のままです。名前はそのつぼみの識別用で、つぼみを戻すとつぼみごと役目を終えます。
-
-`sprout branch NAME START --switch --keep-changes`は、未保存の変更をつぼみに残して新しい枝を作り、その枝へ移動します。枝を作れない名前なら、現在位置・ブランチ・作業ファイル・つぼみのどれも変更せずに拒否します。JSONでは作成したつぼみを`bud`で返します。GUIの「ここから枝を伸ばす」もこの操作です。
+つぼみが参照する葉は`leaf prune`から、その内容は`maintenance gc`から保護されます。`maintenance doctor`は内容を検査し、`maintenance stats`はつぼみの数を表示します。GUIの「ブランチを作る」は`branch create NAME LEAF --switch`を使い、既定で未保存変更をつぼみに残します。
 
 ## 常駐モード（serve）
 
@@ -452,23 +371,23 @@ GUIなどから多数のコマンドを続けて実行する場合は、`sprout 
 
 ## コミットからファイルを取り出す
 
-作業フォルダや追跡状態を変えずにコミット内のファイルを書き出す場合は`export`を使います。パスを省略すると全ファイル、ファイルやディレクトリを指定すると該当するファイルだけを書き出します。相対パスの構造と更新日時はコミット時の状態が保たれます。
+作業フォルダや追跡状態を変えずにコミット内のファイルを書き出す場合は`file export`を使います。パスを省略すると全ファイル、ファイルやディレクトリを指定すると該当するファイルだけを書き出します。相対パスの構造と更新日時はコミット時の状態が保たれます。
 
 ```powershell
-sprout export <commit-id> --output ../preview
-sprout export <commit-id> assets/ docs/manual.bin --output ../preview
+sprout file export <commit-id> --output ../preview
+sprout file export <commit-id> assets/ docs/manual.bin --output ../preview
 ```
 
 出力先に同名ファイルがある場合は処理を中止します。上書きしてよい場合に限り`--force`を指定してください。
 
 ```powershell
-sprout export <commit-id> assets/ --output ../preview --force
+sprout file export <commit-id> assets/ --output ../preview --force
 ```
 
-単一ファイルを標準出力へバイナリのまま取り出す場合は`cat`を使います。ファイルへのリダイレクトや、プレビュー用プログラムとのパイプに利用できます。
+単一ファイルを標準出力へバイナリのまま取り出す場合は`file cat`を使います。ファイルへのリダイレクトや、プレビュー用プログラムとのパイプに利用できます。
 
 ```powershell
-sprout cat <commit-id> assets/image.png > old-image.png
+sprout file cat <commit-id> assets/image.png > old-image.png
 ```
 
 ## 全履歴を静的アーカイブへ書き出す
@@ -477,11 +396,11 @@ Sproutを使わなくなった後も過去のファイルと履歴を参照で�
 
 ```powershell
 # 実行前にコミット数・作成予定ファイル数・推定展開容量・出力先の空き容量を確認
-sprout archive --output ../sprout-archive --dry-run
+sprout leaf archive --output ../sprout-archive --dry-run
 
 # 書き出す（出力先は存在しないか空のディレクトリ）
-sprout archive --output ../sprout-archive
-sprout archive --output ../sprout-archive --json
+sprout leaf archive --output ../sprout-archive
+sprout leaf archive --output ../sprout-archive --json
 ```
 
 出力構成は次のとおりです。
@@ -505,7 +424,7 @@ JSONにはコミットの親ID・子ID・作成時のブランチ名とID・メ�
 
 既存の空でない出力先やファイルへは書き込みません。書き出しは出力先の隣の`.<出力名>.sprout-archive-incomplete`で行い、完了した時点で出力先へ名前を変えます。この作業フォルダには`SPROUT-ARCHIVE-INCOMPLETE.txt`を置くため、中断された出力を識別できます。同じ出力先で再実行すると、この目印がある作業フォルダだけを削除してやり直します。目印のない同名フォルダがある場合は削除せずエラーにします。展開中にオブジェクトの欠落・破損（SHA-256やサイズの不一致）を検出した場合は、対象のコミット、ファイルパスまたは添付IDを示す`archive_object_invalid`エラーで失敗し、作業フォルダを削除します。完成したように見えるアーカイブは残りません。
 
-コミットのファイル更新日時は`export`と同じく復元しますが、Sproutが保存していない空ディレクトリ、権限、所有者、シンボリックリンク、拡張属性などは再現しません。つぼみ（未コミットの変更）はアーカイブに含みません。
+コミットのファイル更新日時は`file export`と同じく復元しますが、Sproutが保存していない空ディレクトリ、権限、所有者、シンボリックリンク、拡張属性などは再現しません。つぼみ（未コミットの変更）はアーカイブに含みません。
 
 ## コミットのサムネイルを管理する
 
@@ -513,23 +432,25 @@ JSONにはコミットの親ID・子ID・作成時のブランチ名とID・メ�
 
 ```powershell
 # 登録または置き換え
-sprout thumbnail <commit-id> preview.webp
+sprout leaf thumbnail set <commit-id> preview.webp
 
 # メタデータを確認
-sprout thumbnail <commit-id>
-sprout thumbnail <commit-id> --json
+sprout leaf thumbnail show <commit-id>
+sprout leaf thumbnail show <commit-id> --json
 
 # 作業ツリーを変更せず指定ファイルへ取り出す
-sprout thumbnail <commit-id> --output ../preview.png
+sprout leaf thumbnail export <commit-id> --output ../preview.png
 
 # 既存の出力ファイルを置き換える
-sprout thumbnail <commit-id> --output ../preview.png --force
+sprout leaf thumbnail export <commit-id> --output ../preview.png --force
 
 # 登録を削除
-sprout thumbnail <commit-id> --delete
+sprout leaf thumbnail delete <commit-id>
 ```
 
-サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`gc`で保持され、欠落や破損は`doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
+葉ごとのサムネイルは、追跡対象外やプロジェクト外の対応画像も直接登録できます。サムネイル自動生成元は追跡ファイルから指定するプロジェクト単位の設定です。
+
+サムネイルの実体は通常のコミットファイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。参照中のサムネイルは`maintenance gc`で保持され、欠落や破損は`maintenance doctor`で検出されます。`--output`は追跡中の作業ファイルや`.sprout`内を上書きしません。
 
 ### サムネイル自動生成元からサムネイルを作る
 
@@ -543,7 +464,7 @@ sprout leaf thumbnail source apply                # 登録済みのサムネイ�
 sprout leaf thumbnail source clear                # 解除する
 ```
 
-指定は素材IDで保持するので、`move`や大文字小文字の改名の後も有効です。対応形式はPNG・JPEG・静止WebP・BMPです。サムネイル自動生成元が追跡されていない、画像でない、大きすぎる、読み取れない場合も保存は成功し、サムネイルなしになります。理由は警告と、`commit --json`の`cover`（`applied`と`reason`）で確認できます。`status --tracked --json`には、指定中の場合だけ`cover`を含めます。指定はリポジトリの`meta`に保存します。
+指定は素材IDで保持するので、`file move`や大文字小文字の改名の後も有効です。対応形式はPNG・JPEG・静止WebP・BMPです。サムネイル自動生成元が追跡されていない、画像でない、大きすぎる、読み取れない場合も保存は成功し、サムネイルなしになります。理由は警告と、`leaf create --json`の`cover`（`applied`と`reason`）で確認できます。`status --tracked --json`には、指定中の場合だけ`cover`を含めます。指定はリポジトリの`meta`に保存します。
 
 ## コミットのpreviewを管理する
 
@@ -569,18 +490,18 @@ sprout leaf preview delete <commit-id> <preview-id>
 sprout leaf preview order <commit-id> <preview-id-3> <preview-id-1> <preview-id-2>
 ```
 
-各previewは不変の添付IDで識別されます。同じファイル名でも別のpreviewとして登録でき、置き換え・並べ替え・他のpreviewの削除でIDは変わりません。置き換えでは表示順と作成日時を維持し、更新日時だけが変わります。削除すると残りのpreviewは相対順を保ったまま詰められます。表示順はDBに保存され、再オープン後も一覧・`show`・`tree`とそれぞれのJSONが同じ順で返します。
+各previewは不変の添付IDで識別されます。同じファイル名でも別のpreviewとして登録でき、置き換え・並べ替え・他のpreviewの削除でIDは変わりません。置き換えでは表示順と作成日時を維持し、更新日時だけが変わります。削除すると残りのpreviewは相対順を保ったまま詰められます。表示順はDBに保存され、再オープン後も一覧・`leaf show`・`leaf tree`とそれぞれのJSONが同じ順で返します。
 
 サムネイル向けの2 MiB・画素数の上限はpreviewへ適用しません。ただし100 MiBを超えるファイルは誤登録を防ぐため`--yes`を付けた場合だけ登録し、付けない場合は何も保存せず`preview_confirmation_required`エラーにします。`--dry-run`は各ファイルのサイズ、media_type、既に保存済みの内容か、圧縮前で最大何バイト増えるかを表示し、何も保存しません。
 
-previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
+previewの実体は通常のファイル・サムネイルと同じobjectsストアへ保存され、同じ内容は重複して保存されません。追加・置き換え・削除・並べ替え・取り出しが失敗した場合、既存previewのデータ・ID・表示順と既存の出力先ファイルは変更されません。`file export`は追跡中の作業ファイルや`.sprout`内を上書きせず、既存の出力先は`--force`を付けた場合だけ置き換えます。GUIが表示に対応していない形式も、内容を失わずに取り出せます。
 
 GUI向けの `sprout leaf preview image COMMIT PREVIEW_ID --json` は、選んだ静止画像を検証して表示用PNGのdata URL、原本形式（format）、元の寸法（width/height）、表示用寸法（display_width/display_height）を返します。PNG・JPEG・静止WebP・BMPを対象に、原本20 MiB・一辺8192px・1600万画素を上限とし、表示用は長辺2048px以内に縮小します。原本の内容は変更しません。
 
 ## コミットメッセージを変更する
 
 ```powershell
-sprout message <commit-id> "クライアント確認後の最終案"
+sprout leaf edit <commit-id> --message="クライアント確認後の最終案"
 ```
 
 コミットID、親子関係、保存ファイル、添付、ブランチ、タグを変更せず、指定したコミットのメッセージだけを置き換えます。コミットIDのほか、コミットIDの一意な接頭辞、ブランチ、タグも指定できます。空のメッセージは登録できません。
@@ -591,9 +512,9 @@ sprout message <commit-id> "クライアント確認後の最終案"
 
 ```powershell
 # メモの設定・確認・削除
-sprout note <commit-id> "クライアント確認済み"
-sprout note <commit-id>
-sprout note <commit-id> --delete
+sprout leaf edit <commit-id> --note="クライアント確認済み"
+sprout leaf show <commit-id>
+sprout leaf edit <commit-id> --clear-note
 
 # ラベルの追加・葉ごとの一覧・解除
 sprout leaf label add <commit-id> submitted
@@ -605,12 +526,12 @@ sprout leaf label list
 sprout leaf label list --json
 
 # ラベルで履歴を絞り込む
-sprout log --label submitted
+sprout leaf list --label submitted
 ```
 
-メモは前後の空白を除去して保存し、空文字を指定すると削除します。上限は20,000文字です。ラベルも前後の空白を除去し、Unicode NFCで正規化します。ラベルは1件64文字以内、1コミット32件以内で、大文字小文字を区別します。同じラベルの再追加は1件のままです。メモとラベルは`show`と`log`の通常表示およびJSON出力にも含まれます。
+メッセージとメモは`leaf edit`で同時に指定でき、すべて成功するか、すべて拒否します。未指定の項目は変更しません。メモは前後の空白を除去して保存し、空文字または`--clear-note`で削除してゴミ箱に残します。`--note`と`--clear-note`は併用できません。上限は20,000文字です。ラベルも前後の空白を除去し、Unicode NFCで正規化します。ラベルは1件64文字以内、1コミット32件以内で、大文字小文字を区別します。同じラベルの再追加は1件のままです。メモとラベルは`leaf show`と`leaf list`の通常表示およびJSON出力にも含まれます。
 
-`leaf label list`は全ブランチの現存する葉から使用中のラベルを集計し、名前順に表示します。削除済みブランチ由来の葉も含み、ゴミ箱にしか残っていない付与は含みません。最後の付与を外すと一覧から消え、葉を復旧すると再び集計されます。JSONは`[{"name":"submitted","leaf_count":2}]`形式です。葉を指定した一覧はその葉の付与情報を返し、`log --label`による履歴の絞り込みとは用途が異なります。専用のラベル辞書は保存しません。
+`leaf label list`は全ブランチの現存する葉から使用中のラベルを集計し、名前順に表示します。削除済みブランチ由来の葉も含み、ゴミ箱にしか残っていない付与は含みません。最後の付与を外すと一覧から消え、葉を復旧すると再び集計されます。JSONは`[{"name":"submitted","leaf_count":2}]`形式です。葉を指定した一覧はその葉の付与情報を返し、`leaf list --label`による履歴の絞り込みとは用途が異なります。専用のラベル辞書は保存しません。
 
 ## ファイルの追跡状態を確認する
 
@@ -626,21 +547,21 @@ sprout status --tracked
 sprout status --untracked
 ```
 
-ファイルの追跡をやめる場合は`untrack`を使用します。作業フォルダのファイル自体は削除されません。
+ファイルの追跡をやめる場合は`file untrack`を使用します。作業フォルダのファイル自体は削除されません。
 
 ```powershell
-sprout untrack document.bin
+sprout file untrack document.bin
 ```
 
-追跡済みファイルの名前や場所を変える場合は`move`を使用します。
+追跡済みファイルの名前や場所を変える場合は`file move`を使用します。
 作業フォルダのファイルを移動し、追跡パスも更新します。
 
 ```powershell
-sprout move document.bin archive/document.bin
-sprout commit -m "ファイルを移動"
+sprout file move document.bin archive/document.bin
+sprout leaf create -m "ファイルを移動"
 ```
 
-`status`と`commit`はファイル内容で変更を判定します。
+`status`と`leaf create`はファイル内容で変更を判定します。
 内容が同じで更新時刻だけが変わったファイルは、変更なしとして扱われます。
 
 ## データの保存場所
@@ -653,109 +574,204 @@ sprout commit -m "ファイルを移動"
 
 保存構造は`src/sprout/repository.py`の`SCHEMA`で定義しています。起動時に形式番号、必須テーブル・列・索引・制約と参照整合性を検査します。不正な構造や対応していない番号の場合は、データを変更せずエラーを返します。
 
-ブランチには作成日時と削除日時を保存します。削除日時は`sprout branch --deleted`で一覧でき、`branch --json`・`tree --json`にも含めます（`tree --json`は`deleted_branches`）。名前を変えても作成日時は変わりません。
+ブランチには作成日時と削除日時を保存します。削除日時は`sprout branch list --deleted`で一覧でき、`branch list --json`・`leaf tree --json`にも含めます（`leaf tree --json`は`deleted_branches`）。名前を変えても作成日時は変わりません。
 
 ブランチの名前を変えてもIDは変わりません。削除済みの枝の識別情報とコミット・つぼみの作成時の名前は履歴用に保持し、同名で枝を作り直すと新しいIDになります。削除済みの枝は通常のブランチ一覧とpruneの先端保護から外れます。その枝のつぼみを戻すときは現在の有効なブランチを維持し、同名で作り直した別の枝へは接続しません。
 
-添付は不変のIDと表示順positionを持ち、1コミットに複数のpreviewを保持できます。thumbnailは従来どおり1件に限り、置き換えても添付IDと最初の登録日時を維持します。previewは`sprout preview`で追加・個別操作・並べ替えでき、showとtreeのJSONからも保存された添付一覧を取得できます。
+添付は不変のIDと表示順positionを持ち、1コミットに複数のpreviewを保持できます。thumbnailは従来どおり1件に限り、置き換えても添付IDと最初の登録日時を維持します。previewは`sprout leaf preview`で追加・個別操作・並べ替えでき、showとtreeのJSONからも保存された添付一覧を取得できます。
 
-保存したオブジェクトはobjectsテーブルにも登録され、内容のSHA-256、元サイズ、圧縮後の保存サイズ、保存形式（現在はzstdのみ）、登録日時を持ちます。コミットのファイル、添付、つぼみのファイルはobjectsを外部キーで参照するため、未登録の内容を参照する行は保存できません。オブジェクトのファイルを書き込んだ後に登録が失敗・中断した場合は、どこからも参照されない未登録ファイルだけが残り、`doctor`が報告し`gc`が回収します。
+保存したオブジェクトはobjectsテーブルにも登録され、内容のSHA-256、元サイズ、圧縮後の保存サイズ、保存形式（現在はzstdのみ）、登録日時を持ちます。コミットのファイル、添付、つぼみのファイルはobjectsを外部キーで参照するため、未登録の内容を参照する行は保存できません。オブジェクトのファイルを書き込んだ後に登録が失敗・中断した場合は、どこからも参照されない未登録ファイルだけが残り、`maintenance doctor`が報告し`maintenance gc`が回収します。
 
-通常の読み出しと保存済み内容の再利用ではobjects.encodingを確認し、非対応形式なら対象のハッシュとencodingを含むエラーで拒否します。`doctor`でも診断できます。
+通常の読み出しと保存済み内容の再利用ではobjects.encodingを確認し、非対応形式なら対象のハッシュとencodingを含むエラーで拒否します。`maintenance doctor`でも診断できます。
 
-ファイル更新日時は、コミットごとの各パスに`commit_files.mtime_ns`として保存します。同じ内容の別ファイルや別コミットでも日時を共有せず、その保存時点の値を復元・部分復元・ブランチ切り替え・go・export・全履歴archiveで使います。つぼみも引き続き各パスの日時を保持します。objectsは内容のSHA-256による重複排除を担当し、更新日時を持ちません。
+ファイル更新日時は、コミットごとの各パスに`commit_files.mtime_ns`として保存します。同じ内容の別ファイルや別コミットでも日時を共有せず、その保存時点の値を全体移動・部分復元・ブランチ作成後の移動・`file export`・`leaf archive`で使います。つぼみも引き続き各パスの日時を保持します。objectsは内容のSHA-256による重複排除を担当し、更新日時を持ちません。
 
-更新日時だけの変化は`status`・`diff`・パス指定の`log`で変更とせず、`commit`やつぼみ保存も日時だけでは作成しません。内容やパスが変わって保存が成立したときには、内容の変わらないファイルも含め、全パスの実際の日時を記録します。日時の差だけで未保存変更の警告や復元拒否を起こすことはありません。
+更新日時だけの変化は`status`・`file diff`・パス指定の`leaf list`で変更とせず、`leaf create`やつぼみ保存も日時だけでは作成しません。内容やパスが変わって保存が成立したときには、内容の変わらないファイルも含め、全パスの実際の日時を記録します。日時の差だけで未保存変更の警告や復元拒否を起こすことはありません。
 
-`mtime_ns`は符号付き64ビットのナノ秒整数で、NULLや整数以外の保存値を拒否します。Unix epochの0や、それ以前を表す負の整数も有効です。制約を無効にして壊した値は読み出し時に拒否し、`doctor`でも検出します。保存値はファイルシステムから読み取った精度のまま保持し、復元先の時刻精度に応じて丸められる場合があります。丸められた日時だけを理由に未保存変更とは判定しません。
+`mtime_ns`は符号付き64ビットのナノ秒整数で、NULLや整数以外の保存値を拒否します。Unix epochの0や、それ以前を表す負の整数も有効です。制約を無効にして壊した値は読み出し時に拒否し、`maintenance doctor`でも検出します。保存値はファイルシステムから読み取った精度のまま保持し、復元先の時刻精度に応じて丸められる場合があります。丸められた日時だけを理由に未保存変更とは判定しません。
 
-コミットとつぼみには作成順を表す連番を持たせ、tree・つぼみ一覧・pruneの並び順は日時ではなくこの連番で決めます。時計の巻き戻りや同時刻の作成、SQLiteの`VACUUM`後も順序は変わりません。連番は`id_sequences`テーブルで採番し、コミット・つぼみ・ゴミ箱項目を削除しても同じ番号を再利用しないため、ゴミ箱から戻した葉は元の順序に戻ります。カウンターの不足は起動時に、既存の番号より小さいカウンターは`doctor`が`invalid_sequence`として検出します。コミット・つぼみ・添付などの作成日時や更新日時は`2026-10-29T01:02:03.123456+00:00`のようなマイクロ秒精度のUTC形式に統一し、DBの制約でも検査します。
+コミットとつぼみには作成順を表す連番を持たせ、tree・つぼみ一覧・pruneの並び順は日時ではなくこの連番で決めます。時計の巻き戻りや同時刻の作成、SQLiteの`VACUUM`後も順序は変わりません。連番は`id_sequences`テーブルで採番し、コミット・つぼみ・ゴミ箱項目を削除しても同じ番号を再利用しないため、ゴミ箱から戻した葉は元の順序に戻ります。カウンターの不足は起動時に、既存の番号より小さいカウンターは`maintenance doctor`が`invalid_sequence`として検出します。コミット・つぼみ・添付などの作成日時や更新日時は`2026-10-29T01:02:03.123456+00:00`のようなマイクロ秒精度のUTC形式に統一し、DBの制約でも検査します。
 
 作業ツリーの判定キャッシュは、履歴DBとは独立した`.sprout/worktree-cache.db`に保存します。キャッシュは任意の再生成可能な補助情報で、欠落・破損・非対応形式なら必要時に作り直し、書き込みできない場合は利用せず通常のハッシュ計算を続けます。履歴DBの再初期化は不要です。追跡解除・移動・復元などでは古い記録を破棄し、履歴DBの更新でも保守的に全記録を失効させます。
 
-`status`、`diff`、未保存の変更の判定（`restore`・`switch`・`go`・`bud --restore`・`prune`）は、このキャッシュを使って変更のないファイルのハッシュ計算を省略します。前回計算したときとサイズ、更新日時、作成・変更日時、ファイルの識別子（デバイスとinode／ファイルインデックス）がすべて一致し、かつ記録時点で更新日時が2秒以上前だったファイルだけを再利用します。更新直後のファイルは、同じ時刻の粒度内での書き換えを見逃さないよう、毎回内容を読み直します。読み取り中に変わったファイルは記録しません。キャッシュが使えない場合は、すべてのファイルを読み直します。なお、Gitと同じく、内容を書き換えたうえでサイズと更新日時を元の値へ戻すツールの変更は、作成・変更日時やファイル識別子が変わらない環境では検出できません。`commit`とつぼみの保存は、常にファイル全体を読み込んで保存します。復元時も、退避直前の安全確認では各ファイルの内容を読み直します。
+`status`、`file diff`、未保存の変更の判定（`go`・`file restore`・`bud restore`・`leaf prune`）は、このキャッシュを使って変更のないファイルのハッシュ計算を省略します。前回計算したときとサイズ、更新日時、作成・変更日時、ファイルの識別子（デバイスとinode／ファイルインデックス）がすべて一致し、かつ記録時点で更新日時が2秒以上前だったファイルだけを再利用します。更新直後のファイルは、同じ時刻の粒度内での書き換えを見逃さないよう、毎回内容を読み直します。読み取り中に変わったファイルは記録しません。キャッシュが使えない場合は、すべてのファイルを読み直します。なお、Gitと同じく、内容を書き換えたうえでサイズと更新日時を元の値へ戻すツールの変更は、作成・変更日時やファイル識別子が変わらない環境では検出できません。`leaf create`とつぼみの保存は、常にファイル全体を読み込んで保存します。復元時も、退避直前の安全確認では各ファイルの内容を読み直します。
 
 ## コマンド一覧
 
-| コマンド | 説明 |
+通常ヘルプの入口は次の10個です。`sprout leaf --help`、`sprout file restore --help`のように下位のヘルプでも確認できます。GUIと同梱スクリプトは正規構文を使います。
+
+| 入口 | 用途 |
 | --- | --- |
-| `init [PATH] [--json]` | Sproutの管理情報を作成する |
-| `track PATH... [--json]` | ファイルを追跡対象へ登録する |
-| `untrack PATH... [--json]` | ファイルの追跡をやめる |
-| `move OLD NEW` | 追跡済みファイルを移動する |
-| `status [--json]` | 現在の変更や追跡状態を確認する |
-| `commit -m MESSAGE [--thumbnail IMAGE] [--json]` | 現在の状態をコミットし、必要に応じてサムネイルを登録する |
-| `message COMMIT TEXT [--json]` | コミットIDや保存内容を変えずにコミットメッセージを変更する |
-| `leaf list [PATH] [--file-id ID] [-n COUNT] [--label LABEL] [--oneline\|--json]` | 現在ブランチの履歴・パスの内容変更履歴、または全ブランチの素材ID保存記録を表示する。素材IDとPATH/ラベルは併用不可 |
-| `tree [--json]` | 削除済みブランチ由来を含むリポジトリ全体のコミットグラフを表示する |
-| `diff [COMMIT_A] [COMMIT_B] [--json]` | コミット間、または作業ツリーとのファイル差分を表示する |
-| `show COMMIT [--json]` | コミットの詳細を表示する |
-| `thumbnail COMMIT [IMAGE] [--delete\|--output FILE] [--json]` | サムネイルの確認・登録・削除・取り出しを行う |
-| `preview list\|image\|add\|replace\|delete\|export\|order\|metadata COMMIT ... [--json]` | 任意形式のpreviewを複数登録し、IDで個別に操作・並べ替える。`add`と`replace`は`--dry-run`、`--yes`、`--media-type`に対応 |
-| `note COMMIT [TEXT] [--delete] [--json]` | コミットのメモを確認・設定・削除する |
-| `label COMMIT [LABEL] [--delete LABEL] [--json]` | コミットのラベルを一覧・追加・削除する |
-| `branch [NAME] [START_POINT] [--switch] [--rename NEW] [--delete NAME] [--json]` | ブランチの一覧・作成・リネーム・削除を行う。START_POINTはコミット・ブランチ・タグ。`--switch`で作成後に切り替える |
-| `tag [NAME] [COMMIT] [--set-comment TEXT] [--delete NAME] [--json]` | タグの一覧・作成・コメント変更・削除を行う |
-| `switch BRANCH [--json]` | 別のブランチへ切り替える |
-| `serve` | JSON Linesで要求を受け付ける常駐モードを起動する |
-| `go TARGET [--json]` | 未保存の変更をつぼみに残して、指定したスナップショットへ移動する |
-| `cover [PATH\|--clear\|--apply [--dry-run]] [--json]` | サムネイルを作るサムネイル自動生成元を確認・指定・解除し、既存の葉へ適用する |
-| `bud [--save\|--restore BUD\|--drop BUD --yes] [--json]` | 未保存の変更のつぼみを一覧・保存・復元する、ゴミ箱へ移す |
-| `restore COMMIT [PATH...] [--json]` | 指定したコミットを復元する。パスを指定するとそのファイルだけ復元する |
-| `export COMMIT [PATH...] --output DIR [--force] [--json]` | 作業フォルダを変えずにコミット内のファイルを書き出す |
-| `archive --output DIR [--dry-run] [--json]` | 削除済みブランチ由来を含む全コミットを、Sprout非依存の静的HTML・JSON・通常ファイルへ一括展開する |
-| `cat COMMIT PATH` | コミット内の単一ファイルをバイナリ標準出力へ書き出す |
-| `prune START_TAG END_TAG [--dry-run] [--yes] [--json]` | タグ間のタグなし中間コミットを削除し、残存履歴を再接続する |
-| `prune --all [--dry-run] [--yes] [--json]` | タグ付きコミットと現存ブランチ先端以外を全履歴から削除する |
-| `trash [list/show/restore/purge] [ID] [--dry-run] [--yes] [--json]` | ゴミ箱の確認・復旧・完全削除 |
-| `delete-commit COMMIT [--dry-run] [--yes] [--json]` | タグなしのコミットを1件削除し、ブランチ先端・現在位置・つぼみ・子を親へ移す |
-| `gc [--dry-run] [--json]` | どのコミットからも参照されないオブジェクトを削除する |
-| `doctor [--json]` | リポジトリの整合性（欠落・破損オブジェクトなど）を検査する |
-| `stats [--json]` | リポジトリの件数・容量と重複排除による節約量を表示する |
+| `init` | 初期化 |
+| `status` | 現在位置・変更・追跡状態 |
+| `go` | 作業フォルダ全体の移動 |
+| `leaf` | 葉・履歴・説明・タグ・ラベル・添付 |
+| `bud` | 未保存変更の退避・復元 |
+| `branch` | ブランチの管理 |
+| `file` | 追跡・改名・比較・部分復元・取り出し |
+| `trash` | 復旧記録の確認・復旧・完全削除 |
+| `maintenance` | 容量・整合性・実体の回収 |
+| `serve` | JSON Linesによる実行 |
+
+LEAFは葉ID、一意な接頭辞、ブランチ名、タグ名です。バイナリ出力の`file cat`とJSON Linesの`serve`を除き、各操作は`--json`に対応します。
+
+| 正規構文 | 用途 |
+| --- | --- |
+| `init [PATH]` | 管理情報を作成する |
+| `status [PATH...] [--tracked] [--untracked]` | 状態を確認する |
+| `go TARGET / go --branch NAME` | 既定で変更をつぼみに残して移動する。--keep-branch・--reject-changes・--discardは本文参照 |
+| `leaf create -m TEXT [--thumbnail IMAGE]` | 現在位置を基に葉を保存する |
+| `leaf list [PATH] [--file-id ID] [-n COUNT] [--label LABEL] [--oneline]` | 現在ブランチの履歴、パス変更履歴、素材IDの全保存記録 |
+| `leaf tree` | 削除済みブランチ由来を含む全体構造 |
+| `leaf show LEAF [--timezone ZONE]` | 葉の内容と注釈 |
+| `leaf edit LEAF [--message TEXT] [--note TEXT] [--clear-note]` | メッセージ・メモをまとめて編集する |
+| `leaf delete LEAF [--dry-run] [--yes]` | 葉を1枚削除してゴミ箱に残す |
+| `leaf prune START_TAG END_TAG / leaf prune --all` | 保護された葉を残して間引く。--dry-run・--yes、取り消し不可 |
+| `leaf archive --output DIR [--dry-run]` | 全履歴を静的HTML・JSON・通常ファイルへ取り出す |
+| `leaf tag list / leaf tag create NAME [LEAF] [--comment TEXT]` | タグの一覧・作成 |
+| `leaf tag comment NAME TEXT / leaf tag delete NAME` | タグのコメント変更・解除と削除 |
+| `leaf label list [LEAF]` | 全体のラベル名・利用葉数、または指定した葉の付与情報 |
+| `leaf label add LEAF LABEL / leaf label remove LEAF LABEL` | ラベルを付ける・外す |
+| `leaf thumbnail show LEAF / leaf thumbnail set LEAF IMAGE` | 葉ごとのサムネイルを確認・登録する |
+| `leaf thumbnail delete LEAF / leaf thumbnail export LEAF --output FILE [--force]` | サムネイルを削除・取り出す |
+| `leaf thumbnail source show / leaf thumbnail source set PATH` | プロジェクトのサムネイル自動生成元を確認・指定する |
+| `leaf thumbnail source clear / leaf thumbnail source apply [--dry-run]` | 生成元を解除し、既存の葉の未登録サムネイルへ適用する |
+| `leaf preview list LEAF / leaf preview image LEAF ID` | 添付一覧・選んだ静止画像を取得する |
+| `leaf preview add LEAF PATH... / leaf preview replace LEAF ID PATH` | 添付の追加・置き換え。--dry-run・--yes・--media-typeを利用可能 |
+| `leaf preview delete LEAF ID / leaf preview export LEAF ID --output FILE [--force]` | 添付の削除・取り出し |
+| `leaf preview order LEAF ID... / leaf preview edit LEAF ID [--name TEXT] [--description TEXT]` | 順序・表示名・説明を変更する |
+| `bud save [--name NAME] [--keep-files] / bud list` | 未保存変更の退避・一覧 |
+| `bud restore BUD / bud rename BUD NAME / bud delete BUD --yes` | 復元・改名・削除。復元成功時は元のつぼみを消費する |
+| `branch list [--deleted] / branch create NAME [LEAF] [--switch] [--comment TEXT]` | ブランチの一覧・作成 |
+| `branch rename OLD NEW / branch comment NAME TEXT / branch delete NAME` | ブランチの改名・コメント編集・削除 |
+| `file track PATH... / file untrack PATH... / file list [--tracked] [--untracked]` | 追跡対象を管理する。追跡解除はファイルを削除しない |
+| `file move OLD NEW` | 素材IDを保って移動・改名する |
+| `file diff [LEAF_A] [LEAF_B]` | 現在位置や指定した葉と比較する |
+| `file restore LEAF PATH... [--discard]` | 選択したパスだけ戻し、現在位置・ブランチ先端を保つ |
+| `file export LEAF [PATH...] --output DIR [--force] / file cat LEAF PATH` | 保存ファイルを取り出す。catはバイナリ標準出力 |
+| `trash list / trash show ID / trash restore ID [--dry-run] / trash purge ID [--dry-run] [--yes]` | 復旧記録を確認・復旧・完全削除する |
+| `maintenance stats / maintenance doctor [--report] / maintenance gc [--dry-run]` | 件数・容量、整合性、不要な実体の回収 |
+| `serve` | 正規構文とaliasを同じJSON Linesプロトコルで実行する |
+
+### 手打ち用alias
+
+通常ヘルプでは正規構文を中心に表示し、`sprout --help-aliases`で次の15パターンを確認できます。結果、JSON、終了コード、安全確認は対応先と同じです。
+
+| alias | 正規構文 |
+| --- | --- |
+| `commit -m TEXT` | `leaf create -m TEXT` |
+| `log [PATH] / log --file-id ID` | `leaf list [PATH] / leaf list --file-id ID` |
+| `show LEAF` | `leaf show LEAF` |
+| `tree` | `leaf tree` |
+| `diff ...` | `file diff ...` |
+| `track PATH...` | `file track PATH...` |
+| `untrack PATH...` | `file untrack PATH...` |
+| `mv OLD NEW` | `file move OLD NEW` |
+| `switch NAME` | `go --branch NAME` |
+| `stash push` | `bud save` |
+| `stash list` | `bud list` |
+| `stash pop BUD` | `bud restore BUD` |
+| `stash drop BUD` | `bud delete BUD` |
+| `tag` | `leaf tag list` |
+| `tag NAME [LEAF]` | `leaf tag create NAME [LEAF]` |
+
+Sproutの`track`にはGitのステージング領域がありません。`stash pop`はBUDを明示し、成功するとそのつぼみを消費します。`stash apply`やGitの省略スタック指定は提供しません。`switch`もSproutの移動規則を使い、既定で未保存変更をつぼみに残します。
+
+### オプションに見える入力値
+
+`-`で始まる位置引数は`--`の後へ置きます。引用符だけではオプションとの区別になりません。実際の`--json`などのオプションは区切りより前へ置きます。オプションが受け取る文字列には`--option=value`を使えます。
+
+```powershell
+sprout branch comment -- main "-確認待ち"
+sprout bud rename -- <bud-id> "-別案"
+sprout leaf label add --json -- <leaf-id> --json
+sprout leaf edit <leaf-id> --message=--json --note="-確認待ち"
+```
+
+### 旧33入口からの対応
+
+次の表は旧CLIからの移行用です。通常の操作には正規構文か合意済みaliasを使います。移行途中に残した旧フラグの入口は廃止しており、表は旧構文すべての互換維持を意味しません。
+
+| 旧入口 | 現在の入口 |
+| --- | --- |
+| `init` | init |
+| `status` | status |
+| `go` | go。明示ブランチ・空ブランチ・現在ブランチ保持も同じ入口 |
+| `commit` | leaf create（手打ちalias commitも利用可能） |
+| `log` | leaf list（alias logも利用可能） |
+| `tree` | leaf tree（alias treeも利用可能） |
+| `show` | leaf show（alias showも利用可能） |
+| `message` | leaf edit --message |
+| `note` | 編集はleaf edit --note / --clear-note、閲覧はleaf show |
+| `label` | leaf label list/add/remove |
+| `tag` | leaf tag list/create/comment/delete。aliasは一覧と作成 |
+| `thumbnail` | leaf thumbnail show/set/delete/export |
+| `cover` | leaf thumbnail source show/set/clear/apply |
+| `preview` | leaf preview list/add/replace/delete/export/order/edit/image。旧metadataはedit |
+| `delete-commit` | leaf delete |
+| `prune` | leaf prune |
+| `archive` | leaf archive |
+| `file-history` | leaf list --file-id ID |
+| `track` | file track（alias trackも利用可能） |
+| `untrack` | file untrack（alias untrackも利用可能） |
+| `move` | file move。手打ちaliasはmv |
+| `diff` | file diff（alias diffも利用可能） |
+| `restore` | 全体はgo、ブランチ保持はgo LEAF --keep-branch、部分復元はfile restore LEAF PATH... |
+| `export` | file export |
+| `cat` | file cat |
+| `bud` | bud save/list/restore/rename/delete |
+| `branch` | branch list/create/rename/comment/delete |
+| `switch` | go --branch NAME（alias switchも利用可能） |
+| `trash` | trash list/show/restore/purge |
+| `gc` | maintenance gc |
+| `doctor` | maintenance doctor |
+| `stats` | maintenance stats |
+| `serve` | serve |
 
 コミットの指定には、完全なコミットID、一意に識別できるIDの先頭部分、ブランチ名、またはタグ名を使用できます。
 
-`gc`は参照されないオブジェクトと、中断などで残った一時ファイル(`object-*`)を削除します。削除前に対象だけ確認したい場合は`--dry-run`を使います。
+`maintenance gc`は参照されないオブジェクトと、中断などで残った一時ファイル(`object-*`)を削除します。削除前に対象だけ確認したい場合は`--dry-run`を使います。
 
-リポジトリの健全性だけ確認したい場合は`doctor`を使います。`--report`を付けると、問題があっても終了コード0で結果を返します（GUIはこの形で使います）。登録・参照されているオブジェクトの欠落・内容破損・サイズ不一致・非対応の保存形式、objectsに未登録のオブジェクトファイル、中断中の操作記録、残った一時ファイル、存在しないコミットを指す現在位置を報告します。問題がなければ`OK`を表示し、問題があれば終了コード1で終了します。作業ツリーや追跡状態は変更しません。
+リポジトリの健全性だけ確認したい場合は`maintenance doctor`を使います。`--report`を付けると、問題があっても終了コード0で結果を返します（GUIはこの形で使います）。登録・参照されているオブジェクトの欠落・内容破損・サイズ不一致・非対応の保存形式、objectsに未登録のオブジェクトファイル、中断中の操作記録、残った一時ファイル、存在しないコミットを指す現在位置を報告します。問題がなければ`OK`を表示し、問題があれば終了コード1で終了します。作業ツリーや追跡状態は変更しません。
 
-容量と重複排除の効果を確認したい場合は`stats`を使います。objectsテーブルに登録されたオブジェクトの件数・保存サイズの合計、コミット数、追跡パス数に加え、コミット上の論理サイズと実ユニークサイズの差（`Dedup saved`）を表示します。読み取り専用です。
+容量と重複排除の効果を確認したい場合は`maintenance stats`を使います。objectsテーブルに登録されたオブジェクトの件数・保存サイズの合計、コミット数、追跡パス数に加え、コミット上の論理サイズと実ユニークサイズの差（`Dedup saved`）を表示します。読み取り専用です。
 
 ## JSON出力
 
-GUIから利用する`init`、`status`、`track`、`untrack`、`commit`、`message`、`log`、`tree`、`show`、`thumbnail`、`preview`、`note`、`label`、`branch`、`tag`、`switch`、`restore`、`go`、`bud`と、履歴管理用の`prune`・`delete-commit`・`trash`・`archive`、保守用の`doctor`・`stats`・`gc`は、コマンド単位の`--json`に対応しています。成功時はstdoutへ人間向けの装飾を含まないJSONを1つだけ出力し、stderrには何も出力しません。日本語のパスやメッセージは`\u`形式へエスケープせず、そのまま出力します。
+正規の各操作はコマンド単位の`--json`を受け付け、成功時はstdoutへJSONを1つ出力します。バイナリ原本を出す`file cat`とJSON Linesを使う`serve`は別の出力契約です。期待される失敗は非0の終了コードとstderrの構造化エラーで返します。日本語のパスやメッセージはUnicodeエスケープせず出力します。
 
 ```powershell
 sprout status --tracked --untracked --json
-sprout log -n 5 --json
-sprout tree --json
-sprout prune first-draft submitted --dry-run --json
-sprout delete-commit <commit-id> --dry-run --json
-sprout show <commit-id> --json
-sprout branch --json
-sprout commit -m "first" --json
-sprout switch ideas --json
-sprout doctor --json
-sprout stats --json
-sprout gc --dry-run --json
+sprout leaf list -n 5 --json
+sprout leaf tree --json
+sprout leaf prune first-draft submitted --dry-run --json
+sprout leaf delete <commit-id> --dry-run --json
+sprout leaf show <commit-id> --json
+sprout branch list --json
+sprout leaf create -m "first" --json
+sprout go --branch ideas --json
+sprout maintenance doctor --json
+sprout maintenance stats --json
+sprout maintenance gc --dry-run --json
 ```
 
-更新系コマンドの成功スキーマは次のとおりです。`thumbnail`の確認と登録は添付情報、削除は添付情報に`deleted: true`を加えたオブジェクト、`--output`は`{"output": string}`を返します。`preview`の`list`・`add`・`order`は添付情報の配列、`replace`は添付情報、`delete`は添付情報に`deleted: true`を加えたオブジェクト、`export`は`{"output": string}`、`--dry-run`は`previews`（各ファイルのsource・original_name・media_type・size・object_hash・already_stored・additional_bytes・requires_confirmation）と合計の`additional_bytes`・`requires_confirmation`を返します。`message`は変更対象と保存後のメッセージ、`note`と`label`は操作後の注釈全体を返します。`branch`の一覧は後述の配列、作成はブランチ情報、リネームは`id`・`name`・`previous_name`、削除は`id`・`name`・`deleted`、コメント更新は`id`・`name`・`comment`を返します。`id`は対象ブランチの不変のIDで、名前変更・削除・同名での再作成後も`tree`の`branch_id`と照合できます。`commit`・`switch`・`go`・`status`の`branch_id`は保存先または現在のブランチのIDです。`tag`の作成とコメント変更はタグ情報、削除は`name`と`deleted`、一覧はタグ情報の配列を返します。
+`leaf thumbnail show/set/delete`は添付情報を返し、削除結果には`deleted: true`を加えます。`leaf thumbnail export`は`{"output": string}`です。`leaf preview list/add/order`は添付情報の配列、`replace/edit`は添付情報、`delete`は添付情報と`deleted: true`、`export`は出力先を返します。追加・置き換えのdry-runは各ファイルのsource・original_name・media_type・size・object_hash・already_stored・additional_bytes・requires_confirmationと、合計のadditional_bytes・requires_confirmationを返します。
+
+`leaf edit`は変更後のメッセージと注釈全体を返します。`leaf label list`の引数なしは`[{"name": string, "leaf_count": number}]`、葉指定の一覧・追加・解除は注釈全体です。`branch create --switch`はブランチ情報に退避した`bud`または`null`を含めます。`branch rename`はid・name・previous_name、`branch delete`はid・name・deleted、`branch comment`はid・name・commentを返します。ブランチのidは不変で、葉やつぼみのbranch_idと照合できます。`leaf tag create/comment`はタグ情報、`leaf tag list`はその配列、`leaf tag delete`はname・deletedを返します。
 
 ```text
 init:       {"root": string}
-track:      {"paths": [string]}
-untrack:    {"paths": [string]}
-commit:     {"id": string, "branch": string, "branch_id": string, "created_branch": boolean, "message": string, "removed_paths": [string]}
-message:    {"commit_id": string, "message": string}
-note/label: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
-switch:     {"branch": string, "branch_id": string, "commit_id": string | null}
-tag:        {"name": string, "commit_id": string, "comment": string, "created_at": string}
-tag --delete: {"name": string, "deleted": true}
-export:     {"commit_id": string, "output": string, "paths": [string]}
-restore:    {"commit_id": string, "paths": [string] | null}
+file track: {"paths": [string]}
+file untrack: {"paths": [string]}
+leaf create: {"id": string, "branch": string, "branch_id": string, "created_branch": boolean, "message": string, "removed_paths": [string]}
+leaf edit: {"commit_id": string, "message": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
+leaf label list LEAF / add / remove: {"commit_id": string, "note": string | null, "note_updated_at": string | null, "labels": [string]}
+leaf tag create/comment: {"name": string, "commit_id": string, "comment": string, "created_at": string}
+leaf tag delete: {"name": string, "deleted": true}
+file export: {"commit_id": string, "output": string, "paths": [string]}
+file restore: {"commit_id": string, "paths": [string]}
 
-prune:
+leaf prune:
 {
   "mode": "between" | "all",
   "dry_run": boolean,
@@ -766,7 +782,7 @@ prune:
   "reclaimable_bytes": number
 }
 
-delete-commit:
+leaf delete:
 {
   "dry_run": boolean,
   "commit": {"id": string, "created_at": string, "message": string},
@@ -779,7 +795,7 @@ delete-commit:
   "reclaimable_bytes": number
 }
 
-gc / gc --dry-run:
+maintenance gc / maintenance gc --dry-run:
 {
   "dry_run": boolean,
   "removed_objects": number,
@@ -790,19 +806,19 @@ gc / gc --dry-run:
 }
 ```
 
-`gc --dry-run --json`の件数と容量は、削除した場合の値です。`objects`は対象オブジェクトのハッシュ、`temps`は一時ファイル名です。
+`maintenance gc --dry-run --json`の件数と容量は、削除した場合の値です。`objects`は対象オブジェクトのハッシュ、`temps`は一時ファイル名です。
 
-保守用の読み取り系コマンドのスキーマは次のとおりです。`doctor --json`は問題を検出した場合も結果のJSONをstdoutへ出力し、終了コード1で終了します。`issues`の`kind`は人向け表示の先頭と同じ識別子（`missing_object`、`corrupt_object`、`object_size_mismatch`、`unsupported_object_encoding`、`unregistered_object`、`orphan_temp`、`active_operation`、`missing_current_commit`など）、`detail`は対象のハッシュ・ファイル名・説明です。`stats --json`のサイズはすべてバイト数です。
+保守用の読み取り系コマンドの主な返却項目は次のとおりです。`maintenance doctor --json`は問題を検出した場合も結果のJSONをstdoutへ出力し、終了コード1で終了します。`issues`の`kind`は人向け表示の先頭と同じ識別子（`missing_object`、`corrupt_object`、`object_size_mismatch`、`unsupported_object_encoding`、`unregistered_object`、`orphan_temp`、`active_operation`、`missing_current_commit`など）、`detail`は対象のハッシュ・ファイル名・説明です。`maintenance stats --json`のサイズはすべてバイト数です。
 
 ```text
-doctor:
+maintenance doctor:
 {
   "ok": boolean,
   "checked_objects": number,
   "issues": [{"kind": string, "detail": string}]
 }
 
-stats:
+maintenance stats:
 {
   "commits": number,
   "branches": number,
@@ -816,7 +832,7 @@ stats:
 }
 ```
 
-読み取り系コマンドのスキーマは次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。`current_commit`は作業ツリーの現在位置のコミットID（コミットがないときは`null`）、`at_branch_tip`はそれが現在のブランチ先端かどうかです。
+読み取り系コマンドの主な返却項目は次のとおりです。`tracked`と`untracked`は、対応するオプションを指定した場合だけ`status`へ含まれます。`status PATH --json`では`changes`の代わりに`paths`が返ります。`current_commit`は作業ツリーの現在位置のコミットID（コミットがないときは`null`）、`at_branch_tip`はそれが現在のブランチ先端かどうかです。
 
 ```text
 status:
@@ -839,7 +855,7 @@ status PATH:
   "paths": [{"path": string, "tracked": boolean}]
 }
 
-log:
+leaf list:
 [{
   "id": string,
   "parent_id": string | null,
@@ -850,7 +866,7 @@ log:
   "labels": [string]
 }]
 
-tree:
+leaf tree:
 {
   "current_commit": string | null,
   "at_branch_tip": boolean,
@@ -867,6 +883,8 @@ tree:
       "commit_id": string,
       "role": string,
       "original_name": string,
+      "display_name": string,
+      "description": string,
       "media_type": string,
       "object_hash": string,
       "size": number,
@@ -882,7 +900,8 @@ tree:
     "name": string,
     "commit_id": string | null,
     "comment": string,
-    "current": boolean
+    "current": boolean,
+    "created_at": string
   }],
   "tags": [{
     "name": string,
@@ -890,18 +909,19 @@ tree:
     "comment": string,
     "created_at": string
   }],
+  "deleted_branches": [{"id": string, "name": string, "comment": string, "created_at": string, "deleted_at": string}],
   "buds": [Bud]
 }
 
-bud --json（一覧）:
+bud list --json（一覧）:
 [Bud]
 
-bud --save --json / bud --drop BUD --yes --json:
+bud save --json / bud rename BUD NAME --json / bud delete BUD --yes --json:
 Bud
 
 go --json:
 {
-  "current_commit": string,
+  "current_commit": string | null,
   "branch": string,
   "branch_id": string,
   "at_branch_tip": boolean,
@@ -909,7 +929,7 @@ go --json:
   "changes": [{"state": string, "path": string}]
 }
 
-bud --restore BUD --json:
+bud restore BUD --json:
 {
   "restored": Bud,
   "saved": Bud | null
@@ -918,6 +938,7 @@ bud --restore BUD --json:
 Bud:
 {
   "id": string,
+  "name": string,
   "base_commit_id": string | null,
   "branch_id": string,
   "branch_name": string,
@@ -927,11 +948,12 @@ Bud:
     "path": string,
     "object_hash": string,
     "size": number,
-    "mtime_ns": number
+    "mtime_ns": number,
+    "file_id": string
   }]
 }
 
-show:
+leaf show:
 {
   "id": string,
   "parent_id": string | null,
@@ -949,6 +971,8 @@ show:
     "position": number,
     "role": "thumbnail",
     "original_name": string,
+    "display_name": string,
+    "description": string,
     "media_type": "image/png" | "image/jpeg" | "image/webp",
     "object_hash": string,
     "size": number,
@@ -959,23 +983,28 @@ show:
     "path": string,
     "object_hash": string,
     "size": number,
-    "mtime_ns": number
+    "mtime_ns": number,
+    "file_id": string
   }]
 }
 
-branch:
+branch list:
 [{
   "id": string,
   "name": string,
   "commit_id": string | null,
   "comment": string,
-  "current": boolean
+  "current": boolean,
+  "created_at": string
 }]
+
+branch list --deleted（削除済みだけを返す）:
+[{"id": string, "name": string, "comment": string, "created_at": string, "deleted_at": string}]
 ```
 
-showとtreeの添付一覧はrole、position、添付IDの順で返します。同じrole内ではpositionが表示順です。Attachmentはid、commit_id、role、position、original_name、media_type、object_hash、size、created_at、updated_atを持ちます。roleとmedia_typeは未知の値も許可します。ブランチ一覧のid、およびコミット・つぼみのbranch_idは不変のブランチIDです。branch_nameは作成時の名前です。
+`leaf show`と`leaf tree`の添付一覧はrole、position、添付IDの順で返します。同じrole内ではpositionが表示順です。Attachmentはid、commit_id、role、position、original_name、display_name、description、media_type、object_hash、size、created_at、updated_atを持ちます。roleとmedia_typeは未知の値も許可します。ブランチ一覧のid、およびコミット・つぼみのbranch_idは不変のブランチIDです。branch_nameは作成時の名前です。
 
-JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数のまま返します。そのため、`show --json`と`--timezone`は同時指定できません。`log --json`と`--oneline`も表示形式が競合するため同時指定できません。
+JSONの日時は保存されているUTC表現、`mtime_ns`はナノ秒整数のまま返します。そのため、`leaf show --json`と`--timezone`は同時指定できません。`leaf list --json`と`--oneline`も表示形式が競合するため同時指定できません。
 
 JSONモードで期待されるエラーが起きた場合は、非0で終了し、stdoutを空のまま保ってstderrへ次のJSONを1つ出力します。
 
@@ -1000,15 +1029,15 @@ GUIとCLIは同じリビジョンの組み合わせで使用してください�
 
 適用されるのは次の操作だけです。
 
-- ディレクトリを指定した `track`（配下を走査するとき）
+- ディレクトリを指定した `file track`（配下を走査するとき）
 - `status --untracked` の一覧
 
-ファイルを明示して `track` した場合は、無視パターンより優先して登録されます。すでに追跡中のファイルの変更検出（`status` の added / modified / deleted）には影響しません。`.sproutignore` 自体も通常のファイルとして追跡できます。
+ファイルを明示して `file track` した場合は、無視パターンより優先して登録されます。すでに追跡中のファイルの変更検出（`status` の added / modified / deleted）には影響しません。`.sproutignore` 自体も通常のファイルとして追跡できます。
 
 ## 現在の制限
 
 最初のリリースでは、リモート同期とマージには対応していません。
-大きなファイルを頻繁に更新すると、`.sprout/objects`の使用量は増えますが、不要になったオブジェクトは`gc`で削除できます。
+大きなファイルを頻繁に更新すると、`.sprout/objects`の使用量は増えますが、不要になったオブジェクトは`maintenance gc`で削除できます。
 
 ## テスト
 
@@ -1023,13 +1052,13 @@ Sproutは[MIT License](LICENSE)のもとで公開されています。
 
 ### 素材IDと改名をまたぐ履歴
 
-追跡ファイルには内容のハッシュとは独立した不変の`file_id`を割り当てます。`show --json`とつぼみのJSON、archiveに各時点のIDを含めます。`sprout leaf list --file-id <file-id> --json`は全ブランチの同じ素材について、各葉のパス・内容・更新日時を新しい順に返します。内容が同じ保存記録や改名も含みます。`leaf list PATH`は現在ブランチのそのパスの内容変更履歴です。
+追跡ファイルには内容のハッシュとは独立した不変の`file_id`を割り当てます。`leaf show --json`とつぼみのJSON、archiveに各時点のIDを含めます。`sprout leaf list --file-id <file-id> --json`は全ブランチの同じ素材について、各葉のパス・内容・更新日時を新しい順に返します。内容が同じ保存記録や改名も含みます。`leaf list PATH`は現在ブランチのそのパスの内容変更履歴です。
 
-パスは、NFC正規化と大文字小文字の同一視を行った`path_key`で識別します。追跡パス・コミット・つぼみのそれぞれで同じ`path_key`のパスを保存できず、OSを問わず`path_case_conflict`で拒否します（`a`と`A/b`のようなファイルとフォルダの衝突も同様です）。保存時の表記は表示と復元で維持します。`doctor`は`path_key`の不整合を`invalid_path_key`、衝突を`path_conflict`として報告します。
+パスは、NFC正規化と大文字小文字の同一視を行った`path_key`で識別します。追跡パス・コミット・つぼみのそれぞれで同じ`path_key`のパスを保存できず、OSを問わず`path_case_conflict`で拒否します（`a`と`A/b`のようなファイルとフォルダの衝突も同様です）。保存時の表記は表示と復元で維持します。`maintenance doctor`は`path_key`の不整合を`invalid_path_key`、衝突を`path_conflict`として報告します。
 
-大文字小文字や表記だけの改名は、`sprout move Logo.png logo.png`でも、エクスプローラーなど外部での改名でも行えます。外部での改名は`status`と`diff`に`renamed`（JSONでは`previous_path`付き）と表示し、次の保存で素材IDを維持したまま新しい表記を記録します。フォルダの表記の変更も同様です。`track`に別の表記を指定した場合も、同じファイルなら表記の更新だけを行います。
+大文字小文字や表記だけの改名は、`sprout file move Logo.png logo.png`でも、エクスプローラーなど外部での改名でも行えます。外部での改名は`status`と`file diff`に`renamed`（JSONでは`previous_path`付き）と表示し、次の保存で素材IDを維持したまま新しい表記を記録します。フォルダの表記の変更も同様です。`file track`に別の表記を指定した場合も、同じファイルなら表記の更新だけを行います。
 
-`sprout move`での改名・移動はIDを維持します。コピー、新規登録、追跡解除後の再登録には別IDを割り当て、同じ内容でも別素材として扱います。追跡を続ける同じパスへの上書きは、外部アプリの一時ファイルによる保存も含めて同じIDを維持します。外部での改名は推定せず、新しいパスを登録すると新IDです。削除をコミットした後に同名ファイルを登録した場合も新IDになります。観測していない削除と同名再作成は、追跡中の同じパスへの上書きとして扱います。
+`sprout file move`での改名・移動はIDを維持します。コピー、新規登録、追跡解除後の再登録には別IDを割り当て、同じ内容でも別素材として扱います。追跡を続ける同じパスへの上書きは、外部アプリの一時ファイルによる保存も含めて同じIDを維持します。外部での改名は推定せず、新しいパスを登録すると新IDです。削除をコミットした後に同名ファイルを登録した場合も新IDになります。観測していない削除と同名再作成は、追跡中の同じパスへの上書きとして扱います。
 
 ブランチ分岐・全体復元・つぼみ復元では保存されたIDとパスの対応を戻します。部分復元で、選択外のパスに同じIDがある場合や、選択したパスが別IDに結び付いている場合は`file_identity_conflict`で拒否します。全体復元か、追跡の整理を明示してから復元してください。IDだけが変わった再登録も未保存変更となり、コミットできます。日時だけの変更の扱いは変わりません。
 

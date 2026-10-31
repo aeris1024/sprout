@@ -3385,7 +3385,7 @@ class Repository:
         raise SproutError(
             "working tree is based on a saved snapshot that differs from the current "
             "branch tip; specify the start point explicitly "
-            f"(example: sprout branch NAME {current[:12]})"
+            f"(example: sprout branch create NAME {current[:12]})"
         )
 
     @locked
@@ -3413,7 +3413,7 @@ class Repository:
         if switch and self._has_unsaved_changes():
             raise SproutError(
                 "working tree has uncommitted changes; commit them first, or discard "
-                "tracked changes with switch/restore --discard before creating and switching",
+                "tracked changes with go --discard before creating and switching",
                 code="uncommitted_changes",
                 details={"can_discard": True},
             )
@@ -4494,7 +4494,7 @@ class Repository:
         marker = staging / static_archive.INCOMPLETE_MARKER
         marker.write_bytes(
             b"This Sprout archive was interrupted before completion and is incomplete.\n"
-            b"Rerun 'sprout archive' with the same output to replace it.\n"
+            b"Rerun 'sprout leaf archive' with the same output to replace it.\n"
         )
         try:
             extracted: dict[tuple[str, int], Path] = {}

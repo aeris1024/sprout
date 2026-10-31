@@ -66,7 +66,7 @@ def test_file_id_mode_preserves_all_branch_saved_records_and_json_shape(tmp_path
     repo, identity, first, unchanged, renamed, side = history(tmp_path, monkeypatch)
     records = json_call('leaf', 'list', '--file-id', identity)
     assert records == repo.file_history(identity)
-    assert records == json_call('file-history', identity)
+    assert not run_command(app, ['file-history', identity, '--json'])['ok']
     assert records == json_call('log', '--file-id', identity)
     assert [row['commit_id'] for row in records] == [side, renamed, unchanged, first]
     assert [row['path'] for row in records] == ['asset.bin', 'renamed.bin', 'asset.bin', 'asset.bin']

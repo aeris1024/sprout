@@ -73,11 +73,8 @@ def test_leaf_archive_dry_run_and_write_preserve_the_source(tmp_path, monkeypatc
     output = tmp_path / 'archive'
     args = ('--output', str(output), '--dry-run')
     dry = call('leaf', 'archive', *args)
-    legacy = call('archive', *args)
-    assert {key: value for key, value in dry.items() if key != 'free_bytes'} == {
-        key: value for key, value in legacy.items() if key != 'free_bytes'
-    }
-    assert dry['free_bytes'] >= 0 and legacy['free_bytes'] >= 0
+    assert dry['dry_run'] and dry['output'] == str(output.resolve())
+    assert dry['free_bytes'] >= 0
     assert dry['commits'] == 1 and dry['files'] > 0
     assert not output.exists()
     actual = call('leaf', 'archive', '--output', str(output))
@@ -96,7 +93,7 @@ def test_leaf_delete_retains_confirmation_references_and_trash_recovery(tmp_path
     assert not run_command(app, ['leaf', 'delete', second, '--json'])['ok']
     assert repo.head_commit() == second
     dry = call('leaf', 'delete', second, '--dry-run')
-    assert dry == call('delete-commit', second, '--dry-run')
+    assert dry['dry_run'] and dry['commit']['id'] == second
     assert repo.trash_items() == []
 
     call('leaf', 'delete', second, '--yes')
@@ -133,7 +130,7 @@ def test_leaf_prune_keeps_boundaries_working_files_and_irreversible_contract(tmp
     conflict = run_command(app, ['leaf', 'prune', 'start', 'end', '--all', '--dry-run', '--json'])
     assert not conflict['ok']
     dry = call('leaf', 'prune', 'start', 'end', '--dry-run')
-    assert dry == call('prune', 'start', 'end', '--dry-run')
+    assert dry['dry_run'] and dry['mode'] == 'between'
     assert [item['id'] for item in dry['removed_commits']] == [middle]
     assert call('leaf', 'prune', '--all', '--dry-run')['mode'] == 'all'
     assert repo.resolve_commit(middle) == middle

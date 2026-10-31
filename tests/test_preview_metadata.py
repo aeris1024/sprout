@@ -142,10 +142,10 @@ def test_retired_primary_storage_is_inert_across_replacement_and_recovery(tmp_pa
     assert not hasattr(original,'is_primary')
     monkeypatch.chdir(repo.root)
     for flag in ['--primary','--no-primary']:
-        result=CliRunner().invoke(app,['preview','metadata',commit,first.id,flag])
+        result=CliRunner().invoke(app,['leaf', 'preview', 'edit', commit, first.id, flag])
         assert result.exit_code!=0
         assert repo.preview(commit,first.id)==original
-    response=run_command(app,['preview','list',commit,'--json'])
+    response=run_command(app,['leaf', 'preview', 'list', commit, '--json'])
     assert response['ok'] and 'is_primary' not in json.dumps(response['result'])
     repo.reorder_previews(commit,[second.id,first.id])
     original=repo.preview(commit,first.id)

@@ -22,16 +22,16 @@ def test_report_returns_found_issues_successfully(tmp_path, monkeypatch):
     monkeypatch.chdir(repo.root)
     runner = CliRunner()
 
-    plain = runner.invoke(app, ['doctor', '--json'])
+    plain = runner.invoke(app, ['maintenance', 'doctor', '--json'])
     assert plain.exit_code == 1
 
-    report = runner.invoke(app, ['doctor', '--report', '--json'])
+    report = runner.invoke(app, ['maintenance', 'doctor', '--report', '--json'])
     assert report.exit_code == 0
     payload = json.loads(report.stdout)
     assert payload['ok'] is False
     assert {'kind': 'corrupt_object', 'detail': digest} in payload['issues']
 
-    text = runner.invoke(app, ['doctor', '--report'])
+    text = runner.invoke(app, ['maintenance', 'doctor', '--report'])
     assert text.exit_code == 0
     assert 'corrupt_object' in text.stdout
 
@@ -41,7 +41,7 @@ def test_report_through_serve_keeps_the_result(tmp_path, monkeypatch):
 
     repo, digest = broken_project(tmp_path)
     monkeypatch.chdir(repo.root)
-    response = run_command(app, ['doctor', '--report', '--json'])
+    response = run_command(app, ['maintenance', 'doctor', '--report', '--json'])
     assert response['ok'] is True
     assert any(issue['detail'] == digest for issue in response['result']['issues'])
 
@@ -49,6 +49,6 @@ def test_report_through_serve_keeps_the_result(tmp_path, monkeypatch):
 def test_report_on_a_healthy_project(tmp_path, monkeypatch):
     repo = Repository.init(tmp_path / 'project')
     monkeypatch.chdir(repo.root)
-    result = CliRunner().invoke(app, ['doctor', '--report', '--json'])
+    result = CliRunner().invoke(app, ['maintenance', 'doctor', '--report', '--json'])
     assert result.exit_code == 0
     assert json.loads(result.stdout)['ok'] is True

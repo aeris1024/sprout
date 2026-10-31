@@ -29,7 +29,7 @@ def test_move_copy_history_and_dedup(tmp_path, monkeypatch):
     assert repo.manifest(second)['copy.bin'].file_id != identity
     assert len(list(repo.objects.glob('*/*'))) == 1
     assert [r['path'] for r in repo.file_history(identity)] == ['b.bin', 'a.bin']
-    result = CliRunner().invoke(app, ['file-history', identity, '--json'])
+    result = CliRunner().invoke(app, ['leaf', 'list', '--file-id', identity, '--json'])
     assert result.exit_code == 0
     assert [r['path'] for r in json.loads(result.stdout)] == ['b.bin', 'a.bin']
     repo.restore(first)

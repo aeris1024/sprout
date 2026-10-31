@@ -29,13 +29,14 @@ def history(tmp_path, monkeypatch):
     return repository, source, first, second
 
 
-def test_maintenance_aliases_preserve_json_and_working_files(history):
+def test_maintenance_commands_preserve_json_and_working_files(history):
     repository, source, _, _ = history
     before = source.read_bytes()
     for operation in ['stats', 'doctor', 'gc']:
         arguments = ['--dry-run'] if operation == 'gc' else []
         canonical = call('maintenance', operation, *arguments)
-        assert canonical == call(operation, *arguments)
+        retired = run_command(app, [operation, *arguments, '--json'])
+        assert not retired['ok'] and retired['error']['code'] == 'usage_error'
         direct = CliRunner().invoke(app, ['maintenance', operation, *arguments, '--json'])
         assert direct.exit_code == 0
         assert json.loads(direct.stdout) == canonical
@@ -75,7 +76,7 @@ def test_trash_subcommands_keep_confirmation_dry_run_exact_ids_and_conflicts(his
     repository, source, _, second = history
     repository.delete_commit(second)
     item = call('trash', 'list')[0]
-    assert call('trash') == call('trash', 'list')
+    assert not run_command(app, ['trash', '--json'])['ok']
     assert call('trash', 'show', item['id'])['id'] == item['id']
     for operation in ['restore', 'purge']:
         assert call('trash', operation, item['id'], '--dry-run')['dry_run']

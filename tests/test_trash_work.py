@@ -159,8 +159,8 @@ def test_cli_reports_recovery_and_json_shape(tmp_path, monkeypatch):
     monkeypatch.chdir(repo.root)
     file.write_bytes(b'work')
     runner = CliRunner()
-    bud_id = json.loads(runner.invoke(app, ['bud', '--save', '--json']).stdout)['id']
-    dropped = runner.invoke(app, ['bud', '--drop', bud_id, '--yes'])
+    bud_id = json.loads(runner.invoke(app, ['bud', 'save', '--json']).stdout)['id']
+    dropped = runner.invoke(app, ['bud', 'delete', bud_id, '--yes'])
     assert 'sprout trash' in dropped.stdout
     listed = json.loads(runner.invoke(app, ['trash', 'list', '--json']).stdout)
     assert listed[0]['kind'] == 'bud_delete'

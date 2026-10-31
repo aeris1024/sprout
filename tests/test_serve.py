@@ -32,10 +32,10 @@ def test_serve_answers_reads_and_writes_like_the_cli(tmp_path: Path, monkeypatch
     responses = exchange(
         [
             {"id": 1, "args": ["init", ".", "--json"]},
-            {"id": 2, "args": ["track", "絵.psd", "--json"]},
-            {"id": 3, "args": ["commit", "-m", "最初", "--json"]},
+            {"id": 2, "args": ["file", "track", "絵.psd", "--json"]},
+            {"id": 3, "args": ["leaf", "create", "-m", "最初", "--json"]},
             {"id": "s", "args": ["status", "--json"]},
-            {"id": 5, "args": ["tree", "--json"]},
+            {"id": 5, "args": ["leaf", "tree", "--json"]},
         ],
         project,
         monkeypatch,
@@ -71,7 +71,7 @@ def test_serve_runs_position_bud_go_and_auto_branch_commands(tmp_path: Path, mon
     responses = exchange(
         [
             {"id": 1, "args": ["go", first, "--json"]},
-            {"id": 2, "args": ["bud", "--json"]},
+            {"id": 2, "args": ["bud", "list", "--json"]},
             {"id": 3, "args": ["status", "--json"]},
         ],
         project,
@@ -85,7 +85,7 @@ def test_serve_runs_position_bud_go_and_auto_branch_commands(tmp_path: Path, mon
 
     asset.write_bytes(b"alternative")
     committed = exchange(
-        [{"id": 4, "args": ["commit", "-m", "alt", "--json"]}], project, monkeypatch
+        [{"id": 4, "args": ["leaf", "create", "-m", "alt", "--json"]}], project, monkeypatch
     )[1]
     assert committed["ok"]
     assert committed["result"]["created_branch"] is True
@@ -101,10 +101,10 @@ def test_serve_reports_errors_and_keeps_running(tmp_path: Path, monkeypatch) -> 
             [1, 2],
             {"id": 1, "args": []},
             {"id": 2, "args": ["serve"]},
-            {"id": 3, "args": ["restore", "missing", "--json"]},
+            {"id": 3, "args": ["go", "missing", "--keep-branch", "--reject-changes", "--json"]},
             {"id": 4, "args": ["--no-such-option"]},
             {"id": 5, "args": ["status", "--json"], "cwd": str(tmp_path / "missing")},
-            {"id": 6, "args": ["doctor"]},
+            {"id": 6, "args": ["maintenance", "doctor"]},
             {"id": 7, "command": "quit"},
             {"id": 8, "args": ["status", "--json"]},
         ],
@@ -137,7 +137,7 @@ def test_serve_uses_request_cwd_and_restores_it(tmp_path: Path, monkeypatch) -> 
 
     responses = exchange(
         [
-            {"id": 1, "args": ["track", "only.bin", "--json"], "cwd": str(second)},
+            {"id": 1, "args": ["file", "track", "only.bin", "--json"], "cwd": str(second)},
             {"id": 2, "args": ["status", "--json", "--tracked"]},
         ],
         first,
@@ -184,10 +184,10 @@ def test_serve_process_coexists_with_other_cli_processes(tmp_path: Path) -> None
 
         asset.write_bytes(b"v2")
         with repo.lock():
-            locked = ask({"id": 2, "args": ["commit", "-m", "blocked", "--json"]})
+            locked = ask({"id": 2, "args": ["leaf", "create", "-m", "blocked", "--json"]})
         assert locked["ok"] is False
         assert locked["error"]["code"] == "repository_locked"
-        retried = ask({"id": 3, "args": ["commit", "-m", "after", "--json"]})
+        retried = ask({"id": 3, "args": ["leaf", "create", "-m", "after", "--json"]})
         assert retried["ok"] is True
         assert ask({"id": 4, "command": "quit"}) == {"id": 4, "ok": True, "result": None}
         assert process.wait(timeout=30) == 0

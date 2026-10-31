@@ -216,7 +216,7 @@ def test_cli_trash_confirmation_json_restore_and_purge(tmp_path, monkeypatch):
     monkeypatch.chdir(repo.root)
     repo.delete_commit(commits[-1])
     runner = CliRunner()
-    items = json.loads(runner.invoke(app, ['trash', '--json']).stdout)
+    items = json.loads(runner.invoke(app, ['trash', 'list', '--json']).stdout)
     item_id = items[0]['id']
     assert json.loads(runner.invoke(app, ['trash', 'show', item_id, '--json']).stdout)['id'] == item_id
     for action in ('restore', 'purge'):

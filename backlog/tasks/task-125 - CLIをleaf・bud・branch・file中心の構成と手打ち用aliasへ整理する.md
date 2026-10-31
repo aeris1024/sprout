@@ -1,11 +1,11 @@
 ---
 id: TASK-125
 title: CLIをleaf・bud・branch・file中心の構成と手打ち用aliasへ整理する
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-31 07:21'
-updated_date: '2026-10-31 11:09'
+updated_date: '2026-10-31 21:17'
 labels:
   - cli
   - usability
@@ -76,10 +76,10 @@ GUIの新機能追加を対象外とする条件はTASK-125.7の呼び出し移�
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 4系統の操作統合を含む正規10入口に現行機能の扱いが対応し、独立したbranch switch・leaf restore・file history・leaf note・file coverを重複した正規入口として追加しない
-- [ ] #2 指定aliasが統合後の正規処理を呼び出し、引数・結果・JSON・終了コード・安全確認が対応先と一致する
-- [ ] #3 V1方針とprune、確定したメディア方針・ラベル維持と一覧/候補を反映し、プレビューは葉全体の確認資料として素材関連付け・代表指定を廃止して表示名・説明・順序・置き換えを維持する
-- [ ] #4 GUI・serve・文書を正規体系へそろえ、素材関連付け廃止とメタ情報維持はTASK-125.13、ラベル一覧・候補はTASK-125.15/125.16で実装・検証を追跡できる
+- [x] #1 4系統の操作統合を含む正規10入口に現行機能の扱いが対応し、独立したbranch switch・leaf restore・file history・leaf note・file coverを重複した正規入口として追加しない
+- [x] #2 指定aliasが統合後の正規処理を呼び出し、引数・結果・JSON・終了コード・安全確認が対応先と一致する
+- [x] #3 V1方針とprune、確定したメディア方針・ラベル維持と一覧/候補を反映し、プレビューは葉全体の確認資料として素材関連付け・代表指定を廃止して表示名・説明・順序・置き換えを維持する
+- [x] #4 GUI・serve・文書を正規体系へそろえ、素材関連付け廃止とメタ情報維持はTASK-125.13、ラベル一覧・候補はTASK-125.15/125.16で実装・検証を追跡できる
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -87,3 +87,15 @@ GUIの新機能追加を対象外とする条件はTASK-125.7の呼び出し移�
 <!-- SECTION:PLAN:BEGIN -->
 1. Implement125.1 while GUI119 then107 proceed separately. 2. Migrate125.2-5 then125.9-12, confirming go behavior before implementation. 3. Implement125.14 then125.13 preserving V1 attachments. 4. Implement125.15 then125.16. 5. Finish125.6 and125.7 then125.8 with help/completion/docs/temporary-entry cleanup and integration tests. Verify and commit each task, ff-only merge into main, push, and delete work branches.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+All16 implementation subtasks are Done. TASK-119 and107 also completed and pushed. Final125.8 evidence:778 backend cases covered in split runs (758 passed,20 skipped),262 GUI tests,typecheck/build,9 Rust tests,35 completion checks and independent canonical/alias/serve/V1 integration. Root browser check of real LabelInput and FilePanel at320px confirmed candidate counts,keyboard selection,Escape draft/focus preservation and source terminology using a mocked Tauri bridge. V1 schema preserved; no migration layer added. Interactive zsh was unavailable; its completion protocol was tested.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed all16 CLI reorganization subtasks with10 canonical entries,15 agreed alias patterns,go/history/edit/thumbnail unification,preview simplification and project label listing/GUI suggestions. GUI/Rust/scripts/docs/completion now use final contracts; temporary old entries removed. Final backend,GUI,native and integration checks passed; V1 preserved.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -243,23 +243,23 @@ def test_preview_cli_workflow_and_json(tmp_path, monkeypatch):
     a = write(tmp_path / "a" / "same.mp3", b"aaa")
     b = write(tmp_path / "b" / "same.mp3", b"bbb")
 
-    dry = invoke(["preview", "add", commit, str(a), "--dry-run", "--json"], project, monkeypatch)
+    dry = invoke(['leaf', 'preview', 'add', commit, str(a), '--dry-run', '--json'], project, monkeypatch)
     assert dry.exit_code == 0
     assert json.loads(dry.stdout)["additional_bytes"] == 3
     assert repo.previews(commit) == []
 
-    added = invoke(["preview", "add", commit, str(a), str(b), "--json"], project, monkeypatch)
+    added = invoke(['leaf', 'preview', 'add', commit, str(a), str(b), '--json'], project, monkeypatch)
     assert added.exit_code == 0
     first, second = json.loads(added.stdout)
     assert first["original_name"] == second["original_name"] == "same.mp3"
     assert first["media_type"] == "audio/mpeg"
     assert {"id", "role", "position", "size", "created_at", "updated_at"} <= first.keys()
 
-    ordered = invoke(["preview", "order", commit, second["id"], first["id"], "--json"], project, monkeypatch)
+    ordered = invoke(['leaf', 'preview', 'order', commit, second["id"], first["id"], '--json'], project, monkeypatch)
     assert ordered.exit_code == 0
     assert [item["id"] for item in json.loads(ordered.stdout)] == [second["id"], first["id"]]
 
-    listed = json.loads(invoke(["preview", "list", commit, "--json"], project, monkeypatch).stdout)
+    listed = json.loads(invoke(['leaf', 'preview', 'list', commit, '--json'], project, monkeypatch).stdout)
     assert [(item["id"], item["position"]) for item in listed] == [(second["id"], 0), (first["id"], 1)]
     shown = json.loads(invoke(["show", commit, "--json"], project, monkeypatch).stdout)
     assert [item["id"] for item in shown["attachments"] if item["role"] == "preview"] == [second["id"], first["id"]]
@@ -268,23 +268,23 @@ def test_preview_cli_workflow_and_json(tmp_path, monkeypatch):
     text = invoke(["show", commit], project, monkeypatch).stdout
     assert text.index(second["id"]) < text.index(first["id"])
     assert "[previews:2]" in invoke(["tree"], project, monkeypatch).stdout
-    assert "1. " + second["id"] in invoke(["preview", "list", commit], project, monkeypatch).stdout
+    assert "1. " + second["id"] in invoke(['leaf', 'preview', 'list', commit], project, monkeypatch).stdout
 
     replacement = write(tmp_path / "c" / "other.ogg", b"ccc")
     replaced = json.loads(
-        invoke(["preview", "replace", commit, first["id"][:8], str(replacement), "--json"], project, monkeypatch).stdout
+        invoke(['leaf', 'preview', 'replace', commit, first["id"][:8], str(replacement), '--json'], project, monkeypatch).stdout
     )
     assert replaced["id"] == first["id"]
     assert replaced["original_name"] == "other.ogg"
     output = tmp_path / "exported.ogg"
-    exported = invoke(["preview", "export", commit, first["id"], "--output", str(output), "--json"], project, monkeypatch)
+    exported = invoke(['leaf', 'preview', 'export', commit, first["id"], '--output', str(output), '--json'], project, monkeypatch)
     assert exported.exit_code == 0
     assert output.read_bytes() == b"ccc"
-    deleted = json.loads(invoke(["preview", "delete", commit, second["id"], "--json"], project, monkeypatch).stdout)
+    deleted = json.loads(invoke(['leaf', 'preview', 'delete', commit, second["id"], '--json'], project, monkeypatch).stdout)
     assert deleted["deleted"] is True
     assert [item.id for item in repo.previews(commit)] == [first["id"]]
 
-    invalid = invoke(["preview", "order", commit, "ffff", "--json"], project, monkeypatch)
+    invalid = invoke(['leaf', 'preview', 'order', commit, 'ffff', '--json'], project, monkeypatch)
     assert invalid.exit_code != 0
     assert [item.id for item in repo.previews(commit)] == [first["id"]]
 
@@ -293,13 +293,13 @@ def test_preview_cli_large_file_requires_yes(tmp_path, monkeypatch):
     repo, _, commit = committed_repo(tmp_path)
     monkeypatch.setattr(repository_module, "PREVIEW_CONFIRM_BYTES", 2)
     large = write(tmp_path / "big.mov", b"12345")
-    dry = invoke(["preview", "add", commit, str(large), "--dry-run"], repo.root, monkeypatch)
+    dry = invoke(['leaf', 'preview', 'add', commit, str(large), '--dry-run'], repo.root, monkeypatch)
     assert dry.exit_code == 0
     assert "needs --yes" in dry.stdout
-    refused = invoke(["preview", "add", commit, str(large)], repo.root, monkeypatch)
+    refused = invoke(['leaf', 'preview', 'add', commit, str(large)], repo.root, monkeypatch)
     assert refused.exit_code != 0
     assert repo.previews(commit) == []
-    accepted = invoke(["preview", "add", commit, str(large), "--yes"], repo.root, monkeypatch)
+    accepted = invoke(['leaf', 'preview', 'add', commit, str(large), '--yes'], repo.root, monkeypatch)
     assert accepted.exit_code == 0
     assert len(repo.previews(commit)) == 1
 
@@ -380,7 +380,7 @@ def test_static_image_preview_cli_returns_json(tmp_path, monkeypatch):
     Image.new("RGB", (3, 2), "blue").save(source)
     attachment = repo.add_previews(commit, [source])[0]
     monkeypatch.chdir(repo.root)
-    result = runner.invoke(app, ["preview", "image", commit, attachment.id, "--json"])
+    result = runner.invoke(app, ['leaf', 'preview', 'image', commit, attachment.id, '--json'])
     assert result.exit_code == 0, result.stdout
     reply = json.loads(result.stdout)
     assert reply["data_url"].startswith("data:image/png;base64,")

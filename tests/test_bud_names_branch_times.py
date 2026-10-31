@@ -60,10 +60,10 @@ def test_invalid_bud_names_are_rejected(tmp_path, name):
 def test_bud_name_through_the_cli(tmp_path, monkeypatch):
     repo, file = project(tmp_path)
     file.write_bytes(b'work')
-    saved = json.loads(invoke(monkeypatch, repo, 'bud', '--save', '--name', '別案', '--json'))
+    saved = json.loads(invoke(monkeypatch, repo, 'bud', 'save', '--name', '別案', '--json'))
     assert saved['name'] == '別案'
-    assert '"別案"' in invoke(monkeypatch, repo, 'bud')
-    renamed = json.loads(invoke(monkeypatch, repo, 'bud', '--rename', saved['id'], '改名', '--json'))
+    assert '"別案"' in invoke(monkeypatch, repo, 'bud', 'list')
+    renamed = json.loads(invoke(monkeypatch, repo, 'bud', 'rename', saved['id'], '改名', '--json'))
     assert renamed['name'] == '改名'
     tree = json.loads(invoke(monkeypatch, repo, 'tree', '--json'))
     assert tree['buds'][0]['name'] == '改名'
@@ -72,8 +72,7 @@ def test_bud_name_through_the_cli(tmp_path, monkeypatch):
 def test_bud_name_option_needs_save(tmp_path, monkeypatch):
     repo, _ = project(tmp_path)
     monkeypatch.chdir(repo.root)
-    with pytest.raises(SproutError):
-        CliRunner().invoke(app, ['bud', '--name', 'x'], catch_exceptions=False)
+    assert CliRunner().invoke(app, ['bud', 'list', '--name', 'x']).exit_code != 0
 
 
 def test_branch_times_are_recorded_and_kept_on_rename(tmp_path, monkeypatch):
@@ -88,7 +87,7 @@ def test_branch_times_are_recorded_and_kept_on_rename(tmp_path, monkeypatch):
     assert renamed.created_at == side.created_at
     assert repo.deleted_branches() == []
 
-    listed = json.loads(invoke(monkeypatch, repo, 'branch', '--json'))
+    listed = json.loads(invoke(monkeypatch, repo, 'branch', 'list', '--json'))
     assert {item['name']: item['created_at'] for item in listed}['renamed'] == side.created_at
 
     repo.delete_branch('renamed')
@@ -97,8 +96,8 @@ def test_branch_times_are_recorded_and_kept_on_rename(tmp_path, monkeypatch):
     assert deleted[0].created_at == side.created_at
     assert TIMESTAMP_PATTERN.fullmatch(deleted[0].deleted_at)
 
-    assert json.loads(invoke(monkeypatch, repo, 'branch', '--deleted', '--json'))[0]['deleted_at'] == deleted[0].deleted_at
-    assert 'renamed' in invoke(monkeypatch, repo, 'branch', '--deleted')
+    assert json.loads(invoke(monkeypatch, repo, 'branch', 'list', '--deleted', '--json'))[0]['deleted_at'] == deleted[0].deleted_at
+    assert 'renamed' in invoke(monkeypatch, repo, 'branch', 'list', '--deleted')
     tree = json.loads(invoke(monkeypatch, repo, 'tree', '--json'))
     assert tree['deleted_branches'][0]['deleted_at'] == deleted[0].deleted_at
     assert 'created_at' in tree['branches'][0]

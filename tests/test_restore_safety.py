@@ -329,7 +329,7 @@ def test_linked_operation_storage_rejected(repo, tmp_path, directory_link):
 
 def test_cli_scope_error_is_structured(repo, monkeypatch, capsys):
     first, _ = topology(repo)
-    monkeypatch.setattr(sys, "argv", ["sprout", "restore", first, "asset", "--discard", "--json"])
+    monkeypatch.setattr(sys, "argv", ["sprout", "file", "restore", first, "asset", "--discard", "--json"])
     assert cli.main() == 1
     output = capsys.readouterr()
     assert output.out == ""
@@ -347,7 +347,7 @@ def test_cli_link_error_is_structured(repo, tmp_path, directory_link, monkeypatc
     external = tmp_path / "external"
     external.mkdir()
     directory_link(external, repo.root / "assets")
-    monkeypatch.setattr(sys, "argv", ["sprout", "restore", "main", "--discard", "--json"])
+    monkeypatch.setattr(sys, "argv", ["sprout", "go", "main", "--keep-branch", "--discard", "--json"])
     assert cli.main() == 1
     output = capsys.readouterr()
     assert output.out == ""

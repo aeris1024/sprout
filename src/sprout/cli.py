@@ -95,15 +95,6 @@ def _install_safe_powershell_completion_template() -> None:
 
 _install_safe_powershell_completion_template()
 
-class _MigrationGroup(typer.core.TyperGroup):
-    """Keep pre-migration invocations working until the final caller migration."""
-
-    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
-        if not args or (args[0] not in self.commands and args[0] not in {'--help', '-h'}):
-            args = ['_legacy', *args]
-        return super().parse_args(ctx, args)
-
-
 _CANONICAL_COMMANDS = {'init', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
 _ALIAS_HELP = (
     ('commit -m TEXT', 'leaf create -m TEXT'),
@@ -150,9 +141,9 @@ thumbnail_app = typer.Typer(no_args_is_help=True, help="Manage a leaf thumbnail 
 thumbnail_source_app = typer.Typer(no_args_is_help=True, help="Choose a tracked project file as the automatic thumbnail source.")
 file_app = typer.Typer(no_args_is_help=True, help="Manage tracked files and their contents.")
 maintenance_app = typer.Typer(no_args_is_help=True, help="Inspect and maintain project storage.")
-bud_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Save and restore buds of unfinished work.")
-branch_app = typer.Typer(cls=_MigrationGroup, no_args_is_help=False, help="Create and manage branches.")
-trash_app = typer.Typer(help="Inspect, restore, or permanently discard recovery items.")
+bud_app = typer.Typer(no_args_is_help=True, help="Save and restore buds of unfinished work.")
+branch_app = typer.Typer(no_args_is_help=True, help="Create and manage branches.")
+trash_app = typer.Typer(no_args_is_help=True, help="Inspect, restore, or permanently discard recovery items.")
 stash_app = typer.Typer(no_args_is_help=True, help="Hand-typed aliases for saving and restoring buds.")
 app.add_typer(leaf_app, name="leaf")
 leaf_app.add_typer(tag_app, name="tag")
@@ -681,7 +672,6 @@ def untrack(
 
 
 @file_app.command(name="move")
-@app.command()
 def move(
     source: Annotated[Path, typer.Argument(help="Tracked file to move")],
     destination: Annotated[Path, typer.Argument(help="New path for the tracked file")],
@@ -846,7 +836,6 @@ def commit_command(
     typer.echo(f"[{result.branch} {result.commit_id[:12]}] {message.strip()}")
 
 
-@app.command(name="cover")
 def cover_command(
     path: Annotated[
         Path | None, typer.Argument(help="Tracked image to make thumbnails from; omit to inspect")
@@ -900,7 +889,6 @@ def cover_command(
         typer.echo(relative if relative is not None else f"{file_id} (no longer tracked)")
 
 
-@app.command(name="file-history")
 def file_history(
     file_id: Annotated[str, typer.Argument(help="Immutable file ID from show --json")],
     json_output: Annotated[bool, typer.Option("--json")] = False,
@@ -1162,7 +1150,6 @@ def leaf_edit(
     typer.echo(f"Updated leaf {commit_id[:12]}")
 
 
-@app.command()
 def message(
     commit: Annotated[
         str,
@@ -1184,7 +1171,6 @@ def message(
     typer.echo(f"Updated message for {commit_id[:12]}: {normalized}")
 
 
-@app.command()
 def thumbnail(
     commit: Annotated[
         str,
@@ -1335,9 +1321,6 @@ preview_app = typer.Typer(
     no_args_is_help=True,
 )
 leaf_app.add_typer(preview_app, name="preview")
-# Keep existing GUI/script calls working until the final migration cleanup.
-legacy_preview_app = typer.Typer(no_args_is_help=True)
-app.add_typer(legacy_preview_app, name="preview", hidden=True)
 
 PreviewCommitArgument = Annotated[
     str,
@@ -1413,7 +1396,6 @@ def _preview_text(index: int, attachment: CommitAttachment) -> str:
 
 
 @preview_app.command(name="list")
-@legacy_preview_app.command(name="list")
 def preview_list(
     commit: PreviewCommitArgument,
     json_output: PreviewJsonOption = False,
@@ -1432,7 +1414,6 @@ def preview_list(
 
 
 @preview_app.command(name="image")
-@legacy_preview_app.command(name="image")
 def preview_image(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1449,7 +1430,6 @@ def preview_image(
 
 
 @preview_app.command(name="add")
-@legacy_preview_app.command(name="add")
 def preview_add(
     commit: PreviewCommitArgument,
     files: Annotated[
@@ -1478,7 +1458,6 @@ def preview_add(
 
 
 @preview_app.command(name="edit")
-@legacy_preview_app.command(name="metadata")
 def preview_metadata(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1497,7 +1476,6 @@ def preview_metadata(
 
 
 @preview_app.command(name="replace")
-@legacy_preview_app.command(name="replace")
 def preview_replace(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1520,11 +1498,10 @@ def preview_replace(
     if json_output:
         _echo_json(_attachment_json(attachment))
         return
-    typer.echo(f"Replaced preview {_preview_text(attachment.position + 1, attachment)}; previous version retained in 'sprout trash'")
+    typer.echo(f"Replaced preview {_preview_text(attachment.position + 1, attachment)}; previous version retained in 'sprout trash list'")
 
 
 @preview_app.command(name="delete")
-@legacy_preview_app.command(name="delete")
 def preview_delete(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1537,12 +1514,11 @@ def preview_delete(
         return
     typer.echo(
         f"Deleted preview {attachment.id} ({attachment.original_name}) "
-        f"from {attachment.commit_id[:12]}; recover with 'sprout trash' before changing previews"
+        f"from {attachment.commit_id[:12]}; recover with 'sprout trash list' before changing previews"
     )
 
 
 @preview_app.command(name="export")
-@legacy_preview_app.command(name="export")
 def preview_export(
     commit: PreviewCommitArgument,
     attachment_id: PreviewIdArgument,
@@ -1569,7 +1545,6 @@ def preview_export(
 
 
 @preview_app.command(name="order")
-@legacy_preview_app.command(name="order")
 def preview_order(
     commit: PreviewCommitArgument,
     attachment_ids: Annotated[
@@ -1587,7 +1562,6 @@ def preview_order(
         typer.echo(_preview_text(index, item))
 
 
-@app.command()
 def note(
     commit: Annotated[
         str,
@@ -1620,7 +1594,7 @@ def note(
             )
             return
         if annotations.note is None:
-            typer.echo(f"Deleted note from {annotations.commit_id[:12]}; recover it with 'sprout trash'")
+            typer.echo(f"Deleted note from {annotations.commit_id[:12]}; recover it with 'sprout trash list'")
         else:
             typer.echo(f"Set note for {annotations.commit_id[:12]}")
         return
@@ -1638,7 +1612,6 @@ def note(
     typer.echo(annotations.note)
 
 
-@app.command()
 def label(
     commit: Annotated[
         str,
@@ -1733,7 +1706,6 @@ def remove_leaf_label(
     label(leaf, value=None, delete=value, json_output=json_output)
 
 
-@branch_app.command(name="_legacy", hidden=True)
 def branch(
     name: Annotated[str | None, typer.Argument()] = None,
     start_point: Annotated[
@@ -1810,7 +1782,7 @@ def branch(
         if json_output:
             _echo_json({"id": branch_id, "name": delete, "deleted": True})
             return
-        typer.echo(f"Deleted branch {delete}; recover it with 'sprout trash'")
+        typer.echo(f"Deleted branch {delete}; recover it with 'sprout trash list'")
         return
     if rename is not None:
         if name is None:
@@ -1919,7 +1891,7 @@ def tag(
         if json_output:
             _echo_json({"name": delete, "deleted": True})
             return
-        typer.echo(f"Deleted tag {delete}; recover it with 'sprout trash'")
+        typer.echo(f"Deleted tag {delete}; recover it with 'sprout trash list'")
         return
     if set_comment is not None:
         if name is None:
@@ -2005,14 +1977,9 @@ def tag_alias(
     commit: Annotated[str | None, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)] = None,
     comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the new tag")] = "",
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
-    delete: Annotated[str | None, typer.Option("--delete", hidden=True)] = None,
-    set_comment: Annotated[str | None, typer.Option("--set-comment", hidden=True)] = None,
 ) -> None:
     """Alias for leaf tag list or leaf tag create NAME [LEAF]."""
-    if delete is not None or set_comment is not None:
-        # Only retained until the GUI and scripts finish their staged migration.
-        tag(name, commit, comment, delete, set_comment, json_output)
-    elif name is None:
+    if name is None:
         if commit is not None or comment:
             raise SproutError("a tag name is required")
         tag_list(json_output=json_output)
@@ -2020,7 +1987,6 @@ def tag_alias(
         tag_create(name, commit, comment, json_output)
 
 
-@bud_app.command(name="_legacy", hidden=True)
 def bud(
     save: Annotated[
         bool,
@@ -2102,7 +2068,7 @@ def bud(
         if json_output:
             _echo_json(_bud_json(dropped))
             return
-        typer.echo(f"Dropped bud {_bud_summary(dropped)}; recover it with 'sprout trash'")
+        typer.echo(f"Dropped bud {_bud_summary(dropped)}; recover it with 'sprout trash list'")
         return
     if yes:
         raise SproutError("--yes is only used with --drop")
@@ -2179,7 +2145,6 @@ def branch_create(
     leaf: Annotated[str | None, typer.Argument(help="Leaf ID, prefix, branch, or tag; defaults to the current branch tip", autocompletion=_complete_references)] = None,
     comment: Annotated[str, typer.Option("--comment", "-m", help="Comment for the branch")] = "",
     switch: Annotated[bool, typer.Option("--switch", help="Move to the new branch after creating it")] = False,
-    keep_changes: Annotated[bool, typer.Option("--keep-changes", help="With --switch, save unfinished changes in a bud")] = False,
     reject_changes: Annotated[bool, typer.Option("--reject-changes", help="With --switch, refuse if tracked changes are unsaved")] = False,
     discard: Annotated[bool, typer.Option("--discard", help="With --switch, keep discarded tracked changes in the trash")] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
@@ -2188,10 +2153,8 @@ def branch_create(
     if not switch:
         if reject_changes or discard:
             raise SproutError("--reject-changes and --discard require --switch", code="invalid_navigation_options")
-        branch(name=name, start_point=leaf, comment=comment, keep_changes=keep_changes, json_output=json_output)
+        branch(name=name, start_point=leaf, comment=comment, json_output=json_output)
         return
-    if keep_changes and (reject_changes or discard):
-        raise SproutError("--keep-changes cannot be combined with --reject-changes or --discard", code="invalid_navigation_options")
     repository = repo()
     with _show_progress(repository, enabled=not json_output):
         commit_id, saved = repository.grow_branch(
@@ -2251,7 +2214,7 @@ def go(
     branch_name: Annotated[str | None, typer.Option("--branch", help="Select this live branch explicitly, including an empty branch", autocompletion=_complete_branches)] = None,
     keep_branch: Annotated[bool, typer.Option("--keep-branch", help="Restore TARGET while keeping the current branch and its tip")] = False,
     reject_changes: Annotated[bool, typer.Option("--reject-changes", help="Refuse instead of saving unsaved tracked changes in a bud")] = False,
-    discard: Annotated[bool, typer.Option("--discard", help="Keep discarded tracked changes in the trash instead of a live bud")] = False,
+    discard: Annotated[bool, typer.Option("--discard", help="Keep discarded tracked changes in the trash instead of a live bud; leave untracked files untouched")] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
     ] = False,
@@ -2303,7 +2266,6 @@ def switch_command(
     go(branch_name=branch_name, reject_changes=reject_changes, discard=discard, json_output=json_output)
 
 
-@app.command()
 def restore(
     commit: Annotated[
         str,
@@ -2350,7 +2312,7 @@ def file_restore(
     commit: Annotated[str, typer.Argument(help="Leaf ID, prefix, branch, or tag", autocompletion=_complete_references)],
     paths: Annotated[list[Path], typer.Argument(help="Files or directories to restore; at least one path is required")],
     discard: Annotated[
-        bool, typer.Option("--discard", help="Discard changes on these paths, keeping them in the trash; leave other files untouched"),
+        bool, typer.Option("--discard", help="Discard tracked changes on these paths, keeping them in the trash; leave other files untouched"),
     ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
 ) -> None:
@@ -2359,7 +2321,6 @@ def file_restore(
 
 
 @file_app.command(name="export")
-@app.command(name="export")
 def export_command(
     commit: Annotated[
         str,
@@ -2419,7 +2380,6 @@ def _archive_plan_json(plan: ArchivePlan, *, dry_run: bool) -> dict[str, Any]:
 
 
 @leaf_app.command(name="archive")
-@app.command(name="archive")
 def archive_command(
     output: Annotated[
         Path,
@@ -2464,7 +2424,6 @@ def archive_command(
 
 
 @file_app.command(name="cat")
-@app.command(name="cat")
 def cat_command(
     commit: Annotated[
         str,
@@ -2482,7 +2441,6 @@ def cat_command(
 
 
 @leaf_app.command(name="prune")
-@app.command()
 def prune(
     start_tag: Annotated[
         str | None,
@@ -2542,10 +2500,9 @@ def prune(
         f"({result.reclaimable_bytes} bytes) become reclaimable"
     )
     if not dry_run and result.reclaimable_objects:
-        typer.echo("Run 'sprout gc' to reclaim object storage")
+        typer.echo("Run 'sprout maintenance gc' to reclaim object storage")
 
 
-@app.command(name="trash")
 def trash(
     action: Annotated[str, typer.Argument(help="list, show, restore, or purge")] = "list",
     item_id: Annotated[str | None, typer.Argument(help="Exact trash item ID")] = None,
@@ -2582,18 +2539,8 @@ def trash(
     if action == "restore":
         typer.echo("Restore checked; no changes applied" if dry_run else "Restored; working files unchanged")
     if action == "purge":
-        typer.echo("Would permanently discard recovery; run gc afterwards to reclaim objects" if dry_run else
-                   "Permanently discarded recovery; run gc to reclaim unreferenced objects")
-
-
-@trash_app.callback(invoke_without_command=True)
-def trash_group(
-    context: typer.Context,
-    json_output: Annotated[bool, typer.Option("--json", help="Output structured JSON")] = False,
-) -> None:
-    """Manage recovery items; omitting the operation temporarily lists them."""
-    if context.invoked_subcommand is None:
-        trash(json_output=json_output)
+        typer.echo("Would permanently discard recovery; run sprout maintenance gc afterwards to reclaim objects" if dry_run else
+                   "Permanently discarded recovery; run sprout maintenance gc to reclaim unreferenced objects")
 
 
 @trash_app.command(name="list")
@@ -2635,7 +2582,6 @@ def trash_purge(
 
 
 @leaf_app.command(name="delete")
-@app.command(name="delete-commit")
 def delete_commit(
     commit: Annotated[
         str,
@@ -2684,11 +2630,10 @@ def delete_commit(
         f"({result.reclaimable_bytes} bytes) are retained in trash until permanently discarded"
     )
     if not dry_run and result.reclaimable_objects:
-        typer.echo("Use 'sprout trash' to inspect recovery data; gc keeps it until permanent deletion")
+        typer.echo("Use 'sprout trash list' to inspect recovery data; maintenance gc keeps it until permanent deletion")
 
 
 @maintenance_app.command(name="gc")
-@app.command()
 def gc(
     dry_run: Annotated[
         bool,
@@ -2737,7 +2682,6 @@ def serve() -> None:
 
 
 @maintenance_app.command(name="doctor")
-@app.command()
 def doctor(
     report: Annotated[
         bool, typer.Option("--report", help="Exit successfully even when issues are found")
@@ -2774,7 +2718,6 @@ def doctor(
 
 
 @maintenance_app.command(name="stats")
-@app.command()
 def stats(
     json_output: Annotated[
         bool, typer.Option("--json", help="Output structured JSON")
@@ -2813,8 +2756,8 @@ stash_app.command(name="list")(bud_list)
 stash_app.command(name="pop")(bud_restore)
 stash_app.command(name="drop")(bud_delete)
 
-# Temporary old entry points still execute during migration, but only canonical
-# commands are shown in normal help. TASK-125.8 removes the temporary routes.
+# Ordinary help focuses on the canonical groups; aliases remain available in
+# --help-aliases and shell completion.
 for _command in app.registered_commands:
     _name = _command.name or _command.callback.__name__.replace('_', '-')
     _command.hidden = _name not in _CANONICAL_COMMANDS

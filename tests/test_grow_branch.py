@@ -99,17 +99,17 @@ def test_cli_reports_the_kept_bud(tmp_path, monkeypatch):
     repo, file, first, _ = project(tmp_path)
     monkeypatch.chdir(repo.root)
     file.write_bytes(b'unsaved')
-    result = CliRunner().invoke(app, ['branch', 'rethink', first, '--switch', '--keep-changes', '--json'])
+    result = CliRunner().invoke(app, ['branch', 'create', 'rethink', first, '--switch', '--json'])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload['name'] == 'rethink' and payload['current'] is True
     assert payload['bud']['changes'] == [{'state': 'modified', 'path': 'asset.bin'}]
 
 
-def test_cli_requires_switch_and_a_name(tmp_path, monkeypatch):
+def test_cli_refuses_removed_implicit_branch_and_keep_changes_routes(tmp_path, monkeypatch):
     repo, _, first, _ = project(tmp_path)
     monkeypatch.chdir(repo.root)
-    for args in (['branch', 'rethink', '--keep-changes'], ['branch', '--keep-changes']):
-        with pytest.raises(SproutError, match='--keep-changes requires'):
-            CliRunner().invoke(app, args, catch_exceptions=False)
+    for args in (['branch', 'rethink', '--keep-changes'], ['branch', '--keep-changes'],
+                 ['branch', 'create', 'rethink', '--switch', '--keep-changes']):
+        assert CliRunner().invoke(app, args).exit_code != 0
     assert 'rethink' not in {name for name, _commit, _comment in repo.branches()}

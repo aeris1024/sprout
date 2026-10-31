@@ -595,7 +595,7 @@ def test_create_branch_rejects_omitted_start_point_on_restored_snapshot(
 
     with pytest.raises(
         SproutError,
-        match=r"specify the start point explicitly \(example: sprout branch NAME ",
+        match=r"specify the start point explicitly \(example: sprout branch create NAME ",
     ):
         repo.create_branch("rethink")
 
@@ -625,7 +625,7 @@ def test_create_branch_switch_rolls_back_branch_on_failure(
         SproutError,
         match=(
             r"uncommitted changes; commit them first, or discard "
-            r"tracked changes with switch/restore --discard before creating and switching"
+            r"tracked changes with go --discard before creating and switching"
         ),
     ) as dirty:
         repo.create_branch("failed", start_point=other, switch=True)
@@ -2670,7 +2670,7 @@ def test_create_branch_uses_recorded_position_for_omitted_start_point(
     # Edits after moving keep the recorded position, unlike content matching.
     asset.write_bytes(b"edited")
 
-    with pytest.raises(SproutError, match=rf"sprout branch NAME {first[:12]}\)"):
+    with pytest.raises(SproutError, match=rf"sprout branch create NAME {first[:12]}\)"):
         repo.create_branch("rethink")
     assert all(name != "rethink" for name, _, _ in repo.branches())
 

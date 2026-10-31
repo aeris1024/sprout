@@ -307,17 +307,17 @@ def test_delete_commit_cli_requires_yes_and_supports_json(
     repo, _asset, _first, second, third = three_commits(tmp_path, monkeypatch)
     project = repo.root
 
-    help_result = invoke(["delete-commit", "--help"], project, monkeypatch)
+    help_result = invoke(['leaf', 'delete', '--help'], project, monkeypatch)
     assert help_result.exit_code == 0
     assert "--dry-run" in help_result.stdout
     assert "--yes" in help_result.stdout
 
-    unconfirmed = invoke(["delete-commit", third], project, monkeypatch)
+    unconfirmed = invoke(['leaf', 'delete', third], project, monkeypatch)
     assert unconfirmed.exit_code != 0
     assert "trash" in str(unconfirmed.exception)
     assert Repository.discover(project).resolve_commit(third) == third
 
-    dry = invoke(["delete-commit", third, "--dry-run", "--json"], project, monkeypatch)
+    dry = invoke(['leaf', 'delete', third, '--dry-run', '--json'], project, monkeypatch)
     assert dry.exit_code == 0
     payload = json.loads(dry.stdout)
     assert payload["dry_run"] is True
@@ -333,18 +333,18 @@ def test_delete_commit_cli_requires_yes_and_supports_json(
     assert payload["reclaimable_bytes"] > 0
     assert Repository.discover(project).resolve_commit(third) == third
 
-    text = invoke(["delete-commit", third, "--dry-run"], project, monkeypatch)
+    text = invoke(['leaf', 'delete', third, '--dry-run'], project, monkeypatch)
     assert text.exit_code == 0
     assert "Would delete commit" in text.stdout
     assert "unsaved changes" in text.stdout
 
-    actual = invoke(["delete-commit", third, "--yes", "--json"], project, monkeypatch)
+    actual = invoke(['leaf', 'delete', third, '--yes', '--json'], project, monkeypatch)
     assert actual.exit_code == 0
     assert json.loads(actual.stdout)["dry_run"] is False
     assert Repository.discover(project).head_commit() == second
 
     repo.create_tag("keep", second)
-    tagged = invoke(["delete-commit", "keep", "--yes", "--json"], project, monkeypatch)
+    tagged = invoke(['leaf', 'delete', 'keep', '--yes', '--json'], project, monkeypatch)
     assert tagged.exit_code != 0
     assert isinstance(tagged.exception, SproutError)
     assert tagged.exception.code == "tagged_commit"
