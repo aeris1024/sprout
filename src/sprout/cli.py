@@ -766,6 +766,7 @@ def status(
         }
         if tracked:
             payload["tracked"] = sorted(repository.tracked())
+            payload["thumbnail_source_extensions"] = repository.thumbnail_source_extensions()
             cover_id, cover_path = repository.cover_file()
             if cover_id is not None:
                 payload["cover"] = {"file_id": cover_id, "path": cover_path}

@@ -1602,6 +1602,12 @@ class Repository:
         return original_name, media_type, object_hash, size
 
     @staticmethod
+    def thumbnail_source_extensions() -> list[str]:
+        """Expose the same formats used by the automatic thumbnail renderer."""
+        Image.init()
+        return sorted(ext for ext, fmt in Image.registered_extensions().items() if fmt in COVER_FORMATS)
+
+    @staticmethod
     def _render_cover(source: Path, directory: Path) -> tuple[Path | None, str | None]:
         """Write a bounded thumbnail of an image, or return why it cannot be made."""
         try:

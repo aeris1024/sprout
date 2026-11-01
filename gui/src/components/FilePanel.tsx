@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isThumbnailSourcePath } from "../lib/sprout";
 
 interface FilePanelProps {
   tracked: string[];
@@ -12,6 +13,8 @@ interface FilePanelProps {
   onSetCover?: (path: string) => void;
   onClearCover?: () => void;
   onApplyCover?: () => void;
+  sourceExtensions?: string[];
+  coverMessage?: string;
   onClose: () => void;
 }
 
@@ -27,6 +30,8 @@ export default function FilePanel({
   onSetCover,
   onClearCover,
   onApplyCover,
+  sourceExtensions,
+  coverMessage,
   onClose,
 }: FilePanelProps) {
   const [query, setQuery] = useState("");
@@ -58,7 +63,9 @@ export default function FilePanel({
           {cover ? (
             <>
               <p className="panel-copy">{cover.path ?? "追跡を解除したファイルが指定されています。別のファイルを選んでください。"}</p>
-              <p className="panel-copy">サムネイルを指定せずに保存すると、このファイルから作ります。</p>
+              {cover.path && !isThumbnailSourcePath(cover.path, sourceExtensions) && <p className="panel-copy">現在の生成元は対応する画像の拡張子ではありません。別の画像を指定するか解除してください。</p>}
+              <p className="panel-copy">サムネイルを指定せずに次の葉を保存すると、このファイルから作ります。登録済みのサムネイルは変更しません。</p>
+              {coverMessage && <p className="panel-copy">{coverMessage}</p>}
               <div className="action-row">
                 <button className="button secondary small" onClick={onApplyCover} disabled={busy}>既存の葉へ適用</button>
                 <button className="button secondary small" onClick={onClearCover} disabled={busy}>解除</button>
@@ -79,7 +86,7 @@ export default function FilePanel({
               <span title={path}>{path}</span>
               {onSetCover && (cover?.path === path
                 ? <strong className="file-row-mark">生成元</strong>
-                : <button onClick={() => onSetCover(path)} disabled={busy} aria-label={`${path}をサムネイル自動生成元に設定`}>自動生成元に設定</button>)}
+                : isThumbnailSourcePath(path, sourceExtensions) && <button onClick={() => onSetCover(path)} disabled={busy} aria-label={`${path}をサムネイル自動生成元に設定`}>自動生成元に設定</button>)}
               <button onClick={() => onUntrack(path)} disabled={busy}>
                 追跡解除
               </button>

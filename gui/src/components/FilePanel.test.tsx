@@ -27,14 +27,14 @@ describe("FilePanel", () => {
     const onSetCover = vi.fn();
     const onClearCover = vi.fn();
     const onApplyCover = vi.fn();
-    render(<FilePanel {...props} tracked={["poster.png", "notes.md"]} cover={{ file_id: "f", path: "poster.png" }} onSetCover={onSetCover} onClearCover={onClearCover} onApplyCover={onApplyCover} />);
+    render(<FilePanel {...props} tracked={["poster.png", "other.jpg"]} cover={{ file_id: "f", path: "poster.png" }} onSetCover={onSetCover} onClearCover={onClearCover} onApplyCover={onApplyCover} />);
 
     expect(screen.queryByRole("button", { name: "poster.pngをサムネイル自動生成元に設定" })).toBeNull();
     expect(screen.getByText("生成元")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "notes.mdをサムネイル自動生成元に設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "other.jpgをサムネイル自動生成元に設定" }));
     fireEvent.click(screen.getByRole("button", { name: "既存の葉へ適用" }));
     fireEvent.click(screen.getByRole("button", { name: "解除" }));
-    expect(onSetCover).toHaveBeenCalledWith("notes.md");
+    expect(onSetCover).toHaveBeenCalledWith("other.jpg");
     expect(onApplyCover).toHaveBeenCalledOnce();
     expect(onClearCover).toHaveBeenCalledOnce();
   });
@@ -42,6 +42,16 @@ describe("FilePanel", () => {
   it("explains a cover that is no longer tracked", () => {
     render(<FilePanel {...props} tracked={[]} cover={{ file_id: "f", path: null }} onSetCover={vi.fn()} onClearCover={vi.fn()} onApplyCover={vi.fn()} />);
     expect(screen.getByText(/追跡を解除したファイルが指定されています/)).toBeTruthy();
+  });
+  it("offers only supported images, follows CLI formats, and explains an unsupported current source", () => {
+    const p = { ...props, tracked: ["bad.txt", "poster.tiff", "notes.md", "photo.png"], onSetCover: vi.fn(), cover: { file_id: "f", path: "bad.txt" }, onClearCover: vi.fn(), sourceExtensions: [".tiff"] };
+    render(<FilePanel {...p} />);
+    expect(screen.getByRole("button", { name: "poster.tiffをサムネイル自動生成元に設定" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "photo.pngをサムネイル自動生成元に設定" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "notes.mdをサムネイル自動生成元に設定" })).toBeNull();
+    expect(screen.getByText(/現在の生成元は対応する画像の拡張子ではありません/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "解除" }));
+    expect(p.onClearCover).toHaveBeenCalledOnce();
   });
 
   it("keeps the full long path readable and its row actions usable", () => {

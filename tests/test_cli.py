@@ -1419,6 +1419,7 @@ def test_structured_json_output_for_major_commands(tmp_path: Path, monkeypatch) 
         "at_branch_tip": True,
         "changes": [{"state": "added", "path": "作品/絵.psd"}],
         "tracked": ["作品/絵.psd"],
+        "thumbnail_source_extensions": Repository.thumbnail_source_extensions(),
         "untracked": [],
     }
 
@@ -1913,3 +1914,19 @@ def test_diff_json_is_read_only(tmp_path: Path, monkeypatch) -> None:
     assert invoke(["status", "--json"], project, monkeypatch).stdout == before
     assert json.loads(invoke(["file", "diff", second, second, "--json"], project, monkeypatch).stdout) == []
     assert (project / "changed.bin").read_bytes() == b"updated"
+
+
+def test_status_thumbnail_source_extensions_follow_renderer(tmp_path: Path, monkeypatch) -> None:
+    import sprout.repository as repository_module
+
+    project = tmp_path / "project"
+    assert invoke(["init", str(project)], tmp_path, monkeypatch).exit_code == 0
+    result = invoke(["status", "--tracked", "--json"], project, monkeypatch)
+    extensions = json.loads(result.stdout)["thumbnail_source_extensions"]
+    assert ".png" in extensions and ".bmp" in extensions
+    assert ".psd" not in extensions
+    monkeypatch.setattr(repository_module, "COVER_FORMATS", {"TIFF"})
+    result = invoke(["status", "--tracked", "--json"], project, monkeypatch)
+    extensions = json.loads(result.stdout)["thumbnail_source_extensions"]
+    assert ".tif" in extensions and ".tiff" in extensions
+    assert ".png" not in extensions

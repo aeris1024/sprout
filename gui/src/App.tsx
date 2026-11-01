@@ -124,6 +124,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH.default);
   const [initCandidate, setInitCandidate] = useState("");
+  const [coverAssessment, setCoverAssessment] = useState<{ project: string; path: string | null; message: string } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const closeNotice = useCallback(() => setNotice(null), []);
   const [busy, setBusy] = useState(false);
@@ -375,13 +376,50 @@ function App() {
     });
   }
 
+  const coverGuidance = "登録済みのサムネイルは変更しません。次の葉をサムネイル未指定で保存すると、生成元が対応する画像なら自動で作ります。";
+
+  function coverPlanSummary(plan: CoverApplyResult, completed = false): string {
+    const reasons = new Map<string, number>();
+    for (const item of plan.skipped) reasons.set(item.reason, (reasons.get(item.reason) ?? 0) + 1);
+    const skipped = [...reasons].map(([reason, count]) => `${coverReasonLabel(reason)} ${count}件`).join("、");
+    return `${completed ? "作成済み" : "適用可能"} ${plan.applied.length}件・登録済みで維持 ${plan.kept}件・スキップ ${plan.skipped.length}件${skipped ? `（${skipped}）` : ""}`;
+  }
+
+  async function offerCoverApplication(path: string | null, prefix = "") {
+    // The source has already been saved. A failed assessment must not imply that it was rolled back.
+    const plan = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply", "--dry-run"], sproutProgram);
+    const summary = coverPlanSummary(plan);
+    setCoverAssessment({ project: projectDir, path, message: summary });
+    const advice = `${prefix}${summary}。${coverGuidance}`;
+    if (plan.applied.length === 0) {
+      setNotice({ code: "cover_nothing", message: `サムネイルを作れる葉はありません。${advice}`, details: {}, kind: plan.skipped.length ? "warning" : "success" });
+      return;
+    }
+    if (!await confirmDialog(`${advice}\nサムネイルのない ${plan.applied.length}件の葉に適用しますか？キャンセルしても生成元の指定は残ります。`, {
+      title: "既存の葉へ適用", kind: "warning", okLabel: "適用", cancelLabel: "キャンセル",
+    })) {
+      setNotice({ code: "cover_set", message: `既存の葉への適用は行いませんでした。${advice}`, details: {}, kind: plan.skipped.length ? "warning" : "success" });
+      return;
+    }
+    const result = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply"], sproutProgram);
+    await fetchWorkspace(projectDir);
+    const appliedSummary = coverPlanSummary(result, true);
+    setCoverAssessment({ project: projectDir, path, message: `${result.applied.length}件に作成しました。${appliedSummary}` });
+    setNotice({ code: "cover_applied", message: `${result.applied.length}件の葉にサムネイルを作りました。${appliedSummary}。${coverGuidance}`, details: {}, kind: result.skipped.length ? "warning" : "success" });
+  }
+
   function setCover(path: string) {
     void execute(async () => {
       const result = await runSprout<{ path: string; problem: string | null }>(projectDir, ["leaf", "thumbnail", "source", "set", ...fileArguments([path])], sproutProgram);
       await fetchWorkspace(projectDir);
-      setNotice(result.problem
-        ? { code: "cover_set", message: `${result.path} をサムネイル自動生成元にしました。ただし今はサムネイルを作れません: ${coverReasonLabel(result.problem)}`, details: {}, kind: "warning" }
-        : { code: "cover_set", message: `${result.path} をサムネイル自動生成元にしました`, details: {}, kind: "success" });
+      const prefix = `${result.path} をサムネイル自動生成元にしました。${result.problem ? `今はサムネイルを作れません: ${coverReasonLabel(result.problem)}。` : ""}`;
+      setCoverAssessment({ project: projectDir, path: result.path, message: prefix });
+      try {
+        await offerCoverApplication(result.path, prefix);
+      } catch (error) {
+        const cause = normalizeCliError(error);
+        throw { ...cause, message: `${prefix}適用の確認・実行を完了できませんでした: ${cause.message}` };
+      }
     });
   }
 
@@ -389,24 +427,13 @@ function App() {
     void execute(async () => {
       await runSprout(projectDir, ["leaf", "thumbnail", "source", "clear"], sproutProgram);
       await fetchWorkspace(projectDir);
+      setCoverAssessment(null);
       setNotice({ code: "cover_cleared", message: "サムネイル自動生成元を解除しました", details: {}, kind: "success" });
     });
   }
 
   function applyCover() {
-    void execute(async () => {
-      const plan = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply", "--dry-run"], sproutProgram);
-      if (plan.applied.length === 0) {
-        setNotice({ code: "cover_nothing", message: `サムネイルを作れる葉はありません（登録済み ${plan.kept}件・対象外 ${plan.skipped.length}件）`, details: {}, kind: "success" });
-        return;
-      }
-      if (!await confirmDialog(`サムネイルのない ${plan.applied.length}件の葉に、サムネイル自動生成元からサムネイルを作ります。登録済みのサムネイルは変更しません。続行しますか？`, {
-        title: "既存の葉へ適用", kind: "warning", okLabel: "適用", cancelLabel: "キャンセル",
-      })) return;
-      const result = await runSprout<CoverApplyResult>(projectDir, ["leaf", "thumbnail", "source", "apply"], sproutProgram);
-      await fetchWorkspace(projectDir);
-      setNotice({ code: "cover_applied", message: `${result.applied.length}件の葉にサムネイルを作りました`, details: {}, kind: "success" });
-    });
+    void execute(() => offerCoverApplication(status?.cover?.path ?? null));
   }
 
   function chooseTrackFiles(directory: boolean) {
@@ -1161,7 +1188,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
     if (maintenanceOpen) return <MaintenancePanel stats={repositoryStats} gcResult={gcResult} doctor={doctorReport} busy={busy} onCollect={collectGarbage} onCheck={checkRepository} onClose={() => setMaintenanceOpen(false)} />;
     if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} picking={comparisonPicking} onPick={setComparisonPicking} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
-      return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} cover={status?.cover} onSetCover={setCover} onClearCover={clearCover} onApplyCover={applyCover} onClose={() => setFilesOpen(false)} />;
+      return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} cover={status?.cover} sourceExtensions={status?.thumbnail_source_extensions} coverMessage={coverAssessment?.project === projectDir && coverAssessment.path === status?.cover?.path ? coverAssessment.message : undefined} onSetCover={setCover} onClearCover={clearCover} onApplyCover={applyCover} onClose={() => setFilesOpen(false)} />;
     }
     if (selection?.kind === "commit") {
       if (!commitDetail || commitDetail.id !== selection.id) {

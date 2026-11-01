@@ -1201,17 +1201,67 @@ describe("Sprout GUI operations", () => {
       expect(await screen.findByText(/bbbbbbbbbbbb を保存しました。サムネイルは作れませんでした: サムネイル自動生成元が対応する画像ではありません/)).toBeTruthy();
     });
 
-    it("sets a cover from the file panel and reports a file that cannot make one", async () => {
-      const user = userEvent.setup();
-      render(<App />);
-      await openWorkspace(user);
+    it("sets an image source, assesses existing leaves and reports why it cannot make one", async () => {
+      const user = userEvent.setup(); render(<App />);
+      const imageStatus = { ...cleanStatus, tracked: ["poster.png"] };
+      await openWorkspace(user, imageStatus);
       await user.click(screen.getByRole("button", { name: "ファイル" }));
-      const tracked = (cleanStatus.tracked ?? [])[0];
-      mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: tracked, problem: "cover_not_image" });
-      mockWorkspace();
-      await user.click(screen.getByRole("button", { name: `${tracked}をサムネイル自動生成元に設定` }));
-      expect(await screen.findByText(new RegExp(`今はサムネイルを作れません: サムネイル自動生成元が対応する画像ではありません`))).toBeTruthy();
-      expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "source", "set", tracked], "");
+      mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: "poster.png", problem: "cover_not_image" });
+      mockWorkspace({ ...imageStatus, cover: { file_id: "f", path: "poster.png" } });
+      mocks.runSprout.mockResolvedValueOnce({ dry_run: true, applied: [], skipped: [{ commit_id: "a", reason: "cover_not_image" }], kept: 1 });
+      await user.click(screen.getByRole("button", { name: "poster.pngをサムネイル自動生成元に設定" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("今はサムネイルを作れません");
+      expect(screen.getByRole("alert").textContent).toContain("登録済みで維持 1件");
+      expect(screen.getByRole("alert").textContent).toContain("スキップ 1件");
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "thumbnail", "source", "apply", "--dry-run"], "");
+    });
+
+    it.each([false, true])("offers applying immediately after choosing a source and preserves it on cancel: %s", async (apply) => {
+      const user = userEvent.setup(); render(<App />);
+      const imageStatus = { ...cleanStatus, tracked: ["poster.png"] };
+      await openWorkspace(user, imageStatus);
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: "poster.png", problem: null });
+      const withCover = { ...imageStatus, cover: { file_id: "f", path: "poster.png" } };
+      mockWorkspace(withCover);
+      const plan = { dry_run: true, applied: [commitEntry.id], skipped: [], kept: 0 };
+      mocks.runSprout.mockResolvedValueOnce(plan);
+      mocks.confirm.mockResolvedValueOnce(apply);
+      if (apply) {
+        mocks.runSprout.mockResolvedValueOnce({ ...plan, dry_run: false });
+        mockWorkspace(withCover);
+      }
+      await user.click(screen.getByRole("button", { name: "poster.pngをサムネイル自動生成元に設定" }));
+      await screen.findByText(apply ? /1件の葉にサムネイルを作りました/ : /既存の葉への適用は行いませんでした/);
+      expect(mocks.confirm.mock.calls[0][0]).toContain("適用可能 1件");
+      expect(mocks.confirm.mock.calls[0][0]).toContain("登録済みのサムネイルは変更しません");
+      expect(screen.getByText("生成元")).toBeTruthy();
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "leaf thumbnail source apply")).toBe(apply);
+    });
+
+    it("reports already registered leaves without asking or applying when none are eligible", async () => {
+      const user = userEvent.setup(); render(<App />);
+      await openWorkspace(user, { ...cleanStatus, cover: { file_id: "f", path: "poster.png" } });
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      mocks.runSprout.mockResolvedValueOnce({ dry_run: true, applied: [], skipped: [], kept: 3 });
+      await user.click(screen.getByRole("button", { name: "既存の葉へ適用" }));
+      expect((await screen.findByText(/サムネイルを作れる葉はありません/)).textContent).toContain("登録済みで維持 3件");
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      expect(mocks.runSprout.mock.calls.some((call) => call[1].join(" ") === "leaf thumbnail source apply")).toBe(false);
+    });
+
+    it("keeps the saved source and explains a failed assessment", async () => {
+      const user = userEvent.setup(); render(<App />);
+      await openWorkspace(user, { ...cleanStatus, tracked: ["poster.png"] });
+      await user.click(screen.getByRole("button", { name: "ファイル" }));
+      mocks.runSprout.mockResolvedValueOnce({ file_id: "f", path: "poster.png", problem: null });
+      mockWorkspace({ ...cleanStatus, tracked: ["poster.png"], cover: { file_id: "f", path: "poster.png" } });
+      mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "locked", details: {} });
+      await user.click(screen.getByRole("button", { name: "poster.pngをサムネイル自動生成元に設定" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("poster.png をサムネイル自動生成元にしました");
+      expect(screen.getByRole("alert").textContent).toContain("適用の確認・実行を完了できませんでした");
+      expect(screen.getByText("生成元")).toBeTruthy();
     });
 
     it("applies to existing leaves only after confirmation", async () => {

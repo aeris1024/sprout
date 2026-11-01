@@ -19,6 +19,13 @@ export interface SproutStatus {
   untracked?: string[];
   /** File thumbnails are made from; path is null once it is no longer tracked. */
   cover?: { file_id: string; path: string | null };
+  thumbnail_source_extensions?: string[];
+}
+
+/** Older CLIs do not advertise their renderer formats. */
+export function isThumbnailSourcePath(path: string, extensions = [".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".webp", ".bmp", ".dib"]): boolean {
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 && extensions.includes(path.slice(dot).toLowerCase());
 }
 
 export interface CoverApplyResult {
