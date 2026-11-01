@@ -25,13 +25,18 @@ Do not edit Backlog task, draft, document, decision, or milestone markdown files
 
 ## Git Workflow
 
-- 作業ごとにブランチを作成し、`main` で直接作業しない。PRは作らない。
+- `main` は最新リリースの状態を保持する。通常の開発変更は取り込まず、ユーザーからリリースを明示的に指示されたときだけ更新する。
+- `develop` は次のリリースに向けた開発の統合先とする。初回は最新リリースの `main` から作成する。
+- 作業ごとに最新の `develop` からブランチを作成し、`main` と `develop` では直接作業しない。PRは作らない。
 - ブランチ名は `task-<番号>-<短い説明>` とする。タスクがない作業は `<短い説明>` だけでよい。
   - 例: `task-42-add-export-command`
 - コミットは意味のある単位で作る。作業途中の「修正」「微調整」コミットは、マージ前にまとめる。
-- 完了したら `main` へ `git merge --ff-only` で取り込み、push して作業ブランチを削除する。
-  - `main` が先に進んでいる場合は、作業ブランチを `main` に rebase してから取り込む。
+- 完了したら `develop` へ `git merge --ff-only` で取り込み、`develop` を push して作業ブランチを削除する。通常の作業完了時に `main` は更新しない。
+  - `develop` が先に進んでいる場合は、作業ブランチを最新の `develop` に rebase してから取り込む。
+- リリースを指示されたら、検証済みの `develop` を `main` へ `git merge --ff-only` で取り込み、指定されたバージョンのタグを付けて `main` とタグを push する。
+  - `main` が先に進んでいて fast-forward できない場合は、差分を確認して `develop` に反映し、再検証してからリリースする。
+  - リリース済みのタグは移動・上書きしない。
 - コミット前に、テストが成功していることと、意図しない変更がないことを確認する。
 - コミットメッセージは命令形の短い英語で書く。Backlog のタスクがある場合は先頭にタスク番号を付ける。
   - 例: `TASK-42 Add shell completion for branch commands`
-- push 済みの `main` の履歴は書き換えない。force push が必要な場合は、実行前にユーザーへ確認する。
+- push 済みの `main` と `develop` の履歴は書き換えない。force push が必要な場合は、実行前にユーザーへ確認する。
