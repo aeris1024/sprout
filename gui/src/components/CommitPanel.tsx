@@ -32,6 +32,7 @@ interface CommitPanelProps {
   onGo: (commitId: string) => void;
   onGrow: (commitId: string, branchName: string) => void;
   onSetThumbnail: (commitId: string) => void;
+  onDeleteThumbnail: (commitId: string) => void;
   onUpdateMessage: (commitId: string, message: string) => void;
   onExport: (commitId: string, paths?: string[]) => void;
   onRestoreFiles: (commitId: string, paths: string[]) => void;
@@ -55,6 +56,7 @@ export default function CommitPanel({
   onGo,
   onGrow,
   onSetThumbnail,
+  onDeleteThumbnail,
   onUpdateMessage,
   onExport,
   onRestoreFiles,
@@ -211,6 +213,7 @@ export default function CommitPanel({
               <button className="button secondary" role="menuitem" onClick={() => { closeMenu(true); onSetThumbnail(detail.id); }} title="Ctrl+Vでクリップボードの画像も登録できます">
                 {detail.thumbnail ? "サムネイルを変更" : "サムネイルを登録"}
               </button>
+              {detail.thumbnail && <button className="button danger" role="menuitem" onClick={() => { closeMenu(true); onDeleteThumbnail(detail.id); }} title="サムネイルだけを削除します。葉と保存済みファイルは残ります。">サムネイルを削除</button>}
               <button className="button secondary" role="menuitem" onClick={() => { closeMenu(true); onExport(detail.id); }}>ファイルを取り出す</button>
               <button
                 className="button danger"

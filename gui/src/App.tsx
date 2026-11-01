@@ -669,6 +669,18 @@ function App() {
     });
   }
 
+  function deleteCommitThumbnail(commitId: string) {
+    void execute(async () => {
+      if (!await confirmDialog("この葉のサムネイルだけを削除します。葉、保存済みファイル、プレビュー、タグ、サムネイル自動生成元は残ります。削除しますか？", {
+        title: "サムネイルを削除", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル",
+      })) return;
+      await runSprout(projectDir, ["leaf", "thumbnail", "delete", commitId], sproutProgram);
+      await fetchWorkspace(projectDir);
+      setCommitDetail(await runSprout<CommitDetail>(projectDir, ["leaf", "show", commitId], sproutProgram));
+      setNotice({ code: "thumbnail_deleted", message: `${shortId(commitId)} のサムネイルを削除しました。葉と保存済みファイルは残っています`, details: {}, kind: "success" });
+    });
+  }
+
   async function applyCommitThumbnail(commitId: string, path: string) {
     await runSprout(projectDir, ["leaf", "thumbnail", "set", commitId, path], sproutProgram);
     await fetchWorkspace(projectDir);
@@ -1211,7 +1223,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
           </section>
         );
       }
-      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => { setComparisonPicking("target"); setComparison({ source, target: "" }); }} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
+      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onDeleteThumbnail={deleteCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => { setComparisonPicking("target"); setComparison({ source, target: "" }); }} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
           await runSprout(projectDir, ["leaf", "preview", "edit", commitDetail.id, id,
             `--name=${data.display_name}`, `--description=${data.description}`], sproutProgram);

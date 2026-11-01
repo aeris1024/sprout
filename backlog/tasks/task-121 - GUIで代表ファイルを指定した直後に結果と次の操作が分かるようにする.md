@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-31 05:45'
-updated_date: '2026-11-01 05:20'
+updated_date: '2026-11-01 05:24'
 labels:
   - gui
   - usability
@@ -50,6 +50,8 @@ ordinal: 120000
 
 <!-- SECTION:NOTES:BEGIN -->
 GUI281テストとビルド成功。CLIのtest_cli/test_coverが全体回帰実行内で通過。実CLIを専用プロジェクトにつないだブラウザーで適用可能1件/登録済み1件の確認、キャンセル保持、適用後のマップ画像1→2件を検証。ネイティブTauri IPCは検証用ブリッジで置換し、実際のCLIとAppコンポーネントを使用。
+
+最終のCLI全体回帰も完了: 759 passed / 20 skipped（360.23秒）。
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

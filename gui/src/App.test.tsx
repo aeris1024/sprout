@@ -766,6 +766,44 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText("未保存の変更をつぼみに残して aaaaaaaaaaaa からブランチ rethink を作りました")).toBeTruthy();
   });
 
+  it.each(["cancel", "failure", "success"])("deletes only a tagged leaf thumbnail after confirmation: %s", async (outcome) => {
+    const user = userEvent.setup();
+    const thumbnail = { id: "delete-image", position: 0, commit_id: commitEntry.id, role: "thumbnail" as const, original_name: "poster.png", media_type: "image/png", object_hash: "delete-image-hash", size: 12, created_at: commitEntry.created_at, updated_at: commitEntry.created_at };
+    const tags = [{ name: "keep", commit_id: commitEntry.id, comment: "", created_at: commitEntry.created_at }];
+    const graph: CommitGraph = { current_commit: commitEntry.id, at_branch_tip: true, commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments: [thumbnail] }], branches: mainBranch, tags, buds: [] };
+    mocks.open.mockResolvedValueOnce(project); mockWorkspace(cleanStatus, [commitEntry], mainBranch, graph);
+    render(<App />); await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+    const detail = { ...commitEntry, branch_id: "main", branch_name: "main", files: [], attachments: [thumbnail], thumbnail };
+    mocks.runSprout.mockResolvedValueOnce(detail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "その他の操作" }));
+    expect((screen.getByRole("menuitem", { name: "この葉を削除" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("menuitem", { name: "サムネイルを削除" }) as HTMLButtonElement).disabled).toBe(false);
+    mocks.confirm.mockResolvedValueOnce(outcome !== "cancel");
+    if (outcome === "failure") mocks.runSprout.mockRejectedValueOnce({ code: "repository_locked", message: "locked", details: {} });
+    if (outcome === "success") {
+      mocks.runSprout.mockResolvedValueOnce({ deleted: true });
+      mockWorkspace(cleanStatus, [commitEntry], mainBranch, { ...graph, commits: [{ ...graph.commits[0], attachments: [] }] });
+      mocks.runSprout.mockResolvedValueOnce({ ...detail, attachments: [], thumbnail: null });
+    }
+    const calls = mocks.runSprout.mock.calls.length;
+    await user.click(screen.getByRole("menuitem", { name: "サムネイルを削除" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "更新" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mocks.confirm.mock.calls[0][0]).toContain("サムネイルだけを削除");
+    if (outcome === "cancel") expect(mocks.runSprout).toHaveBeenCalledTimes(calls);
+    else expect(mocks.runSprout).toHaveBeenCalledWith(project, ["leaf", "thumbnail", "delete", commitEntry.id], "");
+    if (outcome === "failure") expect(screen.getByRole("alert").textContent).toContain("別のSproutの操作");
+    if (outcome === "success") {
+      await screen.findByText(/のサムネイルを削除しました/);
+      expect(document.querySelector(".leaf-image")).toBeNull();
+      expect(within(screen.getByRole("region", { name: "選択中の葉" })).getByText("なし")).toBeTruthy();
+    } else expect(document.querySelector(".leaf-image")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "その他の操作" }));
+    expect(Boolean(screen.queryByRole("menuitem", { name: "サムネイルを削除" }))).toBe(outcome !== "success");
+    expect(mocks.runSprout.mock.calls.some((call) => call[1].slice(0, 2).join(" ") === "leaf delete")).toBe(false);
+  });
+
   it("shows the sprout map with thumbnails and selected commit actions", async () => {
     const user = userEvent.setup();
     const rootId = "d".repeat(64);

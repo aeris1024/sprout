@@ -22,7 +22,7 @@ function props(): ComponentProps<typeof CommitPanel> {
   return {
     detail: { id: "first", parent_id: null, created_at: "2026-10-31T00:00:00Z", message: "作業中", note: null, note_updated_at: null, labels: [], branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] },
     projectDir: "C:/project", program: "", branches: [], tags: [], current: false, unsavedCount: 2, busy: false,
-    onGo: vi.fn(), onGrow: vi.fn(), onSetThumbnail: vi.fn(), onUpdateMessage: vi.fn(), onExport: vi.fn(), onRestoreFiles: vi.fn(), onCompare: vi.fn(), onDelete: vi.fn(), onClose: vi.fn(),
+    onGo: vi.fn(), onGrow: vi.fn(), onSetThumbnail: vi.fn(), onDeleteThumbnail: vi.fn(), onUpdateMessage: vi.fn(), onExport: vi.fn(), onRestoreFiles: vi.fn(), onCompare: vi.fn(), onDelete: vi.fn(), onClose: vi.fn(),
     previews: { add: vi.fn(), paste: vi.fn(), pastePaths: vi.fn(), replace: vi.fn(), remove: vi.fn(), export: vi.fn(), order: vi.fn() },
     annotations: { onSaveNote: vi.fn(), onAddLabel: vi.fn(), onRemoveLabel: vi.fn(), onCreateTag: vi.fn(), onSetTagComment: vi.fn(), onDeleteTag: vi.fn() },
   };
