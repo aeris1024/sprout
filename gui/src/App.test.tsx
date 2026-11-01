@@ -2119,6 +2119,18 @@ describe("Sprout GUI operations", () => {
       expect(await screen.findByText("Earlier failure")).toBeTruthy();
     }
 
+    it("keeps an error when selecting a leaf and closes it from the keyboard", async () => {
+      const user = userEvent.setup();
+      await openFocusWorkspace(user);
+      await showNotice(user);
+      mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, thumbnail: null, attachments: [], files: [] });
+      await user.click(screen.getByRole("button", { name: "Initial design" }));
+      expect(screen.getByRole("alert").textContent).toContain("Earlier failure");
+      screen.getByRole("button", { name: "通知を閉じる" }).focus();
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
     it("updates changes, tracking, the top bar and the map on focus, and ignores blur", async () => {
       const user = userEvent.setup();
       await openFocusWorkspace(user);
@@ -2251,7 +2263,7 @@ describe("Sprout GUI operations", () => {
       expect(saveState()).toBe("未保存の変更 2");
     });
 
-    it("warns once about repeated failures, does not block operations, and clears after success", async () => {
+    it("warns once about repeated failures, does not block operations, and keeps warnings until dismissed", async () => {
       const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
       await openFocusWorkspace(user);
@@ -2281,7 +2293,8 @@ describe("Sprout GUI operations", () => {
       mockWorkspace();
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
       await focus();
-      await waitFor(() => expect(screen.queryByText(/最新の状態を取得できませんでした/)).toBeNull());
+      expect(screen.getByText(/最新の状態を取得できませんでした/)).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "通知を閉じる" }));
     });
 
     it("does not replace a notice the user is reading when the refetch fails", async () => {

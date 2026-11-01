@@ -221,6 +221,7 @@ export interface SproutCliError {
   details: Record<string, unknown>;
   /** The message is already in the GUI's words and is not to be looked up again. */
   translated?: boolean;
+  originalMessage?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -258,10 +259,10 @@ export function normalizeCliError(error: unknown): SproutCliError {
     }
     // Errors pass through here again on their way to the notice, some with text added.
     if (candidate.translated === true) {
-      return { code, message: candidate.message, details, translated: true };
+      return { code, message: candidate.message, details, translated: true, ...(typeof candidate.originalMessage === "string" && { originalMessage: candidate.originalMessage }) };
     }
     const message = translateCliError(code, candidate.message, details);
-    return { code, message, details, ...(message !== candidate.message && { translated: true }) };
+    return { code, message, details, ...(message !== candidate.message && { translated: true, originalMessage: candidate.message }) };
   }
 
   return {

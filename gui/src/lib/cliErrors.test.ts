@@ -59,6 +59,7 @@ describe("CLI errors reaching the GUI", () => {
       message: "葉「abc」が見つかりません",
       details: { commit_id: "abc" },
       translated: true,
+      originalMessage: "unknown commit: abc",
     });
   });
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import NoticeView from "./components/Notice";
 import { confirm as confirmDialog, open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
@@ -123,6 +124,7 @@ function App() {
   const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH.default);
   const [initCandidate, setInitCandidate] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const closeNotice = useCallback(() => setNotice(null), []);
   const [busy, setBusy] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [thumbnailPath, setThumbnailPath] = useState("");
@@ -166,7 +168,7 @@ function App() {
     operationActive.current = true;
     operationsStarted.current += 1;
     setBusy(true);
-    setNotice(null);
+    setNotice((current) => current?.kind === "success" ? null : current);
     try {
       await operation();
       return true;
@@ -273,7 +275,6 @@ function App() {
     void fetchWorkspace(projectDir, unchanged)
       .then(() => {
         refresh.failed = false;
-        setNotice((current) => current?.code === FOCUS_REFRESH_FAILED ? null : current);
       })
       .catch((error) => {
         // Warn once per failure streak, and never over a notice the user is still reading.
@@ -1122,7 +1123,6 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
-  const noticePath = typeof notice?.details.path === "string" ? notice.details.path : null;
   const workspaceOpen = Boolean(projectDir && status && !initCandidate);
   // Follows the order of sidePanel() so drops and pastes act on what is actually displayed.
   const displayedPanel = trashOpen ? "trash" : maintenanceOpen ? "maintenance" : comparison ? "compare" : filesOpen ? "files"
@@ -1230,7 +1230,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
       {busy && <div className="loading-bar" aria-label="操作中" />}
       {hoverDestination && <div className={`drop-indicator ${hoverDestination.kind}`} role="status">{hoverDestination.message}</div>}
-      {notice && <div className={`notice ${notice.kind}`} role="alert"><div><strong>{notice.kind === "error" ? "操作を完了できませんでした" : notice.kind === "warning" ? "確認してください" : "完了"}</strong><p>{notice.message}</p>{noticePath && <p className="notice-path">{`対象: ${noticePath}`}</p>}</div><div className="notice-actions">{notice.code === "repository_locked" && projectDir && <button onClick={refreshProject}>再試行</button>}<button aria-label="通知を閉じる" onClick={() => setNotice(null)}>×</button></div></div>}
+      <NoticeView notice={notice} onClose={closeNotice} onRetry={projectDir ? refreshProject : undefined} />
 
       {settingsOpen && <section className="settings-panel" aria-label="CLI設定"><div><h2>Sprout CLI</h2><p>空欄の場合はPATH上のsproutを使用します。</p></div><input value={sproutProgram} onChange={(event) => setSproutProgram(event.currentTarget.value)} placeholder="例: C:\\Tools\\sprout.exe" aria-label="Sprout CLIのパス" disabled={busy} /><button className="button secondary" onClick={saveCliSetting} disabled={busy}>保存</button></section>}
 
