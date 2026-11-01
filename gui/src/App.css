@@ -349,6 +349,10 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .leaf.compare-target .leaf-frame { stroke: var(--success); stroke-width: 4; }
 .compare-badge rect { fill: var(--panel); stroke: var(--ink); }
 .compare-badge text { fill: var(--ink); }
+.compare-path { min-width: 0; font-size: 12px; }
+.compare-path summary { cursor: pointer; }
+.compare-path summary span { display: inline-block; max-width: calc(100% - 18px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.compare-path p { overflow-wrap: anywhere; margin: 6px 0; }
 .snapshot-files { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
 .snapshot-file-list { list-style: none; padding: 0; margin: 0; }
 .snapshot-file-list .snapshot-file-list { padding-left: 12px; border-left: 1px solid var(--line); }
