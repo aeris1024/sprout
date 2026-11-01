@@ -141,6 +141,7 @@ function Badge({ className, x, y, text, measure }: { className: string; x: numbe
 export type MapSelection = { kind: "commit" | "bud" | "branch"; id: string } | { kind: "unsaved" } | null;
 
 interface SproutMapProps {
+  comparison?: { source: string; target: string } | null;
   graph: CommitGraph;
   selection: MapSelection;
   unsavedCount: number;
@@ -153,6 +154,7 @@ interface SproutMapProps {
 }
 
 export default function SproutMap({
+  comparison,
   graph,
   selection,
   unsavedCount,
@@ -457,6 +459,9 @@ export default function SproutMap({
             </g>
           ))}
           {layout.leaves.map((leaf) => {
+            const compareSource = comparison?.source === leaf.commit.id;
+            const compareTarget = comparison?.target === leaf.commit.id;
+            const compareLabel = compareSource && compareTarget ? "比較元・比較先" : compareSource ? "比較元" : compareTarget ? "比較先" : "";
             const here = leaf.commit.id === layout.currentId;
             const selected = leaf.commit.id === selectedId;
             const thumbnail = leaf.commit.attachments.find(
@@ -466,11 +471,12 @@ export default function SproutMap({
             return (
               <g
                 key={leaf.commit.id}
-                className={`leaf${here ? " here" : ""}${selected ? " selected" : ""}${searchText ? (matchIds.has(leaf.commit.id) ? " match" : " dimmed") : ""}`}
+                className={`leaf${here ? " here" : ""}${selected ? " selected" : ""}${compareSource ? " compare-source" : ""}${compareTarget ? " compare-target" : ""}${searchText ? (matchIds.has(leaf.commit.id) ? " match" : " dimmed") : ""}`}
                 style={laneStyle(leaf.lane)}
                 role="button"
                 {...nodeProps(`commit:${leaf.commit.id}`)}
                 aria-label={leaf.commit.message}
+                aria-description={compareLabel || undefined}
                 aria-pressed={selected}
                 onClick={() => onSelect(leaf.commit.id)}
                 onKeyDown={(event) => onKey(event, () => onSelect(leaf.commit.id))}
@@ -509,6 +515,7 @@ export default function SproutMap({
                 {leafMarks(leaf) && <Badge className="marks-badge" x={leaf.leafX + MAP.leafWidth - 4 - badgeWidth(leafMarks(leaf), measureChip)} y={top + MAP.leafHeight - 22} text={leafMarks(leaf)} measure={measureChip} />}
                 {here && <Badge className="here-badge" {...hereBadgePosition(leaf.leafX, top, leaf.tags[0], measureChip)} text="いまここ" measure={measureChip} />}
                 {selected && <Badge className="selected-badge" x={leaf.leafX - 6} y={top + MAP.leafHeight + MAP.caption - 2} text="選択中" measure={measureChip} />}
+                {compareLabel && <Badge className="compare-badge" x={leaf.leafX + 4} y={top + 4} text={compareLabel} measure={measureChip} />}
               </g>
             );
           })}

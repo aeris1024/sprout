@@ -108,6 +108,7 @@ function App() {
   const [commitLoadError, setCommitLoadError] = useState<{ id: string; error: SproutCliError } | null>(null);
   const [selection, setSelection] = useState<MapSelection>(null);
   const [comparison, setComparison] = useState<{ source: string; target: string } | null>(null);
+  const [comparisonPicking, setComparisonPicking] = useState<"source" | "target">("target");
   useEffect(() => { setComparison(null); }, [projectDir]);
   const [filesOpen, setFilesOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -490,7 +491,7 @@ function App() {
     }
     setTrashOpen(false);
     setMaintenanceOpen(false);
-    if (comparison) { setComparison({ ...comparison, target: commitId }); return; }
+    if (comparison) { setComparison({ ...comparison, [comparisonPicking]: commitId }); return; }
     setSelection({ kind: "commit", id: commitId });
     setFilesOpen(false);
     setCommitLoadError(null);
@@ -1158,7 +1159,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
   function sidePanel() {
     if (trashOpen) return <TrashPanel items={trashItems} busy={busy} onInspect={inspectTrash} onRestore={restoreTrash} onPurge={purgeTrash} onClose={() => setTrashOpen(false)} />;
     if (maintenanceOpen) return <MaintenancePanel stats={repositoryStats} gcResult={gcResult} doctor={doctorReport} busy={busy} onCollect={collectGarbage} onCheck={checkRepository} onClose={() => setMaintenanceOpen(false)} />;
-    if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
+    if (comparison) return <ComparePanel projectDir={projectDir} program={sproutProgram} commits={graph.commits} source={comparison.source} target={comparison.target} busy={busy} picking={comparisonPicking} onPick={setComparisonPicking} onChange={(source, target) => setComparison({ source, target })} onClose={() => setComparison(null)} />;
     if (filesOpen) {
       return <FilePanel tracked={tracked} untracked={untracked} busy={busy} onAddFiles={() => chooseTrackFiles(false)} onAddFolder={() => chooseTrackFiles(true)} onTrack={(path) => trackPaths([path])} onUntrack={untrackPath} cover={status?.cover} onSetCover={setCover} onClearCover={clearCover} onApplyCover={applyCover} onClose={() => setFilesOpen(false)} />;
     }
@@ -1183,7 +1184,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
           </section>
         );
       }
-      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => setComparison({ source, target: "" })} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
+      return <CommitPanel projectDir={projectDir} program={sproutProgram} detail={commitDetail} branches={graph.branches} deletedBranches={graph.deleted_branches} tags={graph.tags} current={currentCommit === commitDetail.id} unsavedCount={changes.length} busy={busy} onGo={goTo} onGrow={growBranch} onSetThumbnail={setCommitThumbnail} onUpdateMessage={updateCommitMessage} onCompare={(source) => { setComparisonPicking("target"); setComparison({ source, target: "" }); }} onRestoreFiles={restoreFiles} onExport={exportFiles} onDelete={(commitId) => void deleteCommit(commitId)} onClose={closeSelection} previews={{
         metadata: (id, data) => previewOperation(commitDetail.id, async () => {
           await runSprout(projectDir, ["leaf", "preview", "edit", commitDetail.id, id,
             `--name=${data.display_name}`, `--description=${data.description}`], sproutProgram);
@@ -1308,7 +1309,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
         <main className="workspace" style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
           <section className="map-area" aria-label="マップ">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
-            <SproutMap graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
+            <SproutMap comparison={comparison} graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
           </section>
           <PanelSplitter
             width={panelWidth}

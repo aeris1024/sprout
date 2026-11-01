@@ -344,6 +344,11 @@ input:focus, textarea:focus { border-color: var(--current); box-shadow: 0 0 0 3p
 .panel-section[aria-label="葉の比較"] .file-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; }
 .panel-section[aria-label="葉の比較"] .file-row span { overflow-wrap: anywhere; }
 .panel-section[aria-label="葉の比較"] .file-row small { grid-column: 2; color: var(--muted); }
+.compare-picker { display: grid; gap: 6px; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
+.leaf.compare-source .leaf-frame { stroke: var(--warning); stroke-width: 4; stroke-dasharray: 6 3; }
+.leaf.compare-target .leaf-frame { stroke: var(--success); stroke-width: 4; }
+.compare-badge rect { fill: var(--panel); stroke: var(--ink); }
+.compare-badge text { fill: var(--ink); }
 .snapshot-files { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
 .snapshot-file-list { list-style: none; padding: 0; margin: 0; }
 .snapshot-file-list .snapshot-file-list { padding-left: 12px; border-left: 1px solid var(--line); }

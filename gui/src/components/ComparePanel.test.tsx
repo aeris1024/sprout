@@ -7,6 +7,17 @@ vi.mock("../lib/sprout", async (original) => ({ ...await original<typeof import(
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const commits = [{ id: "a", message: "First" }, { id: "b", message: "Second" }] as CommitGraph["commits"];
 const props = { projectDir: "project", program: "sprout", commits, source: "a", target: "b", busy: false, onChange: vi.fn(), onClose: vi.fn() };
+it("switches the map picking side, swaps endpoints and formats sizes", async () => {
+  const onPick = vi.fn();
+  vi.mocked(runSprout).mockResolvedValue([{ state: "modified", path: "large.bin", old_size: 2048, new_size: 1048576 }]);
+  render(<ComparePanel {...props} picking="target" onPick={onPick} />);
+  fireEvent.click(screen.getByRole("radio", { name: "比較元をマップで選ぶ" }));
+  expect(onPick).toHaveBeenCalledWith("source");
+  fireEvent.click(screen.getByRole("button", { name: "比較元と比較先を入れ替える" }));
+  expect(props.onChange).toHaveBeenCalledWith("b", "a");
+  fireEvent.click(screen.getByRole("button", { name: "比較する" }));
+  expect(await screen.findByText("2.0 KiB → 1.0 MiB")).toBeTruthy();
+});
 it("shows direction, CLI changes and performs only a read command", async () => {
   vi.mocked(runSprout).mockResolvedValue([
     { state: "added", path: "new.bin", old_size: null, new_size: 2 },

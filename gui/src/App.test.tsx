@@ -1871,11 +1871,21 @@ describe("Sprout GUI operations", () => {
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await user.click(await screen.findByRole("button", { name: "比較元にする" }));
     await user.click(screen.getByRole("button", { name: "Second design" }));
+    expect(screen.getByRole("button", { name: "Initial design" }).classList.contains("compare-source")).toBe(true);
+    expect(screen.getByRole("button", { name: "Second design" }).classList.contains("compare-target")).toBe(true);
+    await user.click(screen.getByRole("radio", { name: "比較元をマップで選ぶ" }));
+    await user.click(screen.getByRole("button", { name: "Second design" }));
+    expect(screen.getByRole("button", { name: "Second design" }).getAttribute("aria-description")).toBe("比較元・比較先");
+    await user.click(screen.getByRole("radio", { name: "比較先をマップで選ぶ" }));
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(screen.getByRole("button", { name: "比較元と比較先を入れ替える" }));
     mocks.runSprout.mockResolvedValueOnce([]);
     await user.click(screen.getByRole("button", { name: "比較する" }));
     await screen.findByText("差分はありません");
     expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["file", "diff", commitEntry.id, "b".repeat(64)], "");
     expect(mocks.runSprout.mock.calls.map((call) => call[1][0])).toEqual(["status", "leaf", "leaf", "file"]);
+    await user.click(screen.getByRole("button", { name: "比較を閉じる" }));
+    expect(document.querySelector(".compare-source, .compare-target")).toBeNull();
   });
 
   async function openSavedFiles(user: ReturnType<typeof userEvent.setup>) {
