@@ -97,9 +97,9 @@ function mockPasteCommands(tempPath: string) {
   });
 }
 
-async function openWorkspace(user: ReturnType<typeof userEvent.setup>) {
+async function openWorkspace(user: ReturnType<typeof userEvent.setup>, status: SproutStatus = cleanStatus) {
   mocks.open.mockResolvedValueOnce(project);
-  mockWorkspace();
+  mockWorkspace(status);
   await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
   expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();
 }
@@ -259,11 +259,50 @@ describe("Sprout GUI operations", () => {
     expect(screen.getByRole("heading", { name: "未保存の変更 2件" })).toBeTruthy();
   });
 
+  it("blocks clean saves and keeps the save draft across Escape and Ctrl+S", async () => {
+    const user = userEvent.setup(); render(<App />); await openWorkspace(user);
+    const message = screen.getByRole("textbox", { name: "メッセージ" });
+    await user.type(message, "入力中");
+    const calls = mocks.runSprout.mock.calls.length;
+    await user.keyboard("{Control>}{Enter}{/Control}{Escape}{Control>}s{/Control}");
+    expect((screen.getByRole("textbox", { name: "メッセージ" }) as HTMLTextAreaElement).value).toBe("入力中");
+    expect((screen.getByRole("button", { name: "保存して葉にする" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.runSprout).toHaveBeenCalledTimes(calls);
+  });
+
+  it("consumes Escape inside menus and editors, then confirms before discarding a draft", async () => {
+    const user = userEvent.setup(); render(<App />); await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce({ ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] });
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "メッセージを編集" }));
+    await user.type(screen.getByRole("textbox", { name: "メッセージを編集" }), "下書き");
+    await user.click(screen.getByRole("button", { name: "その他の操作" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "メッセージを編集" })).toBeTruthy();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    screen.getByRole("textbox", { name: "メッセージを編集" }).focus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "メッセージを編集" })).toBeNull();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "メッセージを編集" }));
+    expect((screen.getByRole("textbox", { name: "メッセージを編集" }) as HTMLTextAreaElement).value).toBe("Initial design下書き");
+    screen.getByRole("textbox", { name: "メッセージを編集" }).focus();
+    await user.keyboard("{Escape}");
+    mocks.confirm.mockResolvedValueOnce(false);
+    await user.keyboard("{Escape}");
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
+    mocks.confirm.mockResolvedValueOnce(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("region", { name: "選択中の葉" })).toBeNull());
+  });
+
   it("commits with a selected thumbnail and reports the new id", async () => {
     const user = userEvent.setup();
     const image = "C:\\work\\preview.png";
     render(<App />);
-    await openWorkspace(user);
+    await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
     await user.type(screen.getByLabelText("メッセージ"), "Save design");
     mocks.open.mockResolvedValueOnce(image);
     await user.click(screen.getByRole("button", { name: "選択" }));
@@ -281,7 +320,7 @@ describe("Sprout GUI operations", () => {
     const tempPath = "C:\temp\sprout-gui-paste-1-0\clipboard.png";
     mockPasteCommands(tempPath);
     render(<App />);
-    await openWorkspace(user);
+    await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
     await user.type(screen.getByLabelText("メッセージ"), "Save design");
 
     const image = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
@@ -317,13 +356,13 @@ describe("Sprout GUI operations", () => {
     expect(await screen.findByText(/上限（2 MiB）を超えています/)).toBeTruthy();
 
     expect(mocks.invoke).not.toHaveBeenCalledWith("save_pasted_thumbnail", expect.anything());
-    expect((screen.getByPlaceholderText(/Ctrl\+Vで画像を貼り付け/) as HTMLInputElement).value).toBe("");
+    expect((screen.getByPlaceholderText("画像を選択") as HTMLInputElement).value).toBe("");
   });
 
   it("reports a branch grown from a past snapshot", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await openWorkspace(user);
+    await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
     await user.type(screen.getByLabelText("メッセージ"), "Alternative");
     mocks.runSprout.mockResolvedValueOnce({ id: "b".repeat(64), branch: "branch-20261028-120000", created_branch: true, message: "Alternative", removed_paths: [] });
     mockWorkspace();
@@ -334,7 +373,7 @@ describe("Sprout GUI operations", () => {
   it("blocks overlapping commands while a commit is running", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await openWorkspace(user);
+    await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
     await user.type(screen.getByLabelText("メッセージ"), "Long snapshot");
     let finishCommit: (value: unknown) => void = () => undefined;
     const pendingCommit = new Promise((resolve) => {
@@ -1154,7 +1193,7 @@ describe("Sprout GUI operations", () => {
     it("warns but keeps the save when the cover cannot make a thumbnail", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await openWorkspace(user);
+      await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
       await user.type(screen.getByLabelText("メッセージ"), "Saved");
       mocks.runSprout.mockResolvedValueOnce({ id: "bbbbbbbbbbbbbbbb", branch: "main", branch_id: "main", message: "Saved", removed_paths: [], cover: { applied: false, reason: "cover_not_image" } });
       mockWorkspace();
@@ -2150,7 +2189,8 @@ describe("Sprout GUI operations", () => {
 
     it("does not refetch or interrupt while an operation runs", async () => {
       const user = userEvent.setup();
-      await openFocusWorkspace(user);
+      render(<App />);
+      await openWorkspace(user, { ...cleanStatus, changes: [{ state: "modified", path: "design/main.psd" }] });
       const commit = deferred<unknown>();
       await user.type(screen.getByLabelText("メッセージ"), "Save design");
       mocks.runSprout.mockReturnValueOnce(commit.promise);

@@ -176,6 +176,29 @@ export default function SproutMap({
   const [panning, setPanning] = useState(false);
   const [hinted, setHinted] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [focusedNode, setFocusedNode] = useState("");
+  const nodeKeys = layout.leaves.length === 0 ? layout.rootBuds.map(({ bud }) => `bud:${bud.id}`) : [...layout.leaves.map((c) => `commit:${c.commit.id}`), ...layout.labels.flatMap((label) => label.branches.map((b) => `branch:${b.id}`)), ...graph.buds.map((b) => `bud:${b.id}`), ...(layout.pending ? ["unsaved"] : [])];
+  const selectedKey = selection ? selection.kind === "unsaved" ? "unsaved" : `${selection.kind}:${selection.id}` : "";
+  const tabNode = nodeKeys.includes(focusedNode) ? focusedNode : nodeKeys.includes(selectedKey) ? selectedKey : nodeKeys.includes(`commit:${graph.current_commit}`) ? `commit:${graph.current_commit}` : nodeKeys[0];
+  const nodeProps = (key: string) => ({
+    "data-map-node": key,
+    tabIndex: key === tabNode ? 0 : -1,
+    onFocus: () => setFocusedNode(key),
+  });
+  function moveNode(event: KeyboardEvent<HTMLElement | SVGSVGElement>) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const nodes = Array.from(event.currentTarget.querySelectorAll<HTMLElement | SVGGElement>("[data-map-node]"));
+    const index = nodes.indexOf(document.activeElement as HTMLElement);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? nodes.length - 1 : Math.max(0, Math.min(nodes.length - 1, index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1)));
+    const node = nodes[next];
+    node?.focus();
+    node?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const key = node?.getAttribute("data-map-node");
+    const leaf = layout.leaves.find((entry) => key === `commit:${entry.commit.id}`);
+    if (leaf) centerOn(leaf);
+  }
   const [matchIndex, setMatchIndex] = useState(-1);
   const searchText = searchKey(query.trim());
   const matches = useMemo(() => searchText
@@ -290,10 +313,11 @@ export default function SproutMap({
         <p className="eyebrow">まだ葉がありません</p>
         <p>最初の保存をすると、ここに芽が出ます。</p>
         {layout.rootBuds.length > 0 && (
-          <div className="root-bud-list" aria-label="最初の保存前のつぼみ">
+          <div className="root-bud-list" aria-label="最初の保存前のつぼみ" onKeyDown={moveNode}>
             {layout.rootBuds.map(({ bud }) => (
               <button
                 key={bud.id}
+                {...nodeProps(`bud:${bud.id}`)}
                 className={`bud-button${selection?.kind === "bud" && selection.id === bud.id ? " selected" : ""}`}
                 aria-label={budLabel(bud)}
                 aria-pressed={selection?.kind === "bud" && selection.id === bud.id}
@@ -322,7 +346,7 @@ export default function SproutMap({
         key={bud.id}
         className={`bud${selected ? " selected" : ""}`}
         role="button"
-        tabIndex={0}
+        {...nodeProps(`bud:${bud.id}`)}
         aria-label={budLabel(bud)}
         aria-pressed={selected}
         onClick={() => onSelectBud(bud.id)}
@@ -358,6 +382,8 @@ export default function SproutMap({
               event.preventDefault();
               stepMatch(event.shiftKey ? -1 : 1);
             } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
               changeQuery("");
             }
           }}
@@ -388,6 +414,7 @@ export default function SproutMap({
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           role="group"
           aria-label="芽のマップ"
+          onKeyDown={moveNode}
         >
           <line className="ground" x1={MAP.groundX} x2={MAP.groundX} y1={groundTop} y2={groundBottom} />
           <text className="ground-label" x={MAP.groundX} y={groundBottom + 16} textAnchor="middle">はじまり</text>
@@ -417,7 +444,7 @@ export default function SproutMap({
                     key={branch.id}
                     className={`branch-name${branch.current ? " current" : ""}${selected ? " selected" : ""}`}
                     role="button"
-                    tabIndex={0}
+                    {...nodeProps(`branch:${branch.id}`)}
                     aria-label={`ブランチ ${branch.name}`}
                     aria-pressed={selected}
                     onClick={() => onSelectBranch(branch.id)}
@@ -442,14 +469,14 @@ export default function SproutMap({
                 className={`leaf${here ? " here" : ""}${selected ? " selected" : ""}${searchText ? (matchIds.has(leaf.commit.id) ? " match" : " dimmed") : ""}`}
                 style={laneStyle(leaf.lane)}
                 role="button"
-                tabIndex={0}
+                {...nodeProps(`commit:${leaf.commit.id}`)}
                 aria-label={leaf.commit.message}
                 aria-pressed={selected}
                 onClick={() => onSelect(leaf.commit.id)}
                 onKeyDown={(event) => onKey(event, () => onSelect(leaf.commit.id))}
                 onMouseEnter={() => setHinted(leaf.commit.id)}
                 onMouseLeave={() => setHinted(null)}
-                onFocus={() => setHinted(leaf.commit.id)}
+                onFocus={() => { setFocusedNode(`commit:${leaf.commit.id}`); setHinted(leaf.commit.id); }}
                 onBlur={() => setHinted(null)}
               >
                 <title>{leafDescription(leaf)}</title>
@@ -493,7 +520,7 @@ export default function SproutMap({
             <g
               className={`unsaved-bud${unsavedSelected ? " selected" : ""}`}
               role="button"
-              tabIndex={0}
+              {...nodeProps("unsaved")}
               aria-label="未保存の芽"
               aria-pressed={unsavedSelected}
               onClick={onSelectUnsaved}

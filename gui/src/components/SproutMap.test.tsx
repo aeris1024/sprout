@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import SproutMap from "./SproutMap";
+import userEvent from "@testing-library/user-event";
 import type { Bud, CommitGraph } from "../lib/sprout";
 
 afterEach(cleanup);
@@ -28,6 +29,24 @@ function renderLeaves(onSelect = vi.fn()) {
 function leafDimmed(element: HTMLElement) {
   return element.classList.contains("dimmed");
 }
+
+it("uses one map tab stop and moves, selects and exits with the keyboard", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  const { leaf } = renderLeaves(select);
+  const current = leaf(/とても長いメッセージ/);
+  expect(document.querySelectorAll('[data-map-node][tabindex="0"]').length).toBe(1);
+  expect(current.getAttribute("tabindex")).toBe("0");
+  current.focus();
+  await user.keyboard("{ArrowLeft}");
+  expect(document.activeElement).toBe(leaf("Client Review"));
+  expect(select).toHaveBeenLastCalledWith("c2");
+  expect(document.querySelectorAll('[data-map-node][tabindex="0"]').length).toBe(1);
+  const panel = document.createElement("button"); panel.textContent = "右パネル"; document.body.append(panel);
+  await user.tab();
+  expect(document.activeElement).toBe(panel);
+  panel.remove();
+});
 
 describe("leaf information", () => {
   it("shows the full message and time on hover and keyboard focus", () => {

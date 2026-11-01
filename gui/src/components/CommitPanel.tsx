@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ComponentProps, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState, type ComponentProps, type RefObject } from "react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import SnapshotFiles from "./SnapshotFiles";
 import CommitAnnotations from "./CommitAnnotations";
@@ -76,6 +76,18 @@ export default function CommitPanel({
   const fileSection = useRef<HTMLDivElement>(null);
   const menuRoot = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const messageTrigger = useRef<HTMLButtonElement>(null);
+  const growTrigger = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+  const wasGrowing = useRef(false);
+  useLayoutEffect(() => {
+    if (wasEditing.current && !editingMessage) messageTrigger.current?.focus();
+    wasEditing.current = editingMessage;
+  }, [editingMessage]);
+  useLayoutEffect(() => {
+    if (wasGrowing.current && !growing) growTrigger.current?.focus();
+    wasGrowing.current = growing;
+  }, [growing]);
   const menuId = useId();
   const menuContext = `${projectDir}:${detail.id}`;
   const [menuTarget, setMenuTarget] = useState<string | null>(null);
@@ -114,6 +126,11 @@ export default function CommitPanel({
       {editingMessage ? (
         <form
           className="message-editor"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault(); event.stopPropagation(); setEditingMessage(false);
+            }
+          }}
           onSubmit={(event) => {
             event.preventDefault();
             if (messageDraft.trim()) onUpdateMessage(detail.id, messageDraft);
@@ -121,7 +138,7 @@ export default function CommitPanel({
         >
           <label className="field">
             メッセージ
-            <textarea aria-label="メッセージを編集" value={messageDraft} onChange={(event) => setMessageDraft(event.currentTarget.value)} disabled={busy} />
+            <textarea autoFocus aria-label="メッセージを編集" value={messageDraft} onChange={(event) => setMessageDraft(event.currentTarget.value)} disabled={busy} />
           </label>
           <div className="action-row">
             <button className="button primary" type="submit" disabled={busy || !messageDraft.trim()}>保存</button>
@@ -131,7 +148,7 @@ export default function CommitPanel({
       ) : (
         <div className="message-heading">
           <h3>{detail.message}</h3>
-          <button className="text-button" onClick={() => setEditingMessage(true)} disabled={busy}>メッセージを編集</button>
+          <button ref={messageTrigger} className="text-button" onClick={() => setEditingMessage(true)} disabled={busy}>メッセージを編集</button>
         </div>
       )}
       <div className="panel-actions commit-actions">
@@ -144,6 +161,11 @@ export default function CommitPanel({
         {growing ? (
           <form
             className="grow-form span-all"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault(); event.stopPropagation(); setGrowing(false);
+              }
+            }}
             onSubmit={(event) => {
               event.preventDefault();
               if (branchName.trim()) onGrow(detail.id, branchName.trim());
@@ -151,7 +173,7 @@ export default function CommitPanel({
           >
             <label className="field">
               新しいブランチの名前
-              <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} placeholder="例: rethink" disabled={busy} />
+              <input autoFocus value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} placeholder="例: rethink" disabled={busy} />
             </label>
             <div className="action-row">
               <button className="button primary" type="submit" disabled={busy || !branchName.trim()}>ブランチを作って移動</button>
@@ -159,7 +181,7 @@ export default function CommitPanel({
             </div>
           </form>
         ) : (
-          <button className="button secondary" onClick={() => setGrowing(true)} disabled={busy} title="この葉から新しいブランチを作って移動します">ブランチを作る</button>
+          <button ref={growTrigger} className="button secondary" onClick={() => setGrowing(true)} disabled={busy} title="この葉から新しいブランチを作って移動します">ブランチを作る</button>
         )}
         <button className="button secondary" onClick={() => onCompare(detail.id)} disabled={busy}>比較元にする</button>
         <div

@@ -134,6 +134,9 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const operationActive = useRef(false);
   const detailRead = useRef<{ path: string; id: string; program: string } | null>(null);
+  const panelEdited = useRef(false);
+  const escapePending = useRef(false);
+  useEffect(() => { panelEdited.current = false; }, [projectDir, selection?.kind, selection && "id" in selection ? selection.id : null]);
   const operationsStarted = useRef(0);
   const focusHandler = useRef<() => void>(() => {});
   const focusRefresh = useRef({ running: false, startedAt: 0, failed: false, timer: undefined as ReturnType<typeof setTimeout> | undefined });
@@ -452,7 +455,7 @@ function App() {
   }
 
   function commitChanges() {
-    if (!projectDir) return;
+    if (!projectDir || !status?.changes.length) return;
     const message = commitMessage.trim();
     if (!message) {
       setNotice({ code: "message_required", message: "メッセージを入力してください", details: {}, kind: "warning" });
@@ -1008,6 +1011,28 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.key === "Escape") {
+        if (busy || escapePending.current) return;
+        event.preventDefault();
+        if (settingsOpen) { setSettingsOpen(false); return; }
+        const close = () => {
+          if (comparison) setComparison(null);
+          else if (filesOpen) setFilesOpen(false);
+          else if (trashOpen) setTrashOpen(false);
+          else if (maintenanceOpen) setMaintenanceOpen(false);
+          else closeSelection();
+          requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-map-node][tabindex="0"]')?.focus());
+        };
+        if (panelEdited.current && (comparison || filesOpen || trashOpen || maintenanceOpen || (selection && selection.kind !== "unsaved"))) {
+          escapePending.current = true;
+          void confirmDialog("入力中の内容を破棄して詳細を閉じますか？", { title: "詳細を閉じる", kind: "warning", okLabel: "破棄して閉じる", cancelLabel: "入力を続ける" })
+            .then((confirmed) => { if (confirmed) close(); })
+            .catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }))
+            .finally(() => { escapePending.current = false; });
+        } else close();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && status) {
         event.preventDefault();
         openSaveForm();
@@ -1015,7 +1040,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [status]);
+  }, [status, busy, settingsOpen, comparison, filesOpen, trashOpen, maintenanceOpen, selection]);
 
   const tracked = status?.tracked ?? [];
   const untracked = status?.untracked ?? [];
@@ -1290,7 +1315,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
             onResize={setPanelWidth}
             onCommit={(width) => void savePanelWidth(width).catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }))}
           />
-          <aside className="detail-panel">{sidePanel()}</aside>
+          <aside className="detail-panel" onChangeCapture={(event) => { if (isTextField(event.target)) panelEdited.current = true; }}>{sidePanel()}</aside>
         </main>
       )}
     </div>

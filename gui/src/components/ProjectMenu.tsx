@@ -56,7 +56,12 @@ export default function ProjectMenu({ projects, current, busy, onOpen, onForget,
   }, [open]);
 
   return (
-    <div className="project-menu" ref={root}>
+    <div className="project-menu" ref={root} onKeyDown={(event) => {
+      if (event.key === "Escape" && open) {
+        event.preventDefault(); event.stopPropagation(); setOpen(false);
+        root.current?.querySelector("button")?.focus();
+      }
+    }}>
       <button
         className="project-switcher"
         onClick={() => setOpen(!open)}

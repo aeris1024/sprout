@@ -7,6 +7,17 @@ import CommitPanel from "./CommitPanel";
 
 afterEach(cleanup);
 
+it("closes the inner editor with Escape and retains its draft when reopened", async () => {
+  const user = userEvent.setup(); const p = props(); render(<CommitPanel {...p} />);
+  await user.click(screen.getByRole("button", { name: "メッセージを編集" }));
+  await user.type(screen.getByRole("textbox", { name: "メッセージを編集" }), "下書き");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("textbox", { name: "メッセージを編集" })).toBeNull();
+  expect(p.onClose).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "メッセージを編集" }));
+  expect((screen.getByRole("textbox", { name: "メッセージを編集" }) as HTMLTextAreaElement).value).toBe("作業中下書き");
+});
+
 function props(): ComponentProps<typeof CommitPanel> {
   return {
     detail: { id: "first", parent_id: null, created_at: "2026-10-31T00:00:00Z", message: "作業中", note: null, note_updated_at: null, labels: [], branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] },

@@ -74,6 +74,12 @@ export default function SavePanel({
           onChange={(event) => onMessageChange(event.currentTarget.value)}
           placeholder="この保存で行ったこと"
           disabled={busy}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (!busy && changes.length > 0 && message.trim()) onSave();
+            }
+          }}
         />
       </label>
       <label className="field">
@@ -82,7 +88,8 @@ export default function SavePanel({
           <input
             value={thumbnailPasted ? "貼り付けた画像" : thumbnailPath}
             readOnly
-            placeholder="PNG・JPEG・WebP（2 MiB以下）。Ctrl+Vで画像を貼り付け"
+            placeholder="画像を選択"
+            aria-describedby="save-thumbnail-help"
           />
           <button className="button secondary" onClick={onChooseThumbnail} disabled={busy}>
             選択
@@ -94,11 +101,12 @@ export default function SavePanel({
           )}
         </div>
       </label>
+      <p className="panel-copy" id="save-thumbnail-help">PNG・JPEG・WebP（2 MiB以下）。Ctrl+Vで画像を貼り付けられます。</p>
       {coverPath && !thumbnailPath && <p className="panel-copy">{`サムネイルはサムネイル自動生成元 ${coverPath} から作ります。`}</p>}
       {growsBranch && changes.length > 0 && (
         <p className="panel-copy grow-note">途中の葉から保存するため、新しいブランチが自動で作られます。</p>
       )}
-      <button className="button primary wide" onClick={onSave} disabled={busy || !message.trim()}>
+      <button className="button primary wide" onClick={onSave} disabled={busy || changes.length === 0 || !message.trim()}>
         保存して葉にする
       </button>
       <button className="button secondary wide" onClick={onKeepAsBud} disabled={busy || changes.length === 0}>
