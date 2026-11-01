@@ -10,6 +10,18 @@ afterEach(cleanup);
 
 describe("FilePanel", () => {
   const props = { untracked: [], busy: false, onAddFiles: vi.fn(), onAddFolder: vi.fn(), onTrack: vi.fn(), onUntrack: vi.fn(), onClose: vi.fn() };
+  it("filters both lists by path while retaining their actions", () => {
+    const onTrack = vi.fn(); const onUntrack = vi.fn();
+    render(<FilePanel {...props} tracked={["assets/A.png", "notes.txt"]} untracked={["assets/B.png", "draft.txt"]} onTrack={onTrack} onUntrack={onUntrack} />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ASSETS/" } });
+    expect(screen.queryByText("notes.txt")).toBeNull();
+    expect(screen.queryByText("draft.txt")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("追跡中 1件・未追跡 1件が一致");
+    fireEvent.click(screen.getByRole("button", { name: "追跡する" }));
+    fireEvent.click(screen.getByRole("button", { name: "追跡解除" }));
+    expect(onTrack).toHaveBeenCalledWith("assets/B.png");
+    expect(onUntrack).toHaveBeenCalledWith("assets/A.png");
+  });
 
   it("chooses a cover file and offers applying or clearing it", () => {
     const onSetCover = vi.fn();

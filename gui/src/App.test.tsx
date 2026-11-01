@@ -1888,6 +1888,8 @@ describe("Sprout GUI operations", () => {
     ] });
     await user.click(screen.getByRole("button", { name: "Initial design" }));
     await screen.findByRole("region", { name: "保存済みファイル" });
+    await user.click(screen.getByRole("button", { name: "assets/を展開" }));
+    await user.click(screen.getByRole("button", { name: "assets/sub/を展開" }));
   }
 
   it("exports only selected directory files without force or workspace mutation", async () => {

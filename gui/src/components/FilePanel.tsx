@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 interface FilePanelProps {
   tracked: string[];
   untracked: string[];
@@ -27,6 +29,10 @@ export default function FilePanel({
   onApplyCover,
   onClose,
 }: FilePanelProps) {
+  const [query, setQuery] = useState("");
+  const matches = (path: string) => path.normalize("NFC").toLocaleLowerCase().includes(query.trim().normalize("NFC").toLocaleLowerCase());
+  const visibleTracked = tracked.filter(matches);
+  const visibleUntracked = untracked.filter(matches);
   return (
     <section className="panel-section" aria-label="追跡ファイル">
       <div className="panel-heading">
@@ -62,11 +68,13 @@ export default function FilePanel({
         </section>
       )}
       <h4 className="list-title">追跡中（{tracked.length}件）</h4>
+      <label className="field">ファイルを検索<input type="search" placeholder="パス名で絞り込み" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      {query.trim() && <p role="status" className="field-hint">追跡中 {visibleTracked.length}件・未追跡 {visibleUntracked.length}件が一致</p>}
       <div className="file-list">
         {tracked.length === 0 ? (
           <p className="muted">追跡中のファイルはありません。</p>
         ) : (
-          tracked.map((path) => (
+          visibleTracked.map((path) => (
             <div className="file-row" key={path}>
               <span title={path}>{path}</span>
               {onSetCover && (cover?.path === path
@@ -79,12 +87,13 @@ export default function FilePanel({
           ))
         )}
       </div>
+      {tracked.length > 0 && visibleTracked.length === 0 && <p className="muted">一致する追跡ファイルはありません。</p>}
       <h4 className="list-title">未追跡（{untracked.length}件）</h4>
       <div className="file-list">
         {untracked.length === 0 ? (
           <p className="muted">未追跡のファイルはありません。</p>
         ) : (
-          untracked.map((path) => (
+          visibleUntracked.map((path) => (
             <div className="file-row" key={path}>
               <span title={path}>{path}</span>
               <button onClick={() => onTrack(path)} disabled={busy}>
@@ -94,6 +103,7 @@ export default function FilePanel({
           ))
         )}
       </div>
+      {untracked.length > 0 && visibleUntracked.length === 0 && <p className="muted">一致する未追跡ファイルはありません。</p>}
     </section>
   );
 }
