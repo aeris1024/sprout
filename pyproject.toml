@@ -1,6 +1,6 @@
 [project]
 name = "sprout"
-version = "0.1.0"
+version = "1.0.0"
 description = "Offline snapshot version control for local files"
 readme = "README.md"
 authors = [
