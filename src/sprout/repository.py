@@ -2001,6 +2001,52 @@ class Repository:
         with self.connect() as db:
             return self._attachments_many_from_db(db, commit_ids)
 
+    def _repository_info_from_db(self, db: sqlite3.Connection) -> dict[str, str]:
+        metadata = dict(db.execute(
+            "SELECT key, value FROM meta WHERE key IN ('repository_id', 'repository_created_at')"
+        ))
+        return {"id": metadata["repository_id"], "root": str(self.root),
+                "created_at": metadata["repository_created_at"]}
+
+    def repository_info(self) -> dict[str, str]:
+        """Return the persistent identity and the discovered absolute root."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            return self._repository_info_from_db(db)
+
+    def catalog(self) -> dict[str, Any]:
+        """Read tagged variants and mutable metadata from one SQLite snapshot."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            repository = self._repository_info_from_db(db)
+            tags: dict[str, list[dict[str, Any]]] = {}
+            for row in db.execute("SELECT commit_id, name, comment, created_at FROM tags ORDER BY name COLLATE BINARY"):
+                tags.setdefault(row["commit_id"], []).append({
+                    "name": row["name"], "comment": row["comment"], "created_at": row["created_at"],
+                })
+            commits = list(db.execute(
+                "SELECT c.id, c.created_at, c.message FROM (SELECT DISTINCT commit_id FROM tags) t "
+                "JOIN commits c ON c.id=t.commit_id ORDER BY c.id COLLATE BINARY"
+            ))
+            if len(commits) != len(tags):
+                raise SproutError("tag references a missing commit")
+            ids = [row["id"] for row in commits]
+            annotations = self._annotations_many_from_db(db, ids)
+            thumbnails = {row["commit_id"]: dict(row) for row in db.execute(
+                "SELECT a.commit_id, a.role, a.original_name, a.media_type, a.object_hash, a.size, a.created_at, a.updated_at "
+                "FROM (SELECT DISTINCT commit_id FROM tags) t "
+                "JOIN commit_attachments a ON a.commit_id=t.commit_id WHERE a.role='thumbnail'"
+            )}
+            variants = [{
+                "commit_id": row["id"], "created_at": row["created_at"], "message": row["message"],
+                "tags": tags[row["id"]], "note": annotations[row["id"]].note,
+                "note_updated_at": annotations[row["id"]].note_updated_at,
+                "labels": sorted(annotations[row["id"]].labels), "thumbnail": thumbnails.get(row["id"]),
+            } for row in commits]
+        # Sort instants, rather than timestamp spellings (Z and +00:00 are equivalent).
+        variants.sort(key=lambda item: datetime.fromisoformat(item["created_at"]), reverse=True)
+        return {"api_version": 1, "repository": repository, "variants": variants}
+
     def commit_graph(self) -> CommitGraph:
         """Return every commit and current reference in one read transaction."""
         with self.connect() as db:

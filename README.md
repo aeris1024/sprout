@@ -55,7 +55,38 @@ uv tool install .
 sprout --help
 ```
 
-### シェル補完
+## 外部アプリ向けinfo／catalog API v1
+
+Sproutプロジェクト内で次を実行します。`--json`を省くと、人が読める情報・タグ付き版の一覧を表示します。
+
+```powershell
+sprout info --json
+sprout catalog --json
+```
+
+`info`は整数の`api_version: 1`、既存定義の`sprout_version`、`repository`、`capabilities: ["info.json.v1", "catalog.json.v1"]`を返します。`repository`は永続UUIDの`id`、認識したルートの絶対パス`root`、UTCの`created_at`を持ちます。空プロジェクトでも成功し、サブディレクトリからも同じ登録元を返します。移動・改名でIDは変わらず、未初期化の場所では新規作成せず失敗します。
+
+`catalog`は`api_version: 1`、同じ形式の`repository`、`variants`を返します。全ブランチのタグ付きコミットが対象で、削除済みブランチのタグも含めます。同じコミットのタグは一件の版にまとめ、タグなし・ラベルだけの版は除外します。対象がなければ`variants: []`です。
+
+各版は完全な`commit_id`、UTCの`created_at`、`message`、`tags`、`note`、`note_updated_at`、`labels`、`thumbnail`を持ちます。タグは`name`、`comment`、`created_at`を持ち、コメントのキーは省略しません。既存の保存形式では空コメントは空文字です。メモなしは本文・更新日時ともにnull、ラベルなしは`[]`、画像なしはnullです。thumbnailは`commit_id`、`role: "thumbnail"`、`original_name`、`media_type`、完全な`object_hash`、バイト数の`size`、`created_at`、`updated_at`を持ちます。
+
+版は作成日時降順・同日時はID昇順、タグとラベルはロケールに依存しない昇順です。保存済みの大小文字や日本語を保持し、後から変更したタグ・メモ・ラベル・画像を毎回取得します。リポジトリ情報と版情報は一つの読み取りトランザクションで取得します。通常ファイル一覧や画像本体はcatalogに含めず、次の既存コマンドで取得します。
+
+```powershell
+sprout leaf show <完全コミットID> --json
+sprout leaf thumbnail export <完全コミットID> --output D:\Exports\preview.png --json
+sprout file export <完全コミットID> --output D:\Exports\new-folder --json
+```
+
+既存の`file export`成功JSONは`commit_id`・`output`・`paths`のままです。その他のCLI・GUI用JSONやDBスキーマの変更はありません。API v1は内部DBのスキーマ版とは独立しています。
+
+JSONはUTF-8です。成功は終了コード0、stdoutにJSONオブジェクト一つ、stderrは空です。失敗は非0、stdoutは空、stderrに既存の`{"code":"...","message":"...","details":{}}`を一つ返します。未初期化、不適合形式、破損、取得不能なロック、復旧失敗を正常な空一覧として扱わないでください。未知の追加フィールドは許容してください。
+
+通常状態でinfo/catalogは作業ファイル・追跡状態・現在位置・ブランチ先端を変更しません。ただし既存のリポジトリ検出は中断した復元操作を見つけると、計画を検証してロックを取得し、自動復旧します。この場合は作業ファイルや管理データへの書き込みが発生し得ます。通常の書き込みロックだけなら読み取り可能ですが、復旧が必要な状態でロックを取得できなければ既存エラーで失敗します。
+
+実CLIの検証例と専用プロジェクトの再生成手順は[API v1検証記録](docs/validation/info-catalog-api-v1.md)を参照してください。
+
+## シェル補完
 
 コマンド名、オプション、ブランチ名、タグ名をTabキーで補完できます。利用するシェル内でインストールコマンドを実行し、その後ターミナルを再起動してください。現在のシェルは自動検出されます。
 

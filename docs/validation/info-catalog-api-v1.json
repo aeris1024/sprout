@@ -1,0 +1,563 @@
+{
+  "executable": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.venv\\Scripts\\sprout.exe",
+  "version": "sprout 1.0.0",
+  "root": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+  "project": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+  "empty_project": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\空 project",
+  "variants": 3,
+  "image_formats": [
+    "JPEG",
+    "PNG",
+    "WEBP"
+  ],
+  "state_unchanged": true,
+  "info": {
+    "api_version": 1,
+    "sprout_version": "1.0.0",
+    "repository": {
+      "id": "5756f2bf-4f40-4aae-8aae-47985b111a49",
+      "root": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "created_at": "2026-11-02T06:34:16.909140+00:00"
+    },
+    "capabilities": [
+      "info.json.v1",
+      "catalog.json.v1"
+    ]
+  },
+  "catalog": {
+    "api_version": 1,
+    "repository": {
+      "id": "5756f2bf-4f40-4aae-8aae-47985b111a49",
+      "root": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "created_at": "2026-11-02T06:34:16.909140+00:00"
+    },
+    "variants": [
+      {
+        "commit_id": "f89a750dd40840c09a42aee52df9c4e3",
+        "created_at": "2026-11-02T06:34:20.711891+00:00",
+        "message": "WEBP の版",
+        "tags": [
+          {
+            "name": "Alternate",
+            "comment": "",
+            "created_at": "2026-11-02T06:34:21.592645+00:00"
+          },
+          {
+            "name": "版2",
+            "comment": "",
+            "created_at": "2026-11-02T06:34:21.169565+00:00"
+          }
+        ],
+        "note": "確認 メモ AbC",
+        "note_updated_at": "2026-11-02T06:34:22.006546+00:00",
+        "labels": [
+          "Approved"
+        ],
+        "thumbnail": {
+          "commit_id": "f89a750dd40840c09a42aee52df9c4e3",
+          "role": "thumbnail",
+          "original_name": "preview 2.webp",
+          "media_type": "image/webp",
+          "object_hash": "1b8fbd8596e577a836cc006cf812613d7ede148e30aa450d45c25db4dca23cdb",
+          "size": 76,
+          "created_at": "2026-11-02T06:34:20.711891+00:00",
+          "updated_at": "2026-11-02T06:34:20.711891+00:00"
+        }
+      },
+      {
+        "commit_id": "909a88bfdc204deda656607eddb46a40",
+        "created_at": "2026-11-02T06:34:19.304482+00:00",
+        "message": "PNG の版",
+        "tags": [
+          {
+            "name": "版1",
+            "comment": "",
+            "created_at": "2026-11-02T06:34:19.748559+00:00"
+          }
+        ],
+        "note": null,
+        "note_updated_at": null,
+        "labels": [],
+        "thumbnail": {
+          "commit_id": "909a88bfdc204deda656607eddb46a40",
+          "role": "thumbnail",
+          "original_name": "preview 1.png",
+          "media_type": "image/png",
+          "object_hash": "9a492db929c32201913274ba0dda4f856b207ea76f352e3c0ea1b7a5040d6a3d",
+          "size": 91,
+          "created_at": "2026-11-02T06:34:19.304482+00:00",
+          "updated_at": "2026-11-02T06:34:19.304482+00:00"
+        }
+      },
+      {
+        "commit_id": "4462fb681fd34d0591f3518f56aa70c8",
+        "created_at": "2026-11-02T06:34:17.821311+00:00",
+        "message": "JPEG の版",
+        "tags": [
+          {
+            "name": "版0",
+            "comment": "",
+            "created_at": "2026-11-02T06:34:18.259816+00:00"
+          }
+        ],
+        "note": null,
+        "note_updated_at": null,
+        "labels": [],
+        "thumbnail": {
+          "commit_id": "4462fb681fd34d0591f3518f56aa70c8",
+          "role": "thumbnail",
+          "original_name": "preview 0.jpg",
+          "media_type": "image/jpeg",
+          "object_hash": "48237c72e09ef24dbd9c5e5a7ecc8678f20a0d1fb39dfea7d89042c41c852258",
+          "size": 637,
+          "created_at": "2026-11-02T06:34:17.821311+00:00",
+          "updated_at": "2026-11-02T06:34:17.821311+00:00"
+        }
+      }
+    ]
+  },
+  "commands": [
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+      "arguments": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "sprout 1.0.0\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+      "arguments": [
+        "info",
+        "--json"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "{\"code\": \"not_initialized\", \"message\": \"not inside a Sprout project (run 'sprout init')\", \"details\": {}}\r\n"
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+      "arguments": [
+        "catalog",
+        "--json"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "{\"code\": \"not_initialized\", \"message\": \"not inside a Sprout project (run 'sprout init')\", \"details\": {}}\r\n"
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+      "arguments": [
+        "init",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\空 project",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\空 project\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\空 project",
+      "arguments": [
+        "info",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"api_version\": 1, \"sprout_version\": \"1.0.0\", \"repository\": {\"id\": \"47438297-4bf4-4d30-8d38-510b9a8b5282\", \"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\空 project\", \"created_at\": \"2026-11-02T06:34:15.507271+00:00\"}, \"capabilities\": [\"info.json.v1\", \"catalog.json.v1\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\空 project",
+      "arguments": [
+        "catalog",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"api_version\": 1, \"repository\": {\"id\": \"47438297-4bf4-4d30-8d38-510b9a8b5282\", \"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\空 project\", \"created_at\": \"2026-11-02T06:34:15.507271+00:00\"}, \"variants\": []}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o",
+      "arguments": [
+        "init",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\画像 project\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "track",
+        "資料 file.txt",
+        "textures\\色 data.bin",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "create",
+        "-m",
+        "JPEG の版",
+        "--thumbnail",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\preview 0.jpg",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"branch\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_branch\": false, \"message\": \"JPEG の版\", \"removed_paths\": []}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "tag",
+        "create",
+        "版0",
+        "4462fb681fd34d0591f3518f56aa70c8",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"name\": \"版0\", \"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:18.259816+00:00\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "track",
+        "資料 file.txt",
+        "textures\\色 data.bin",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "create",
+        "-m",
+        "PNG の版",
+        "--thumbnail",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\preview 1.png",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"909a88bfdc204deda656607eddb46a40\", \"branch\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_branch\": false, \"message\": \"PNG の版\", \"removed_paths\": []}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "tag",
+        "create",
+        "版1",
+        "909a88bfdc204deda656607eddb46a40",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"name\": \"版1\", \"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:19.748559+00:00\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "track",
+        "資料 file.txt",
+        "textures\\色 data.bin",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "create",
+        "-m",
+        "WEBP の版",
+        "--thumbnail",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\preview 2.webp",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"branch\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_branch\": false, \"message\": \"WEBP の版\", \"removed_paths\": []}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "tag",
+        "create",
+        "版2",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"name\": \"版2\", \"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:21.169565+00:00\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "tag",
+        "create",
+        "Alternate",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"name\": \"Alternate\", \"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:21.592645+00:00\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "edit",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--note",
+        "確認 メモ AbC",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"message\": \"WEBP の版\", \"note\": \"確認 メモ AbC\", \"note_updated_at\": \"2026-11-02T06:34:22.006546+00:00\", \"labels\": []}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "label",
+        "add",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "Approved",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"note\": \"確認 メモ AbC\", \"note_updated_at\": \"2026-11-02T06:34:22.006546+00:00\", \"labels\": [\"Approved\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "info",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"api_version\": 1, \"sprout_version\": \"1.0.0\", \"repository\": {\"id\": \"5756f2bf-4f40-4aae-8aae-47985b111a49\", \"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\画像 project\", \"created_at\": \"2026-11-02T06:34:16.909140+00:00\"}, \"capabilities\": [\"info.json.v1\", \"catalog.json.v1\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "catalog",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"api_version\": 1, \"repository\": {\"id\": \"5756f2bf-4f40-4aae-8aae-47985b111a49\", \"root\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\画像 project\", \"created_at\": \"2026-11-02T06:34:16.909140+00:00\"}, \"variants\": [{\"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"created_at\": \"2026-11-02T06:34:20.711891+00:00\", \"message\": \"WEBP の版\", \"tags\": [{\"name\": \"Alternate\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:21.592645+00:00\"}, {\"name\": \"版2\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:21.169565+00:00\"}], \"note\": \"確認 メモ AbC\", \"note_updated_at\": \"2026-11-02T06:34:22.006546+00:00\", \"labels\": [\"Approved\"], \"thumbnail\": {\"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"role\": \"thumbnail\", \"original_name\": \"preview 2.webp\", \"media_type\": \"image/webp\", \"object_hash\": \"1b8fbd8596e577a836cc006cf812613d7ede148e30aa450d45c25db4dca23cdb\", \"size\": 76, \"created_at\": \"2026-11-02T06:34:20.711891+00:00\", \"updated_at\": \"2026-11-02T06:34:20.711891+00:00\"}}, {\"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"created_at\": \"2026-11-02T06:34:19.304482+00:00\", \"message\": \"PNG の版\", \"tags\": [{\"name\": \"版1\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:19.748559+00:00\"}], \"note\": null, \"note_updated_at\": null, \"labels\": [], \"thumbnail\": {\"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"role\": \"thumbnail\", \"original_name\": \"preview 1.png\", \"media_type\": \"image/png\", \"object_hash\": \"9a492db929c32201913274ba0dda4f856b207ea76f352e3c0ea1b7a5040d6a3d\", \"size\": 91, \"created_at\": \"2026-11-02T06:34:19.304482+00:00\", \"updated_at\": \"2026-11-02T06:34:19.304482+00:00\"}}, {\"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"created_at\": \"2026-11-02T06:34:17.821311+00:00\", \"message\": \"JPEG の版\", \"tags\": [{\"name\": \"版0\", \"comment\": \"\", \"created_at\": \"2026-11-02T06:34:18.259816+00:00\"}], \"note\": null, \"note_updated_at\": null, \"labels\": [], \"thumbnail\": {\"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"role\": \"thumbnail\", \"original_name\": \"preview 0.jpg\", \"media_type\": \"image/jpeg\", \"object_hash\": \"48237c72e09ef24dbd9c5e5a7ecc8678f20a0d1fb39dfea7d89042c41c852258\", \"size\": 637, \"created_at\": \"2026-11-02T06:34:17.821311+00:00\", \"updated_at\": \"2026-11-02T06:34:17.821311+00:00\"}}]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "show",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"parent_id\": \"909a88bfdc204deda656607eddb46a40\", \"branch_name\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_at\": \"2026-11-02T06:34:20.711891+00:00\", \"message\": \"WEBP の版\", \"note\": \"確認 メモ AbC\", \"note_updated_at\": \"2026-11-02T06:34:22.006546+00:00\", \"labels\": [\"Approved\"], \"thumbnail\": {\"id\": \"98a4afd0ff324bb3bd7e63d8bd3b1053\", \"position\": 0, \"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"role\": \"thumbnail\", \"original_name\": \"preview 2.webp\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/webp\", \"object_hash\": \"1b8fbd8596e577a836cc006cf812613d7ede148e30aa450d45c25db4dca23cdb\", \"size\": 76, \"created_at\": \"2026-11-02T06:34:20.711891+00:00\", \"updated_at\": \"2026-11-02T06:34:20.711891+00:00\"}, \"attachments\": [{\"id\": \"98a4afd0ff324bb3bd7e63d8bd3b1053\", \"position\": 0, \"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"role\": \"thumbnail\", \"original_name\": \"preview 2.webp\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/webp\", \"object_hash\": \"1b8fbd8596e577a836cc006cf812613d7ede148e30aa450d45c25db4dca23cdb\", \"size\": 76, \"created_at\": \"2026-11-02T06:34:20.711891+00:00\", \"updated_at\": \"2026-11-02T06:34:20.711891+00:00\"}], \"files\": [{\"path\": \"textures/色 data.bin\", \"object_hash\": \"3111320083b1a7e82e33cab67fbc8c7711669501e36e1b2e1846095de3ed19ab\", \"size\": 22, \"mtime_ns\": 1793601256952561900, \"file_id\": \"87550c45d94c485389fc57f49aff3ac1\"}, {\"path\": \"資料 file.txt\", \"object_hash\": \"6cd7854b35d09e4374a1ecf6fa5912e2df3948028865b3ec734d5d5ba7c1008b\", \"size\": 19, \"mtime_ns\": 1793601259884901300, \"file_id\": \"c26115b7f7974511a2a6a627fe008bb8\"}]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "thumbnail",
+        "export",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\export-preview 2.webp",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\export-preview 2.webp\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-f89a750dd40840c09a42aee52df9c4e3",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"commit_id\": \"f89a750dd40840c09a42aee52df9c4e3\", \"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\files-f89a750dd40840c09a42aee52df9c4e3\", \"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "f89a750dd40840c09a42aee52df9c4e3",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-f89a750dd40840c09a42aee52df9c4e3",
+        "--json"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "{\"code\": \"export_output_exists\", \"message\": \"output file already exists: textures/色 data.bin\", \"details\": {\"path\": \"textures/色 data.bin\"}}\r\n"
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "show",
+        "909a88bfdc204deda656607eddb46a40",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"909a88bfdc204deda656607eddb46a40\", \"parent_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"branch_name\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_at\": \"2026-11-02T06:34:19.304482+00:00\", \"message\": \"PNG の版\", \"note\": null, \"note_updated_at\": null, \"labels\": [], \"thumbnail\": {\"id\": \"685676ba4ff94b87b66a00636dce5c38\", \"position\": 0, \"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"role\": \"thumbnail\", \"original_name\": \"preview 1.png\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/png\", \"object_hash\": \"9a492db929c32201913274ba0dda4f856b207ea76f352e3c0ea1b7a5040d6a3d\", \"size\": 91, \"created_at\": \"2026-11-02T06:34:19.304482+00:00\", \"updated_at\": \"2026-11-02T06:34:19.304482+00:00\"}, \"attachments\": [{\"id\": \"685676ba4ff94b87b66a00636dce5c38\", \"position\": 0, \"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"role\": \"thumbnail\", \"original_name\": \"preview 1.png\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/png\", \"object_hash\": \"9a492db929c32201913274ba0dda4f856b207ea76f352e3c0ea1b7a5040d6a3d\", \"size\": 91, \"created_at\": \"2026-11-02T06:34:19.304482+00:00\", \"updated_at\": \"2026-11-02T06:34:19.304482+00:00\"}], \"files\": [{\"path\": \"textures/色 data.bin\", \"object_hash\": \"3111320083b1a7e82e33cab67fbc8c7711669501e36e1b2e1846095de3ed19ab\", \"size\": 22, \"mtime_ns\": 1793601256952561900, \"file_id\": \"87550c45d94c485389fc57f49aff3ac1\"}, {\"path\": \"資料 file.txt\", \"object_hash\": \"0a748e5493a7408e9e9456ce453b89d356c7e72e58e0d8713c25705617fe4da4\", \"size\": 18, \"mtime_ns\": 1793601258312964600, \"file_id\": \"c26115b7f7974511a2a6a627fe008bb8\"}]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "thumbnail",
+        "export",
+        "909a88bfdc204deda656607eddb46a40",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\export-preview 1.png",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\export-preview 1.png\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "909a88bfdc204deda656607eddb46a40",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-909a88bfdc204deda656607eddb46a40",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"commit_id\": \"909a88bfdc204deda656607eddb46a40\", \"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\files-909a88bfdc204deda656607eddb46a40\", \"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "909a88bfdc204deda656607eddb46a40",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-909a88bfdc204deda656607eddb46a40",
+        "--json"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "{\"code\": \"export_output_exists\", \"message\": \"output file already exists: textures/色 data.bin\", \"details\": {\"path\": \"textures/色 data.bin\"}}\r\n"
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "show",
+        "4462fb681fd34d0591f3518f56aa70c8",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"parent_id\": null, \"branch_name\": \"main\", \"branch_id\": \"fef379cacc214a5289f0f5716aa9304d\", \"created_at\": \"2026-11-02T06:34:17.821311+00:00\", \"message\": \"JPEG の版\", \"note\": null, \"note_updated_at\": null, \"labels\": [], \"thumbnail\": {\"id\": \"f24875754d054285b6b8d9fc8b65a5ff\", \"position\": 0, \"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"role\": \"thumbnail\", \"original_name\": \"preview 0.jpg\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/jpeg\", \"object_hash\": \"48237c72e09ef24dbd9c5e5a7ecc8678f20a0d1fb39dfea7d89042c41c852258\", \"size\": 637, \"created_at\": \"2026-11-02T06:34:17.821311+00:00\", \"updated_at\": \"2026-11-02T06:34:17.821311+00:00\"}, \"attachments\": [{\"id\": \"f24875754d054285b6b8d9fc8b65a5ff\", \"position\": 0, \"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"role\": \"thumbnail\", \"original_name\": \"preview 0.jpg\", \"display_name\": \"\", \"description\": \"\", \"media_type\": \"image/jpeg\", \"object_hash\": \"48237c72e09ef24dbd9c5e5a7ecc8678f20a0d1fb39dfea7d89042c41c852258\", \"size\": 637, \"created_at\": \"2026-11-02T06:34:17.821311+00:00\", \"updated_at\": \"2026-11-02T06:34:17.821311+00:00\"}], \"files\": [{\"path\": \"textures/色 data.bin\", \"object_hash\": \"3111320083b1a7e82e33cab67fbc8c7711669501e36e1b2e1846095de3ed19ab\", \"size\": 22, \"mtime_ns\": 1793601256952561900, \"file_id\": \"87550c45d94c485389fc57f49aff3ac1\"}, {\"path\": \"資料 file.txt\", \"object_hash\": \"60b25676e5ff214c9bf65904f54218f8ed6e9c5d327d185bae290fa865f683b6\", \"size\": 19, \"mtime_ns\": 1793601256969576100, \"file_id\": \"c26115b7f7974511a2a6a627fe008bb8\"}]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "leaf",
+        "thumbnail",
+        "export",
+        "4462fb681fd34d0591f3518f56aa70c8",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\export-preview 0.jpg",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\export-preview 0.jpg\"}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "4462fb681fd34d0591f3518f56aa70c8",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-4462fb681fd34d0591f3518f56aa70c8",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"commit_id\": \"4462fb681fd34d0591f3518f56aa70c8\", \"output\": \"C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\catalog-api\\\\run-8cyn2l3o\\\\files-4462fb681fd34d0591f3518f56aa70c8\", \"paths\": [\"textures/色 data.bin\", \"資料 file.txt\"]}\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "file",
+        "export",
+        "4462fb681fd34d0591f3518f56aa70c8",
+        "--output",
+        "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\files-4462fb681fd34d0591f3518f56aa70c8",
+        "--json"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "{\"code\": \"export_output_exists\", \"message\": \"output file already exists: textures/色 data.bin\", \"details\": {\"path\": \"textures/色 data.bin\"}}\r\n"
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "info"
+      ],
+      "exit_code": 0,
+      "stdout": "Sprout: 1.0.0 (API v1)\r\nid: 5756f2bf-4f40-4aae-8aae-47985b111a49\r\nroot: C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project\r\ncreated_at: 2026-11-02T06:34:16.909140+00:00\r\nCapabilities: info.json.v1, catalog.json.v1\r\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "C:\\Users\\k-nis\\Workbench\\work\\Sprout\\.test-tmp\\catalog-api\\run-8cyn2l3o\\画像 project",
+      "arguments": [
+        "catalog"
+      ],
+      "exit_code": 0,
+      "stdout": "f89a750dd40840c09a42aee52df9c4e3  Alternate, 版2  WEBP の版\r\n909a88bfdc204deda656607eddb46a40  版1  PNG の版\r\n4462fb681fd34d0591f3518f56aa70c8  版0  JPEG の版\r\n",
+      "stderr": ""
+    }
+  ]
+}

@@ -13,7 +13,7 @@ from sprout.repository import Repository
 from sprout.serve import run_command
 
 
-CANONICAL = {'init', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
+CANONICAL = {'init', 'info', 'catalog', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
 ALIASES = {'commit', 'log', 'show', 'tree', 'diff', 'track', 'untrack', 'mv', 'switch', 'stash', 'tag'}
 RETIRED = {'move', 'cover', 'file-history', 'message', 'thumbnail', 'note', 'label', 'preview',
            'restore', 'export', 'archive', 'cat', 'prune', 'delete-commit', 'gc', 'doctor', 'stats'}

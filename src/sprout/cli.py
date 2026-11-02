@@ -95,7 +95,7 @@ def _install_safe_powershell_completion_template() -> None:
 
 _install_safe_powershell_completion_template()
 
-_CANONICAL_COMMANDS = {'init', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
+_CANONICAL_COMMANDS = {'init', 'info', 'catalog', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
 _ALIAS_HELP = (
     ('commit -m TEXT', 'leaf create -m TEXT'),
     ('log [PATH] / --file-id FILE_ID', 'leaf list [PATH] / --file-id FILE_ID'),
@@ -614,6 +614,39 @@ def _format_datetime(value: datetime, display_timezone: tzinfo | None) -> str:
     converted = value.astimezone() if display_timezone is None else value.astimezone(display_timezone)
     zone_name = converted.tzname() or converted.strftime("%z")
     return f"{converted:%Y-%m-%d %H:%M:%S} {zone_name}"
+
+
+@app.command()
+def info(
+    json_output: Annotated[bool, typer.Option("--json", help="Output API v1 JSON")] = False,
+) -> None:
+    """Show repository identity and supported external APIs."""
+    payload = {"api_version": 1, "sprout_version": __version__,
+               "repository": repo().repository_info(),
+               "capabilities": ["info.json.v1", "catalog.json.v1"]}
+    if json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"Sprout: {payload['sprout_version']} (API v1)")
+    for key, value in payload["repository"].items():
+        typer.echo(f"{key}: {value}")
+    typer.echo(f"Capabilities: {', '.join(payload['capabilities'])}")
+
+
+@app.command()
+def catalog(
+    json_output: Annotated[bool, typer.Option("--json", help="Output API v1 JSON")] = False,
+) -> None:
+    """List tagged variants across all branches."""
+    payload = repo().catalog()
+    if json_output:
+        _echo_json(payload)
+        return
+    if not payload["variants"]:
+        typer.echo("No tagged variants.")
+    for variant in payload["variants"]:
+        names = ', '.join(tag['name'] for tag in variant['tags'])
+        typer.echo(f"{variant['commit_id']}  {names}  {variant['message']}")
 
 
 @app.command()
@@ -2805,6 +2838,11 @@ def _clear_stale_completion_environment(argv: list[str]) -> None:
 def main() -> int:
     _clear_stale_completion_environment(sys.argv)
     json_output = _json_requested(sys.argv)
+    if json_output:
+        for stream in (sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                reconfigure(encoding="utf-8")
     try:
         exit_code = app(standalone_mode=False)
         if isinstance(exit_code, int):

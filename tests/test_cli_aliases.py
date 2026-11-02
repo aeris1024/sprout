@@ -108,7 +108,7 @@ def test_tag_alias_lists_or_creates_literal_command_word_names(tmp_path, monkeyp
 
 def test_help_lists_ten_canonical_entries_and_all_fifteen_alias_patterns():
     command = get_command(app)
-    canonical = {'init', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
+    canonical = {'init', 'info', 'catalog', 'status', 'go', 'leaf', 'bud', 'branch', 'file', 'trash', 'maintenance', 'serve'}
     assert {name for name, child in command.commands.items() if not child.hidden} == canonical
     normal = runner.invoke(app, ['--help'])
     assert normal.exit_code == 0 and '--help-aliases' in normal.stdout

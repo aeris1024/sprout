@@ -1,0 +1,106 @@
+{
+  "full_python_run": {
+    "passed": 779,
+    "failed": 0,
+    "skipped": 20
+  },
+  "api_cases_in_full_run": 20,
+  "existing_python_tests": {
+    "passed": 759,
+    "failed": 0,
+    "skipped": 20
+  },
+  "final_api_run": {
+    "passed": 21,
+    "failed": 0,
+    "skipped": 0
+  },
+  "gui_vitest": {
+    "passed": 284,
+    "failed": 0,
+    "skipped": 0,
+    "files_passed": 19
+  },
+  "skipped_cases": [
+    {
+      "test": "tests.test_path_keys.test_two_real_files_differing_by_case_are_rejected",
+      "reason": "Two spellings can only coexist on case-sensitive file systems"
+    },
+    {
+      "test": "tests.test_repository.test_tracking_directory_does_not_follow_nested_symlink_dirs",
+      "reason": "symlinks are not available: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_tracking_directory_does_n0\\\\outside' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_tracking_directory_does_n0\\\\project\\\\assets\\\\linked'"
+    },
+    {
+      "test": "tests.test_repository.test_untrack_deleted_file_ignores_case_off_windows",
+      "reason": "Case-sensitive behavior is for non-Windows systems"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-restore]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before12\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before12\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-discard]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before13\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before13\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-partial]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before14\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before14\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-switch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before15\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before15\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-branch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before16\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before16\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-False-implicit-branch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before17\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before17\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-restore]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before18\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before18\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-discard]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before19\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before19\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-partial]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before20\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before20\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-switch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before21\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before21\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-branch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before22\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before22\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_links_are_rejected_before_hashing[symlink-True-implicit-branch]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before23\\\\project\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_links_are_rejected_before23\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_dangling_file_link_is_rejected",
+      "reason": "symlinks unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_dangling_file_link_is_rej0\\\\missing' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_dangling_file_link_is_rej0\\\\project\\\\data'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_recovery_refuses_replaced_parent_link[symlink]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_recovery_refuses_replaced1\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_recovery_refuses_replaced1\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_linked_operation_storage_rejected[symlink]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_linked_operation_storage_1\\\\storage' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_linked_operation_storage_1\\\\project\\\\.sprout\\\\tmp'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_cli_link_error_is_structured[symlink]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_cli_link_error_is_structu1\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_cli_link_error_is_structu1\\\\project\\\\assets'"
+    },
+    {
+      "test": "tests.test_restore_safety.test_unsafe_link_in_backup_is_not_followed[symlink]",
+      "reason": "symlink creation unavailable: [WinError 1314] クライアントは要求された特権を保有していません。: 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_unsafe_link_in_backup_is_1\\\\external' -> 'C:\\\\Users\\\\k-nis\\\\Workbench\\\\work\\\\Sprout\\\\.test-tmp\\\\task127-full\\\\test_unsafe_link_in_backup_is_1\\\\project\\\\.sprout\\\\tmp\\\\restore-interrupted\\\\backup'"
+    }
+  ]
+}
