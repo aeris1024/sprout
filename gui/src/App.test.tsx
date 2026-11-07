@@ -2196,6 +2196,82 @@ describe("Sprout GUI operations", () => {
     expect(mocks.runSprout).toHaveBeenLastCalledWith(project, ["leaf", "preview", "export", commitEntry.id, "p1", "--output", "C:\\out.wav"], "");
   });
 
+  async function openGraphWithPreviews(user: ReturnType<typeof userEvent.setup>, attachments: unknown[]) {
+    render(<App />);
+    mocks.open.mockResolvedValueOnce(project);
+    mockWorkspace(cleanStatus, [commitEntry], mainBranch, {
+      current_commit: commitEntry.id,
+      at_branch_tip: true,
+      commits: [{ ...commitEntry, branch_id: "main", branch_name: "main", attachments } as CommitGraph["commits"][number]],
+      branches: mainBranch,
+      tags: [],
+      buds: [],
+    });
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    await screen.findByRole("heading", { name: "sprout-project" });
+  }
+
+  it("opens a leaf's previews from the map and the panel, and Escape closes only the viewer", async () => {
+    const user = userEvent.setup();
+    await openGraphWithPreviews(user, previewDetail.attachments.map((item) => ({ ...item, commit_id: commitEntry.id, object_hash: item.id })));
+    mocks.runSprout.mockResolvedValueOnce(previewDetail).mockResolvedValueOnce(previewDetail);
+    await user.dblClick(screen.getByRole("button", { name: "Initial design" }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "voice.wav" })).toBeTruthy();
+    expect(within(dialog).getByText("1 / 2")).toBeTruthy();
+    await screen.findByRole("region", { name: "プレビュー管理" });
+    act(() => mocks.dragHandler?.({ payload: { type: "drop", paths: ["C:\new.png"] } }));
+    expect(await screen.findByText(/プレビューの表示を閉じるとドロップできます/)).toBeTruthy();
+    expect(mocks.runSprout.mock.calls.some((call) => call[1][0] === "leaf" && call[1][2] === "add")).toBe(false);
+    within(dialog).getByRole("button", { name: "プレビューの表示を閉じる" }).focus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "選択中の葉" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "model.stlを大きく表示" }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "model.stl" })).toBeTruthy();
+    expect(within(dialog).getByText("2 / 2")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "プレビューの表示を閉じる" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "model.stlを大きく表示" }));
+  });
+
+  it("opens previews while choosing a comparison target, but not during an operation", async () => {
+    const user = userEvent.setup();
+    await openGraphWithPreviews(user, previewDetail.attachments.map((item) => ({ ...item, commit_id: commitEntry.id, object_hash: item.id })));
+    mocks.runSprout.mockResolvedValueOnce(previewDetail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await screen.findByRole("region", { name: "プレビュー管理" });
+    mocks.save.mockReturnValueOnce(new Promise(() => undefined));
+    await user.click(screen.getByRole("button", { name: "voice.wavを取り出す" }));
+    const leaf = screen.getByRole("button", { name: "Initial design" });
+    leaf.focus();
+    await user.keyboard(" ");
+    expect(await screen.findByText("操作の実行中はプレビューを開けません。完了してから開いてください。")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    cleanup();
+
+    await openGraphWithPreviews(user, previewDetail.attachments.map((item) => ({ ...item, commit_id: commitEntry.id, object_hash: item.id })));
+    mocks.runSprout.mockResolvedValueOnce(previewDetail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "比較元にする" }));
+    mocks.runSprout.mockResolvedValue({ source: commitEntry.id, target: commitEntry.id, changes: [] });
+    await user.dblClick(screen.getByRole("button", { name: "Initial design" }));
+    expect(within(await screen.findByRole("dialog")).getByRole("heading", { name: "voice.wav" })).toBeTruthy();
+  });
+
+  it("tells that a leaf has no previews instead of opening the viewer", async () => {
+    const user = userEvent.setup();
+    await openGraphWithPreviews(user, []);
+    mocks.runSprout.mockResolvedValue(previewDetail);
+    const leaf = screen.getByRole("button", { name: "Initial design" });
+    leaf.focus();
+    await user.keyboard(" ");
+    expect(await screen.findByText("この葉にはプレビューがありません。")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("preserves the displayed preview order on failure", async () => {
     const user = userEvent.setup();
     await openPreviewWorkspace(user);

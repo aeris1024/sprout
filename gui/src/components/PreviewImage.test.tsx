@@ -3,8 +3,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PreviewPanel, { type PreviewActions } from "./PreviewPanel";
 import { runSprout, type CommitAttachment } from "../lib/sprout";
+import { clearPreviewImageCache } from "../lib/previewImages";
 vi.mock("../lib/sprout", async (original) => ({ ...await original<typeof import("../lib/sprout")>(), runSprout: vi.fn() }));
-afterEach(() => { cleanup(); vi.mocked(runSprout).mockReset(); });
+afterEach(() => { cleanup(); vi.mocked(runSprout).mockReset(); clearPreviewImageCache(); });
 const first = { id: "one", commit_id: "commit", object_hash: "hash1", role: "preview", position: 0, original_name: "one.png", media_type: "image/png", size: 123 } as CommitAttachment;
 const second = { ...first, id: "two", position: 1, original_name: "two.jpg" };
 const actions: PreviewActions = { add: vi.fn(), paste: vi.fn(), pastePaths: vi.fn(), replace: vi.fn(), remove: vi.fn(), export: vi.fn(), order: vi.fn() };
@@ -57,4 +58,15 @@ it("reports decode failures, keeps export available, and retries", async () => {
   const image = await screen.findByRole("img");
   fireEvent.error(image);
   await screen.findByText("画像を表示できませんでした。取り出して確認してください。");
+});
+it("opens the large viewer from the list and from the image shown in the panel", async () => {
+  vi.mocked(runSprout).mockResolvedValue(reply);
+  const view = vi.fn();
+  render(<PreviewPanel {...props} actions={{ ...actions, view }} />);
+  fireEvent.click(screen.getByRole("button", { name: "two.jpgを大きく表示" }));
+  expect(view).toHaveBeenLastCalledWith("two");
+  expect(runSprout).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "one.pngを表示" }));
+  fireEvent.click(await screen.findByRole("button", { name: "表示中のone.pngを大きく表示" }));
+  expect(view).toHaveBeenLastCalledWith("one");
 });

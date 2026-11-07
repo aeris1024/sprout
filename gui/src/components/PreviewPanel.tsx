@@ -1,6 +1,7 @@
 import { useState, type ClipboardEvent } from "react";
 import PreviewImage from "./PreviewImage";
 import type { CommitAttachment } from "../lib/sprout";
+import { isViewableImage } from "../lib/previewImages";
 
 export interface PreviewMetadata { display_name: string; description: string; }
 export interface PreviewActions {
@@ -12,6 +13,8 @@ export interface PreviewActions {
   remove: (id: string) => void;
   export: (id: string, name: string) => void;
   order: (ids: string[]) => void;
+  /** Open the large viewer at this preview. */
+  view?: (id: string) => void;
 }
 export default function PreviewPanel({ attachments, busy, actions, projectDir, program, commitId }: { attachments: CommitAttachment[]; busy: boolean; actions: PreviewActions; projectDir: string; program: string; commitId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
@@ -38,7 +41,7 @@ export default function PreviewPanel({ attachments, busy, actions, projectDir, p
     <button className="button secondary preview-add" disabled={busy} onClick={actions.add}>プレビューを追加</button>
     <div className="preview-paste" role="group" aria-label="プレビュー貼り付け領域" tabIndex={0} onPaste={paste}>ここを選んで Ctrl+V：画像・ファイルをプレビューに追加（この領域の外では画像をサムネイルに使用）</div>
     {!previews.length && <p className="muted">プレビューはありません。</p>}
-    {image && <PreviewImage key={imageKey(image)} projectDir={projectDir} program={program} attachment={image} onClose={() => setSelected(null)} />}
+    {image && <PreviewImage key={imageKey(image)} projectDir={projectDir} program={program} attachment={image} onClose={() => setSelected(null)} onEnlarge={actions.view ? () => actions.view?.(image.id) : undefined} />}
     <ol className="preview-list">{previews.map((item, index) => <li key={item.id}>
       <div className="preview-head">
         <p className="preview-name">{item.display_name || item.original_name}</p>
@@ -50,7 +53,8 @@ export default function PreviewPanel({ attachments, busy, actions, projectDir, p
       {item.description && <p className="panel-copy" style={{ whiteSpace: "pre-wrap" }}>{item.description}</p>}<p className="panel-copy">{item.media_type} · {item.size.toLocaleString()} B</p>
       {actions.metadata && <MetadataEditor key={`${item.id}:${item.updated_at}`} item={item} busy={busy} onSave={actions.metadata} />}
       <div className="action-row">
-        {(item.media_type.startsWith("image/") || /\.(png|jpe?g|webp|bmp)$/i.test(item.original_name)) && <button className={`button secondary small${imageKey(item) === selected ? " pressed" : ""}`} disabled={busy} aria-pressed={imageKey(item) === selected} onClick={() => setSelected(imageKey(item))} aria-label={`${item.original_name}を表示`}>画像を表示</button>}
+        {actions.view && <button className="button secondary small" onClick={() => actions.view?.(item.id)} aria-label={`${item.original_name}を大きく表示`}>大きく表示</button>}
+        {isViewableImage(item) && <button className={`button secondary small${imageKey(item) === selected ? " pressed" : ""}`} disabled={busy} aria-pressed={imageKey(item) === selected} onClick={() => setSelected(imageKey(item))} aria-label={`${item.original_name}を表示`}>画像を表示</button>}
         <button className="button secondary small" disabled={busy} onClick={() => actions.replace(item.id)} aria-label={`${item.original_name}を置き換え`}>置き換え</button>
         <button className="button secondary small" disabled={busy} onClick={() => actions.export(item.id, item.original_name)} aria-label={`${item.original_name}を取り出す`}>取り出す</button>
         <button className="button danger small" disabled={busy} onClick={() => actions.remove(item.id)} aria-label={`${item.original_name}を削除`}>削除</button>

@@ -26,6 +26,8 @@ function leafMarks(leaf: MapLeaf): string {
   const marks = [];
   if (leaf.commit.note) marks.push("メモ");
   if (leaf.commit.labels.length) marks.push(`ラベル${leaf.commit.labels.length}`);
+  const previews = leaf.commit.attachments.filter((attachment) => attachment.role === "preview").length;
+  if (previews) marks.push(`プレビュー${previews}`);
   return marks.join("・");
 }
 
@@ -151,6 +153,8 @@ interface SproutMapProps {
   onSelectBud: (budId: string) => void;
   onSelectBranch: (branchId: string) => void;
   onSelectUnsaved: () => void;
+  /** Double-click or Space on a leaf: look through its previews. */
+  onOpenPreviews?: (commitId: string) => void;
 }
 
 export default function SproutMap({
@@ -164,6 +168,7 @@ export default function SproutMap({
   onSelectBud,
   onSelectBranch,
   onSelectUnsaved,
+  onOpenPreviews,
 }: SproutMapProps) {
   const selectedId = selection?.kind === "commit" ? selection.id : null;
   const unsaved = unsavedCount > 0;
@@ -479,7 +484,13 @@ export default function SproutMap({
                 aria-description={compareLabel || undefined}
                 aria-pressed={selected}
                 onClick={() => onSelect(leaf.commit.id)}
-                onKeyDown={(event) => onKey(event, () => onSelect(leaf.commit.id))}
+                onDoubleClick={onOpenPreviews ? () => onOpenPreviews(leaf.commit.id) : undefined}
+                onKeyDown={(event) => {
+                  if (event.key === " " && onOpenPreviews) {
+                    event.preventDefault();
+                    onOpenPreviews(leaf.commit.id);
+                  } else onKey(event, () => onSelect(leaf.commit.id));
+                }}
                 onMouseEnter={() => setHinted(leaf.commit.id)}
                 onMouseLeave={() => setHinted(null)}
                 onFocus={() => { setFocusedNode(`commit:${leaf.commit.id}`); setHinted(leaf.commit.id); }}

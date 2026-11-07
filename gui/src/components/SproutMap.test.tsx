@@ -219,3 +219,52 @@ it("shows a bud's name on the map and keeps long names readable through the labe
   expect(screen.getByRole("button", { name: "つぼみ「とても長いつぼみの名前です」（1件の変更）" })).toBeTruthy();
   expect(screen.getByText("つぼみ 1")).toBeTruthy();
 });
+
+describe("opening a leaf's previews", () => {
+  function renderWithPreviews() {
+    const preview = { commit_id: "c1", object_hash: "h", role: "preview", media_type: "image/png", size: 1, display_name: "", description: "" };
+    const commit = { parent_id: null, branch_id: "b1", branch_name: "main", created_at: "2026-10-30T03:04:05.000000+00:00", note: null, note_updated_at: null, labels: [] as string[] };
+    const graph: CommitGraph = {
+      current_commit: "c2",
+      at_branch_tip: true,
+      commits: [
+        { ...commit, id: "c1", message: "三面図", attachments: [
+          { ...preview, id: "p1", position: 0, original_name: "front.png" },
+          { ...preview, id: "p2", position: 1, original_name: "side.png" },
+          { ...preview, id: "t1", role: "thumbnail", position: 0, original_name: "thumb.png" },
+        ] as never },
+        { ...commit, id: "c2", parent_id: "c1", message: "仕上げ", attachments: [] },
+      ],
+      branches: [{ id: "b1", name: "main", commit_id: "c2", comment: "", current: true }],
+      tags: [],
+      buds: [],
+    };
+    const onSelect = vi.fn();
+    const onOpenPreviews = vi.fn();
+    render(<SproutMap graph={graph} selection={null} unsavedCount={0} projectDir="C:/p" sproutProgram="" onSelect={onSelect} onSelectBud={vi.fn()} onSelectBranch={vi.fn()} onSelectUnsaved={vi.fn()} onOpenPreviews={onOpenPreviews} />);
+    return { onSelect, onOpenPreviews, leaf: (name: string) => screen.getByRole("button", { name }) };
+  }
+
+  it("counts previews but not the thumbnail among a leaf's marks", () => {
+    const { leaf } = renderWithPreviews();
+    expect(leaf("三面図").textContent).toContain("プレビュー2");
+    expect(leaf("仕上げ").textContent).not.toContain("プレビュー");
+  });
+
+  it("opens previews with a double-click or Space, while a click and Enter still select", async () => {
+    const user = userEvent.setup();
+    const { leaf, onSelect, onOpenPreviews } = renderWithPreviews();
+    await user.dblClick(leaf("三面図"));
+    expect(onSelect).toHaveBeenCalledWith("c1");
+    expect(onOpenPreviews).toHaveBeenCalledTimes(1);
+    expect(onOpenPreviews).toHaveBeenLastCalledWith("c1");
+    onSelect.mockClear();
+    leaf("仕上げ").focus();
+    await user.keyboard(" ");
+    expect(onOpenPreviews).toHaveBeenLastCalledWith("c2");
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith("c2");
+    expect(onOpenPreviews).toHaveBeenCalledTimes(2);
+  });
+});

@@ -14,6 +14,7 @@ import MaintenancePanel from "./components/MaintenancePanel";
 import PanelSplitter from "./components/PanelSplitter";
 import SavePanel from "./components/SavePanel";
 import SproutMap, { type MapSelection } from "./components/SproutMap";
+import PreviewViewer from "./components/PreviewViewer";
 import "./App.css";
 import {
   isUninitializedProject,
@@ -29,6 +30,7 @@ import {
   type RepositoryStats,
   formatBytes,
   type CommitDeletion,
+  type CommitAttachment,
   type CommitDetail,
   type CommitGraph,
   type CommitResult,
@@ -108,6 +110,8 @@ function App() {
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
   const [commitLoadError, setCommitLoadError] = useState<{ id: string; error: SproutCliError } | null>(null);
   const [selection, setSelection] = useState<MapSelection>(null);
+  /** The leaf whose previews the large viewer shows, and the preview it opened at. */
+  const [viewer, setViewer] = useState<{ projectDir: string; commitId: string; startId: string } | null>(null);
   const [comparison, setComparison] = useState<{ source: string; target: string } | null>(null);
   const [comparisonPicking, setComparisonPicking] = useState<"source" | "target">("target");
   useEffect(() => { setComparison(null); }, [projectDir]);
@@ -794,6 +798,7 @@ function App() {
     if (!workspaceOpen) return null;
     if (operationActive.current) return { kind: "blocked", message: "操作の実行中はドロップできません" };
     if (settingsOpen) return { kind: "blocked", message: "CLI設定を閉じるとドロップできます" };
+    if (viewer) return { kind: "blocked", message: "プレビューの表示を閉じるとドロップできます" };
     if (displayedPanel === "trash") return { kind: "blocked", message: "ゴミ箱を閉じるとドロップできます" };
     if (displayedPanel === "maintenance") return { kind: "blocked", message: "保守を閉じるとドロップできます" };
     if (displayedPanel === "compare") return { kind: "blocked", message: "比較を閉じるとドロップできます" };
@@ -1003,6 +1008,27 @@ function App() {
       await runSprout(projectDir, ["leaf", "preview", "delete", commitId, id], sproutProgram);
       return true;
     });
+  }
+
+  /** Previews of a leaf in their saved order, from the map's data. */
+  function leafPreviews(commitId: string): CommitAttachment[] {
+    return (graph.commits.find((commit) => commit.id === commitId)?.attachments ?? [])
+      .filter((item) => item.role === "preview")
+      .sort((a, b) => a.position - b.position);
+  }
+
+  function openPreviews(commitId: string, startId?: string) {
+    if (!projectDir) return;
+    if (operationActive.current) {
+      setNotice({ code: "operation_in_progress", message: "操作の実行中はプレビューを開けません。完了してから開いてください。", details: {}, kind: "warning" });
+      return;
+    }
+    const previews = leafPreviews(commitId);
+    if (!previews.length) {
+      setNotice({ code: "no_previews", message: "この葉にはプレビューがありません。", details: {}, kind: "warning" });
+      return;
+    }
+    setViewer({ projectDir, commitId, startId: previews.some((item) => item.id === startId) ? startId! : previews[0].id });
   }
 
   function exportPreview(commitId: string, id: string, name: string) {
@@ -1251,6 +1277,13 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
   const selectedBud = selection?.kind === "bud" ? graph.buds.find((bud) => bud.id === selection.id) : undefined;
   const selectedBranch = selection?.kind === "branch" ? graph.branches.find((branch) => branch.id === selection.id) : undefined;
   const workspaceOpen = Boolean(projectDir && status && !initCandidate);
+  const viewerLeaf = viewer ? graph.commits.find((commit) => commit.id === viewer.commitId) : undefined;
+  const viewerPreviews = viewer ? leafPreviews(viewer.commitId) : [];
+  // The viewer goes away with its project, its leaf or the last of its previews.
+  const viewerOpen = Boolean(viewer && workspaceOpen && viewer.projectDir === projectDir && viewerPreviews.length);
+  useEffect(() => {
+    if (viewer && !viewerOpen) setViewer(null);
+  }, [viewer, viewerOpen]);
   // Follows the order of sidePanel() so drops and pastes act on what is actually displayed.
   const displayedPanel = trashOpen ? "trash" : maintenanceOpen ? "maintenance" : comparison ? "compare" : filesOpen ? "files"
     : selection?.kind === "commit" ? (commitDetail?.id === selection.id ? "commit" : "loading")
@@ -1298,6 +1331,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
         remove: (id) => deletePreview(commitDetail.id, id),
         export: (id, name) => exportPreview(commitDetail.id, id, name),
         order: (ids) => orderPreviews(commitDetail.id, ids),
+        view: (id) => openPreviews(commitDetail.id, id),
       }} annotations={{
         onSaveNote: saveNote,
         onAddLabel: addLabel,
@@ -1410,7 +1444,7 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
         <main className="workspace" style={{ "--panel-width": `${panelWidth}px` } as CSSProperties}>
           <section className="map-area" aria-label="マップ">
             <h2 className="sr-only">{projectName(projectDir)}</h2>
-            <SproutMap comparison={comparison} graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} />
+            <SproutMap comparison={comparison} graph={graph} selection={selection} unsavedCount={changes.length} projectDir={projectDir} sproutProgram={sproutProgram} onSelect={selectCommit} onSelectBud={selectBud} onSelectBranch={selectBranch} onSelectUnsaved={selectUnsaved} onOpenPreviews={openPreviews} />
           </section>
           <PanelSplitter
             width={panelWidth}
@@ -1419,6 +1453,19 @@ ${change.state === "deleted" ? "削除したファイルを復元します。" :
           />
           <aside className="detail-panel" onChangeCapture={(event) => { if (isTextField(event.target)) panelEdited.current = true; }}>{sidePanel()}</aside>
         </main>
+      )}
+      {viewerOpen && viewer && (
+        <PreviewViewer
+          key={`${viewer.projectDir}:${viewer.commitId}`}
+          projectDir={viewer.projectDir}
+          program={sproutProgram}
+          leafTitle={viewerLeaf?.message ?? ""}
+          previews={viewerPreviews}
+          startId={viewer.startId}
+          busy={busy}
+          onExport={(id, name) => exportPreview(viewer.commitId, id, name)}
+          onClose={() => setViewer(null)}
+        />
       )}
     </div>
   );
