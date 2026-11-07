@@ -40,6 +40,7 @@ import {
 import { PANEL_WIDTH, savedPanelWidth } from "./lib/panelWidth";
 import { loadSettings, nextRecentProjects, removeRecentProject, savePanelWidth, saveSettings } from "./lib/settings";
 import { clipboardImage, discardPastedThumbnail, savePastedPreview, readClipboardFiles, savePastedThumbnail, thumbnailImageProblem } from "./lib/clipboard";
+import { launchProblemMessage, onLaunchRequest, sameFolder, takeLaunchRequest, type LaunchRequest, type RepositoryInfo } from "./lib/launch";
 
 type Notice = SproutCliError & { kind: "error" | "success" | "warning" };
 
@@ -156,6 +157,9 @@ function App() {
   }, [projectDir, sproutProgram, selection, filesOpen, trashOpen, maintenanceOpen, comparison, busy]);
   useEffect(() => () => { detailRead.current = null; }, []);
 
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [launchRequest, setLaunchRequest] = useState<LaunchRequest | null>(null);
+
   useEffect(() => {
     void loadSettings()
       .then((settings) => {
@@ -163,7 +167,31 @@ function App() {
         setSproutProgram(settings.sproutProgram);
         setPanelWidth(savedPanelWidth(settings.panelWidth));
       })
-      .catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }));
+      .catch((error) => setNotice({ ...normalizeCliError(error), kind: "error" }))
+      .finally(() => setSettingsReady(true));
+  }, []);
+
+  // Folders from the command line or a second launch. Taking is one-shot on the Rust side, so a result
+  // that arrives after a StrictMode remount is still kept rather than dropped.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    const take = () => {
+      void takeLaunchRequest()
+        .then((request) => { if (request) setLaunchRequest(request); })
+        .catch(() => undefined);
+    };
+    take();
+    void onLaunchRequest(take)
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   /** Run one operation at a time; resolves true only when it completed without an error. */
@@ -250,6 +278,40 @@ function App() {
       if (typeof selected === "string") await loadProject(selected);
     });
   }
+
+  /**
+   * Open a folder handed over by Explorer. A subfolder opens its project root; an uninitialized folder
+   * gets the usual init guidance. Switching away from typed input asks first, and cancelling changes nothing.
+   */
+  function openRequestedFolder(request: LaunchRequest) {
+    if (request.problem) {
+      setNotice({ code: "launch_folder_unavailable", message: launchProblemMessage(request), details: { path: request.path, reason: request.problem }, kind: "warning" });
+      return;
+    }
+    void execute(async () => {
+      let root = request.path;
+      try {
+        root = (await runSprout<RepositoryInfo>(request.path, ["info"], sproutProgram)).repository.root || request.path;
+      } catch {
+        // Uninitialized folders and CLIs without info open the folder itself; loadProject reports why it failed.
+      }
+      if (status && sameFolder(root, projectDir)) {
+        await fetchWorkspace(projectDir);
+        return;
+      }
+      if (panelEdited.current && !await confirmDialog(`入力中の内容を破棄して「${projectName(root)}」を開きますか？`, {
+        title: "プロジェクトを開く", kind: "warning", okLabel: "破棄して開く", cancelLabel: "入力を続ける",
+      })) return;
+      await loadProject(root);
+    });
+  }
+
+  // Wait for the saved CLI setting and for any running operation, so a request is never dropped.
+  useEffect(() => {
+    if (!launchRequest || !settingsReady || busy) return;
+    setLaunchRequest(null);
+    openRequestedFolder(launchRequest);
+  }, [launchRequest, settingsReady, busy]);
 
   function refreshProject() {
     if (!projectDir) return;

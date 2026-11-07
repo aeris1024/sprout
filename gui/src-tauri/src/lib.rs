@@ -525,13 +525,107 @@ fn read_clipboard_files() -> Result<Vec<String>, SproutCliError> {
     Ok(vec![])
 }
 
+/// Event that tells the frontend a folder is waiting in `LaunchState`.
+const LAUNCH_REQUEST_EVENT: &str = "launch-request";
+
+/// A folder passed on the command line, e.g. by the Explorer "Sproutで開く" menu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct LaunchRequest {
+    path: String,
+    /// `not_found` or `not_directory` when the path cannot be opened as a folder.
+    problem: Option<String>,
+}
+
+/// The latest folder not yet taken by the frontend; a newer request replaces an older one.
+#[derive(Default)]
+struct LaunchState {
+    pending: Mutex<Option<LaunchRequest>>,
+}
+
+/// Turn one command-line argument into an absolute folder path.
+fn launch_path(argument: &str, cwd: &Path) -> Option<PathBuf> {
+    // Explorer passes "%V"; for a drive root this arrives as `C:"` because `\"` escapes the quote.
+    let mut text = argument.trim().trim_matches('"').trim().to_owned();
+    if text.is_empty() {
+        return None;
+    }
+    if text.len() == 2 && text.ends_with(':') {
+        text.push('\\');
+    }
+    while text.len() > 3 && (text.ends_with('\\') || text.ends_with('/')) {
+        text.pop();
+    }
+    let path = PathBuf::from(text);
+    Some(if path.is_absolute() { path } else { cwd.join(path) })
+}
+
+/// Read the folder from an argv (program name first); options such as Tauri's own flags are ignored.
+fn launch_request(argv: &[String], cwd: &Path) -> Option<LaunchRequest> {
+    let path = argv
+        .iter()
+        .skip(1)
+        .filter(|argument| !argument.starts_with('-'))
+        .find_map(|argument| launch_path(argument, cwd))?;
+    let problem = match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_dir() => None,
+        Ok(_) => Some("not_directory".to_owned()),
+        Err(_) => Some("not_found".to_owned()),
+    };
+    Some(LaunchRequest { path: path.to_string_lossy().into_owned(), problem })
+}
+
+#[tauri::command]
+fn take_launch_request(state: tauri::State<'_, LaunchState>) -> Option<LaunchRequest> {
+    state.pending.lock().ok().and_then(|mut pending| pending.take())
+}
+
+/// A second launch hands its folder to the running window instead of opening another one.
+fn forward_launch(app: &tauri::AppHandle, argv: Vec<String>, cwd: String) {
+    use tauri::{Emitter, Manager};
+    if let Some(request) = launch_request(&argv, Path::new(&cwd)) {
+        if let Ok(mut pending) = app.state::<LaunchState>().pending.lock() {
+            *pending = Some(request);
+        }
+        let _ = app.emit(LAUNCH_REQUEST_EVENT, ());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Windows only lets the process the user just started take the foreground. A second launch from
+/// Explorer has that right but exits, so pass it on to the running window before handing over.
+fn allow_running_window_to_focus() {
+    #[cfg(windows)]
+    {
+        const ASFW_ANY: u32 = u32::MAX;
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn AllowSetForegroundWindow(process_id: u32) -> i32;
+        }
+        unsafe {
+            AllowSetForegroundWindow(ASFW_ANY);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    allow_running_window_to_focus();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let argv: Vec<String> = std::env::args().collect();
+    let launch = LaunchState { pending: Mutex::new(launch_request(&argv, &cwd)) };
     tauri::Builder::default()
+        // Must be registered first so a second launch exits before creating anything.
+        .plugin(tauri_plugin_single_instance::init(forward_launch))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ServeState::default())
+        .manage(launch)
         .invoke_handler(tauri::generate_handler![
+            take_launch_request,
             run_sprout,
             read_sprout_thumbnail,
             save_pasted_thumbnail,
@@ -566,6 +660,43 @@ mod tests {
             assert!(write_pasted_preview(&std::env::temp_dir(), name, "AA==").is_err());
         }
         assert!(write_pasted_preview(&std::env::temp_dir(), "file.bin", "invalid base64!").is_err());
+    }
+
+    fn argv(arguments: &[&str]) -> Vec<String> {
+        std::iter::once("sprout-gui.exe").chain(arguments.iter().copied()).map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn launch_path_normalizes_explorer_arguments() {
+        let cwd = Path::new(r"C:\base");
+        assert_eq!(launch_path(r#"C:""#, cwd).unwrap(), PathBuf::from(r"C:\"));
+        assert_eq!(launch_path(r"C:\", cwd).unwrap(), PathBuf::from(r"C:\"));
+        assert_eq!(launch_path(r#""D:\作業 フォルダ\""#, cwd).unwrap(), PathBuf::from(r"D:\作業 フォルダ"));
+        assert_eq!(launch_path(r"D:\work\project\\", cwd).unwrap(), PathBuf::from(r"D:\work\project"));
+        assert_eq!(launch_path(r"\\server\share\dir\", cwd).unwrap(), PathBuf::from(r"\\server\share\dir"));
+        assert_eq!(launch_path("child", cwd).unwrap(), PathBuf::from(r"C:\base\child"));
+        assert_eq!(launch_path("  \"\" ", cwd), None);
+    }
+
+    #[test]
+    fn launch_request_reports_missing_and_non_folder_paths() {
+        let root = std::env::temp_dir().join(format!("sprout-gui-launch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let folder = root.join("日本語 フォルダ");
+        fs::create_dir_all(&folder).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, b"x").unwrap();
+
+        assert_eq!(launch_request(&argv(&[]), &root), None);
+        assert_eq!(launch_request(&argv(&["--flag"]), &root), None);
+        let opened = launch_request(&argv(&["--flag", "日本語 フォルダ"]), &root).unwrap();
+        assert_eq!(opened, LaunchRequest { path: folder.to_string_lossy().into_owned(), problem: None });
+        let as_file = launch_request(&argv(&[&file.to_string_lossy()]), &root).unwrap();
+        assert_eq!(as_file.problem.as_deref(), Some("not_directory"));
+        let missing = launch_request(&argv(&["missing"]), &root).unwrap();
+        assert_eq!(missing.problem.as_deref(), Some("not_found"));
+        assert_eq!(missing.path, root.join("missing").to_string_lossy());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

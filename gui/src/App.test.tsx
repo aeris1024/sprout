@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   saveSettings: vi.fn(),
   savePanelWidth: vi.fn(),
   dragHandler: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
+  takeLaunchRequest: vi.fn(),
+  launchHandler: undefined as undefined | (() => void),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -33,6 +35,14 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("./lib/sprout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/sprout")>()),
   runSprout: mocks.runSprout,
+}));
+vi.mock("./lib/launch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/launch")>()),
+  takeLaunchRequest: mocks.takeLaunchRequest,
+  onLaunchRequest: async (handler: () => void) => {
+    mocks.launchHandler = handler;
+    return () => undefined;
+  },
 }));
 vi.mock("./lib/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/settings")>()),
@@ -118,6 +128,8 @@ describe("Sprout GUI operations", () => {
     mocks.confirm.mockResolvedValue(true);
     mocks.invoke.mockResolvedValue("data:image/png;base64,AQID");
     mocks.dragHandler = undefined;
+    mocks.takeLaunchRequest.mockResolvedValue(null);
+    mocks.launchHandler = undefined;
     mocks.onDragDropEvent.mockImplementation(async (handler) => {
       mocks.dragHandler = handler;
       return vi.fn();
@@ -2631,5 +2643,125 @@ describe("Sprout GUI operations", () => {
       expect(await screen.findByText(/のサムネイルを保存しました/)).toBeTruthy();
       expect(mocks.confirm).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("Opening folders handed over by Explorer", () => {
+  const otherProject = "C:\\work\\other-project";
+  const leafDetail = { ...commitEntry, branch_id: "main", branch_name: "main", thumbnail: null, attachments: [], files: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.loadSettings.mockResolvedValue({ recentProjects: [], sproutProgram: "" });
+    mocks.saveSettings.mockResolvedValue(undefined);
+    mocks.savePanelWidth.mockResolvedValue(undefined);
+    mocks.confirm.mockResolvedValue(true);
+    mocks.invoke.mockResolvedValue("data:image/png;base64,AQID");
+    mocks.onDragDropEvent.mockResolvedValue(vi.fn());
+    mocks.onFocusChanged.mockResolvedValue(vi.fn());
+    mocks.takeLaunchRequest.mockResolvedValue(null);
+    mocks.launchHandler = undefined;
+  });
+
+  afterEach(() => cleanup());
+
+  async function handOver(path: string) {
+    mocks.takeLaunchRequest.mockResolvedValueOnce({ path, problem: null });
+    await waitFor(() => expect(mocks.launchHandler).toBeTypeOf("function"));
+    act(() => mocks.launchHandler?.());
+  }
+
+  it("opens the project root of a subfolder passed at startup with the saved CLI", async () => {
+    const program = "C:\\tools\\sprout.exe";
+    mocks.loadSettings.mockResolvedValue({ recentProjects: [], sproutProgram: program });
+    mocks.takeLaunchRequest.mockResolvedValueOnce({ path: `${project}\\作業 フォルダ`, problem: null });
+    mocks.runSprout.mockResolvedValueOnce({ repository: { root: project } });
+    mockWorkspace();
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "sprout-project" })).toBeTruthy();
+    expect(mocks.runSprout.mock.calls[0]).toEqual([`${project}\\作業 フォルダ`, ["info"], program]);
+    expect(mocks.runSprout.mock.calls[1][0]).toBe(project);
+    await waitFor(() => expect(mocks.saveSettings).toHaveBeenCalledWith({ recentProjects: [project], sproutProgram: program }));
+  });
+
+  it("shows the init guidance for an uninitialized folder", async () => {
+    const uninitialized = { code: "not_initialized", message: "not inside a Sprout project", details: {} };
+    mocks.takeLaunchRequest.mockResolvedValueOnce({ path: otherProject, problem: null });
+    mocks.runSprout.mockRejectedValueOnce(uninitialized).mockRejectedValueOnce(uninitialized);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "このフォルダはまだSproutプロジェクトではありません" })).toBeTruthy();
+    expect(mocks.runSprout.mock.calls.map((call) => call[0])).toEqual([otherProject, otherProject]);
+  });
+
+  it("explains a missing folder without running the CLI", async () => {
+    mocks.takeLaunchRequest.mockResolvedValueOnce({ path: "C:\\missing", problem: "not_found" });
+
+    render(<App />);
+
+    expect(await screen.findByText("フォルダが見つからないため開けません: C:\\missing")).toBeTruthy();
+    expect(mocks.runSprout).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "プロジェクトを選択" })).toBeTruthy();
+  });
+
+  it("switches the running window, asking first when input would be lost", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce(leafDetail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    await user.click(await screen.findByRole("button", { name: "メッセージを編集" }));
+    await user.type(screen.getByRole("textbox", { name: "メッセージを編集" }), "下書き");
+
+    mocks.runSprout.mockResolvedValueOnce({ repository: { root: otherProject } });
+    mocks.confirm.mockResolvedValueOnce(false);
+    await handOver(otherProject);
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+    expect(mocks.confirm.mock.calls[0][0]).toContain("other-project");
+    expect(screen.getByRole("heading", { name: "sprout-project" })).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "メッセージを編集" }) as HTMLTextAreaElement).value).toBe("Initial design下書き"));
+    expect(mocks.runSprout.mock.calls.some((call) => call[0] === otherProject && call[1][0] === "status")).toBe(false);
+
+    mocks.runSprout.mockResolvedValueOnce({ repository: { root: otherProject } });
+    mockWorkspace();
+    await handOver(otherProject);
+    expect(await screen.findByRole("heading", { name: "other-project" })).toBeTruthy();
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the open project without asking when the same project is requested", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await openWorkspace(user);
+    mocks.runSprout.mockResolvedValueOnce(leafDetail);
+    await user.click(screen.getByRole("button", { name: "Initial design" }));
+    expect(await screen.findByRole("region", { name: "選択中の葉" })).toBeTruthy();
+
+    mocks.runSprout.mockResolvedValueOnce({ repository: { root: project } });
+    mockWorkspace();
+    await handOver(`${project}\\design`);
+    await waitFor(() => expect(mocks.runSprout.mock.calls.filter((call) => call[1][0] === "status")).toHaveLength(2));
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "選択中の葉" })).toBeTruthy();
+  });
+
+  it("keeps a request that arrives during another operation and opens it afterwards", async () => {
+    const user = userEvent.setup();
+    let closeDialog: (value: string | null) => void = () => undefined;
+    mocks.open.mockReturnValueOnce(new Promise((resolve) => { closeDialog = resolve; }));
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+
+    mocks.runSprout.mockResolvedValueOnce({ repository: { root: otherProject } });
+    mockWorkspace();
+    await handOver(otherProject);
+    await waitFor(() => expect(mocks.takeLaunchRequest).toHaveBeenCalledTimes(2));
+    expect(mocks.runSprout).not.toHaveBeenCalled();
+
+    await act(async () => closeDialog(null));
+    expect(await screen.findByRole("heading", { name: "other-project" })).toBeTruthy();
   });
 });
